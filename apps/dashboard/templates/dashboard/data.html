@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Hapus data — Rekonsiliasi{% endblock %}
+
+{% block content %}
+<h1 class="mb-1 font-serif text-2xl">Hapus data</h1>
+<p class="mb-6 max-w-prose text-sm text-slate-500">
+  Menghapus data transaksi (mutasi, OTOMAX, pasangan, selisih, penyesuaian, tutup buku).
+  <b>Reseller, alias, dan mapping merchant tidak ikut terhapus.</b> Tidak bisa dibatalkan.
+</p>
+
+<div class="card mb-6">
+  <h2 class="mb-3 font-semibold">Per tanggal buku</h2>
+  {% if rows %}
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead>
+        <tr><th>Tanggal</th><th>Status</th><th class="text-right">Bank</th><th class="text-right">OTOMAX</th>
+            <th class="text-right">Cocok</th><th class="text-right">Selisih</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td class="font-mono">{{ r.book_date|date:'Y-m-d' }}</td>
+          <td>
+            {% if r.locked %}<span class="badge-mute">DITUTUP</span>
+            {% else %}<span class="badge-warn">{{ r.status }}</span>{% endif %}
+          </td>
+          <td class="money text-right">{{ r.bank }}</td>
+          <td class="money text-right">{{ r.otomax }}</td>
+          <td class="money text-right">{{ r.match }}</td>
+          <td class="money text-right">{{ r.discrepancy }}</td>
+          <td class="text-right">
+            <form method="post" action="{% url 'purge-day' %}" class="inline-flex items-center gap-2"
+                  onsubmit="return confirm('Hapus semua data tanggal {{ r.book_date|date:'Y-m-d' }}?')">
+              {% csrf_token %}
+              <input type="hidden" name="book_date" value="{{ r.book_date|date:'Y-m-d' }}">
+              {% if r.locked %}
+              <label class="flex items-center gap-1 text-xs text-slate-500">
+                <input type="checkbox" name="include_closed" value="1"> termasuk yang ditutup
+              </label>
+              {% endif %}
+              <button class="text-xs font-medium text-rose-600 hover:text-rose-500">Hapus</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="text-sm text-slate-400">Belum ada data.</p>
+  {% endif %}
+</div>
+
+<div class="card border-rose-300 dark:border-rose-800">
+  <h2 class="mb-1 font-semibold text-rose-700 dark:text-rose-400">Reset semua data transaksi</h2>
+  <p class="mb-3 text-sm text-slate-500">
+    Menghapus <b>seluruh</b> tanggal, termasuk yang sudah ditutup. Total sekarang:
+    {% for k, v in totals.items %}<span class="font-mono">{{ k }}={{ v }}</span>{% if not forloop.last %} · {% endif %}{% endfor %}.
+  </p>
+  <form method="post" action="{% url 'purge-all' %}" class="space-y-2"
+        onsubmit="return confirm('Hapus SEMUA data transaksi? Tidak bisa dibatalkan.')">
+    {% csrf_token %}
+    <label class="block text-sm">
+      <span class="text-slate-500">Ketik <code class="font-mono">HAPUS SEMUA</code> untuk konfirmasi</span>
+      <input type="text" name="confirm" autocomplete="off" required
+             class="mt-1 w-64 rounded-lg border border-slate-300 px-2 py-1 dark:border-slate-600 dark:bg-slate-800">
+    </label>
+    <label class="flex items-center gap-2 text-xs text-slate-500">
+      <input type="checkbox" name="include_history" value="1"> termasuk riwayat perubahan
+    </label>
+    <button class="btn bg-rose-600 text-white hover:bg-rose-500">Hapus semua data transaksi</button>
+  </form>
+</div>
+{% endblock %}

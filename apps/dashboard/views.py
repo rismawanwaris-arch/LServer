@@ -3,19 +3,28 @@ from __future__ import annotations
 from datetime import date
 
 from django.contrib import messages
-from django.contrib.auth.decorators import login_required
+from django.contrib.auth.decorators import login_required, user_passes_test
 from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from apps.core.enums import Channel
+from apps.ingest.models import BankMutation, ImportBatch, OtomaxEntry
 from apps.ingest.services import ImportBlocked, import_file
 from apps.recon.carry import carry_forward
 from apps.recon.close import DayHasDownstream, DayLocked, DayNotReady, close_day, reopen_day
 from apps.recon.engine import run_match
-from apps.recon.models import Adjustment, Discrepancy
+from apps.recon.models import Adjustment, Discrepancy, ReconDay
+from apps.recon.purge import (
+    DayIsClosed,
+    preview_all,
+    purge_all_transactions,
+    purge_day,
+)
 from apps.recon.resolve import write_off
 from apps.recon.selectors import alarm_discrepancies, cumulative_open_total, day_overview
+
+staff_only = user_passes_test(lambda u: u.is_superuser)
 
 
 def _parse_date(raw: str | None) -> date:
@@ -125,3 +134,60 @@ def resolve_view(request, pk: int):
     else:
         messages.info(request, "Gunakan tombol Jalankan Pencocokan untuk mencari pasangan otomatis.")
     return redirect(f"/?d={request.POST.get('book_date')}")
+
+
+# --- Hapus data --------------------------------------------------------------
+
+@login_required
+@staff_only
+def data_admin(request):
+    from apps.recon.models import Match
+
+    dates = set(ImportBatch.objects.values_list("book_date", flat=True)) | set(
+        ReconDay.objects.values_list("book_date", flat=True)
+    )
+    rows = []
+    for bd in sorted(dates, reverse=True):
+        day = ReconDay.objects.filter(book_date=bd).first()
+        rows.append({
+            "book_date": bd,
+            "locked": bool(day and day.locked),
+            "status": day.get_status_display() if day else "belum ada",
+            "bank": BankMutation.objects.filter(book_date=bd).count(),
+            "otomax": OtomaxEntry.objects.filter(book_date=bd).count(),
+            "match": Match.objects.filter(book_date=bd).count(),
+            "discrepancy": Discrepancy.objects.filter(origin_book_date=bd).count(),
+        })
+    return render(request, "dashboard/data.html", {"rows": rows, "totals": preview_all()})
+
+
+@login_required
+@staff_only
+@require_POST
+def purge_day_view(request):
+    book_date = _parse_date(request.POST.get("book_date"))
+    include_closed = request.POST.get("include_closed") == "1"
+    try:
+        counts = purge_day(book_date, include_closed=include_closed)
+    except DayIsClosed as exc:
+        messages.error(request, str(exc))
+        return redirect("data-admin")
+    total = sum(counts.values())
+    messages.success(request, f"Data tanggal {book_date} dihapus ({total} baris).")
+    return redirect("data-admin")
+
+
+@login_required
+@staff_only
+@require_POST
+def purge_all_view(request):
+    if request.POST.get("confirm") != "HAPUS SEMUA":
+        messages.error(request, 'Ketik persis "HAPUS SEMUA" untuk konfirmasi.')
+        return redirect("data-admin")
+    counts = purge_all_transactions(include_history=request.POST.get("include_history") == "1")
+    messages.success(
+        request,
+        f"Semua data transaksi dihapus ({sum(counts.values())} baris). "
+        "Reseller & mapping merchant tetap.",
+    )
+    return redirect("data-admin")
