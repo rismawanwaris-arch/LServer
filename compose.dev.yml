@@ -1,0 +1,13 @@
+# Postgres untuk dev di MacBook Air. `docker compose -f compose.dev.yml up -d`
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: laporan
+      POSTGRES_USER: laporan
+      POSTGRES_PASSWORD: laporan
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./data/pg-dev:/var/lib/postgresql/data

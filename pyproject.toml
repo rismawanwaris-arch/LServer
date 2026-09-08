@@ -1,0 +1,38 @@
+[project]
+name = "laporan-server"
+version = "0.1.0"
+description = "Rekonsiliasi harian mutasi bank (BRI/BCA/Merchant BCA/Mandiri) vs OTOMAX"
+requires-python = ">=3.12"
+dependencies = [
+    "django==5.1.*",
+    "psycopg[binary]==3.2.*",
+    "gunicorn==23.*",
+    "whitenoise==6.*",
+    "django-simple-history==3.7.*",
+    "django-htmx==1.19.*",
+    "environs[django]==11.*",
+    "python-dateutil==2.9.*",
+    "openpyxl==3.1.*",
+    "polars==1.*",
+    "rapidfuzz==3.*",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==8.*",
+    "pytest-django==4.*",
+    "ruff==0.6.*",
+]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings.dev"
+python_files = ["test_*.py"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["*/migrations/*"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "DJ"]

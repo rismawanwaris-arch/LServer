@@ -1,0 +1,48 @@
+# Deploy ZimaOS: docker compose -f compose.zima.yml up -d --build
+services:
+  app:
+    build: .
+    image: laporan-server:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.prod
+    ports:
+      - "8091:8000"            # 3000/8080 sudah terpakai di ZimaOS
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./data/media:/app/media
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 120"
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: laporan
+      POSTGRES_USER: laporan
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - ./data/pg:/var/lib/postgresql/data          # BIND MOUNT — bukan named volume
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U laporan"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      PGPASSWORD: ${DB_PASSWORD}
+    volumes:
+      - ./data/backups:/backups
+    entrypoint: >
+      sh -c "while true; do
+               pg_dump -h db -U laporan laporan | gzip > /backups/laporan_$$(date +%Y%m%d_%H%M).sql.gz;
+               find /backups -name '*.sql.gz' -mtime +14 -delete;
+               sleep 86400;
+             done"

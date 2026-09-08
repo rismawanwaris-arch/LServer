@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# Django
+*.log
+db.sqlite3
+/staticfiles/
+/media/
+.env
+
+# Tailwind build output
+apps/dashboard/static/css/tailwind.css
+
+# Data & backups (ZimaOS bind mounts)
+/data/
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.DS_Store
+tailwindcss

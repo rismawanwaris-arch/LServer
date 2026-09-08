@@ -1,0 +1,45 @@
+{% load static %}
+<!doctype html>
+<html lang="id" class="h-full">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Rekonsiliasi{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@600&display=swap">
+  <link rel="stylesheet" href="{% static 'css/tailwind.css' %}">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/htmx/2.0.3/htmx.min.js" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.14.1/cdn.min.js" defer></script>
+</head>
+<body class="min-h-full bg-slate-50 font-sans text-slate-900 dark:bg-slate-900 dark:text-slate-100">
+  <header class="border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800">
+    <div class="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
+      <a href="{% url 'day' %}" class="font-serif text-lg">Rekonsiliasi Harian</a>
+      {% if user.is_authenticated %}
+      <nav class="flex items-center gap-3 text-sm">
+        <a class="text-slate-500 hover:text-indigo-600" href="/admin/">Admin</a>
+        <form method="post" action="{% url 'logout' %}">{% csrf_token %}
+          <button class="text-slate-500 hover:text-rose-600">Keluar</button>
+        </form>
+      </nav>
+      {% endif %}
+    </div>
+  </header>
+
+  {% if messages %}
+  <div class="mx-auto max-w-6xl px-4 pt-4">
+    {% for m in messages %}
+    <div class="mb-2 rounded-lg border px-3 py-2 text-sm
+      {% if m.tags == 'error' %}border-rose-300 bg-rose-50 text-rose-800
+      {% elif m.tags == 'success' %}border-emerald-300 bg-emerald-50 text-emerald-800
+      {% else %}border-slate-300 bg-slate-100 text-slate-700{% endif %}">{{ m }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <main class="mx-auto max-w-6xl px-4 py-6">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>
