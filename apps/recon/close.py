@@ -7,10 +7,10 @@ from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
 
-from apps.core.enums import Channel, DayStatus, MatchStatus, OtomaxCategory
+from apps.core.enums import Channel, DayStatus, DiscrepancyStatus, MatchStatus, OtomaxCategory
 from apps.ingest.models import BankMutation, DebitIgnored, OtomaxEntry
 
-from .models import Discrepancy, Match, ReconDay
+from .models import Adjustment, Discrepancy, Match, ReconDay
 
 ZERO = Decimal("0.00")
 
@@ -20,6 +20,10 @@ class DayLocked(Exception):
 
 
 class DayNotReady(Exception):
+    pass
+
+
+class DayHasDownstream(Exception):
     pass
 
 
@@ -110,5 +114,37 @@ def close_day(book_date: date, *, user=None, force: bool = False) -> ReconDay:
     day.closed_by = user
     day.closed_at = timezone.now()
     day.recompute_selisih()
+    day.save()
+    return day
+
+
+@transaction.atomic
+def reopen_day(book_date: date, *, user=None, force: bool = False) -> ReconDay:
+    """Buka kembali hari yang keburu ditutup — hanya kalau belum ada dampak lanjutan.
+
+    Ditolak kalau sudah ada Adjustment bertanggal hari itu, atau ada Discrepancy
+    asal hari itu yang sudah RESOLVED/WRITTEN_OFF di hari lain. Pakai force untuk
+    menembus (berisiko desync — hanya untuk perbaikan darurat).
+    """
+    day = ReconDay.objects.select_for_update().get(book_date=book_date)
+    if not day.locked:
+        return day
+    if not force:
+        if Adjustment.objects.filter(book_date=book_date).exists():
+            raise DayHasDownstream(
+                f"{book_date} sudah menerima penyesuaian bertanggal — tidak bisa dibuka."
+            )
+        resolved = Discrepancy.objects.filter(
+            origin_book_date=book_date,
+            status__in=[DiscrepancyStatus.RESOLVED, DiscrepancyStatus.WRITTEN_OFF],
+        ).exists()
+        if resolved:
+            raise DayHasDownstream(
+                f"Ada selisih asal {book_date} yang sudah diselesaikan di hari lain — tidak bisa dibuka."
+            )
+    day.status = DayStatus.IN_REVIEW
+    day.locked = False
+    day.closed_by = None
+    day.closed_at = None
     day.save()
     return day

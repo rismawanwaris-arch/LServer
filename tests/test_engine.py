@@ -111,6 +111,39 @@ def test_carry_forward_resolves_and_posts_adjustment():
 
 
 @pytest.mark.django_db
+def test_reopen_day_when_no_downstream():
+    from apps.recon.close import reopen_day
+
+    _bank("ATMLTRPRM 01884 000001039 21540100059656", "550000")
+    close_day(BD, force=True)  # keburu tutup sebelum match
+    assert ReconDay.objects.get(book_date=BD).locked is True
+
+    reopen_day(BD)
+    day = ReconDay.objects.get(book_date=BD)
+    assert day.locked is False and day.status == "IN_REVIEW"
+
+    # sekarang bisa match + tutup lagi
+    _otomax("TARTUN EDC BRI ATMLTRPRM 01884 000001039 21540100059656", "550000")
+    assert run_match(BD).matched == 1
+    close_day(BD, force=True)
+    assert ReconDay.objects.get(book_date=BD).matched_count == 1
+
+
+@pytest.mark.django_db
+def test_reopen_blocked_after_adjustment_posted():
+    from apps.recon.close import DayHasDownstream, reopen_day
+
+    _bank("DANA20260905034895588601ASEPKURNIAWA", "1600000")
+    run_match(BD)
+    close_day(BD, force=True)
+    bd6 = date(2026, 9, 6)
+    _otomax("TARTUN TF BRI DANA20260905034895588601ASEPKURNIAWA", "1600000", book_date=bd6)
+    carry_forward(bd6)  # posting adjustment bertanggal BD
+    with pytest.raises(DayHasDownstream):
+        reopen_day(BD)
+
+
+@pytest.mark.django_db
 def test_closed_day_blocks_import():
     from apps.ingest.services import ImportBlocked, import_file
 

@@ -1,3 +1,4 @@
+{% load money %}
 <div class="card mt-6">
   <h2 class="mb-2 font-semibold">Selisih ({{ discrepancies|length }})</h2>
   <div class="overflow-x-auto">
@@ -17,7 +18,7 @@
             {% elif d.kind == 'AMOUNT_DIFF' %}<span class="badge-warn">nominal beda</span>
             {% else %}<span class="badge-mute">{{ d.kind }}</span>{% endif %}
           </td>
-          <td class="money text-right">Rp {{ d.amount }}</td>
+          <td class="money text-right">Rp&nbsp;{{ d.amount|rupiah }}</td>
           <td>
             {% if d.status == 'OPEN' %}<span class="badge-warn">OPEN</span>
             {% elif d.status == 'RESOLVED' %}<span class="badge-good">RESOLVED</span>

@@ -11,9 +11,9 @@ from django.views.decorators.http import require_POST
 from apps.core.enums import Channel
 from apps.ingest.services import ImportBlocked, import_file
 from apps.recon.carry import carry_forward
-from apps.recon.close import DayLocked, DayNotReady, close_day
+from apps.recon.close import DayHasDownstream, DayLocked, DayNotReady, close_day, reopen_day
 from apps.recon.engine import run_match
-from apps.recon.models import Discrepancy
+from apps.recon.models import Adjustment, Discrepancy
 from apps.recon.resolve import write_off
 from apps.recon.selectors import alarm_discrepancies, cumulative_open_total, day_overview
 
@@ -34,6 +34,15 @@ def day_view(request):
     ctx["alarms"] = alarm_discrepancies()
     ctx["cumulative_open"] = cumulative_open_total()
     ctx["channels"] = Channel.choices
+    day = ctx["day"]
+    ctx["can_reopen"] = bool(
+        day
+        and day.locked
+        and not Adjustment.objects.filter(book_date=book_date).exists()
+        and not Discrepancy.objects.filter(
+            origin_book_date=book_date, status__in=["RESOLVED", "WRITTEN_OFF"]
+        ).exists()
+    )
     return render(request, "dashboard/day.html", ctx)
 
 
@@ -88,7 +97,20 @@ def close_view(request):
     except (DayLocked, DayNotReady) as exc:
         messages.error(request, str(exc))
         return redirect(f"/?d={book_date}")
-    messages.success(request, f"Buku {day.book_date} ditutup. Selisih {day.selisih_initial}.")
+    messages.success(request, f"Buku {day.book_date} ditutup. Selisih Rp {day.selisih_initial:,.0f}.")
+    return redirect(f"/?d={book_date}")
+
+
+@login_required
+@require_POST
+def reopen_view(request):
+    book_date = _parse_date(request.POST.get("book_date"))
+    try:
+        reopen_day(book_date, user=request.user)
+    except DayHasDownstream as exc:
+        messages.error(request, str(exc))
+        return redirect(f"/?d={book_date}")
+    messages.success(request, f"Buku {book_date} dibuka kembali. Jalankan pencocokan lalu tutup lagi.")
     return redirect(f"/?d={book_date}")
 
 

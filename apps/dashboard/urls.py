@@ -8,6 +8,7 @@ urlpatterns = [
     path("upload/", views.upload, name="upload"),
     path("run/", views.run_engine, name="run-engine"),
     path("close/", views.close_view, name="close-day"),
+    path("reopen/", views.reopen_view, name="reopen-day"),
     path("discrepancy/<int:pk>/resolve/", views.resolve_view, name="resolve"),
     path("login/", auth_views.LoginView.as_view(template_name="dashboard/login.html"), name="login"),
     path("logout/", auth_views.LogoutView.as_view(next_page="login"), name="logout"),

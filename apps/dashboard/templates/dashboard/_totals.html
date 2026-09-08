@@ -1,16 +1,17 @@
+{% load money %}
 <div class="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
   {% for label, value in totals.items %}
   <div class="card">
     <div class="text-xs uppercase tracking-wide text-slate-500">{{ label }}</div>
     <div class="money mt-1 text-lg font-semibold
-      {% if label == 'selisih' and value %}text-rose-600{% endif %}">Rp {{ value }}</div>
+      {% if label == 'selisih' and value %}text-rose-600{% endif %}">Rp&nbsp;{{ value|rupiah }}</div>
   </div>
   {% endfor %}
 </div>
 {% if day.locked %}
 <p class="mt-2 text-xs text-slate-500">
-  Selisih saat tutup: <b class="money">Rp {{ day.selisih_initial }}</b> ·
-  setelah penyesuaian: <b class="money">Rp {{ day.selisih_current }}</b>
+  Selisih saat tutup: <b class="money">Rp&nbsp;{{ day.selisih_initial|rupiah }}</b> ·
+  setelah penyesuaian: <b class="money">Rp&nbsp;{{ day.selisih_current|rupiah }}</b>
   ({{ day.book_adjustments.count }} penyesuaian).
 </p>
 {% endif %}
