@@ -69,3 +69,24 @@ def test_classify_otomax(desc, category, hint):
 def test_strip_prefix_leaves_bank_ref():
     d = "TARTUN EDC BRI ATMLTRPRM 01884 000001039 21540100059656"
     assert strip_otomax_prefix(d) == "ATMLTRPRM 01884 000001039 21540100059656"
+
+
+def test_clean_mandiri_decimal():
+    from apps.core.normalize import clean_mandiri_decimal
+
+    assert clean_mandiri_decimal("6500.00.00") == "6500.00"
+    assert clean_mandiri_decimal("150000.00") == "150000.00"
+    assert clean_mandiri_decimal("2,500,000.00") == "2500000.00"
+
+
+def test_extract_tokens():
+    from apps.core.normalize import extract_tokens
+
+    tokens = extract_tokens("TARTUN TF BRI DANA20260905034895588601ASEPKURNIAWA PLC134")
+    assert "DANA20260905034895588601" in tokens
+    assert "20260905034895588601" in tokens
+    assert "PLC134" in tokens
+
+    bfst_tokens = extract_tokens("TRSF BFST215401000596563 TEGUH BIMA")
+    assert "BFST215401000596563" in bfst_tokens
+    assert "215401000596563" in bfst_tokens

@@ -11,7 +11,7 @@ from apps.ingest.models import BankMutation, ImportBatch, OtomaxEntry
 from apps.recon.carry import carry_forward
 from apps.recon.close import close_day
 from apps.recon.engine import run_match
-from apps.recon.models import Adjustment, Discrepancy, ReconDay
+from apps.recon.models import Adjustment, Discrepancy, Match, ReconDay
 
 BD = date(2026, 9, 5)
 
@@ -25,22 +25,38 @@ def _batch(channel):
 
 
 def _bank(desc, amount, channel=Channel.BRI, book_date=BD):
+    from apps.core.normalize import extract_tokens
+
     return BankMutation.objects.create(
-        import_batch=_batch(channel), channel=channel, book_date=book_date,
-        description_raw=desc, ref_normalized=norm_ref(desc), ref_core=ref_core(desc),
-        amount=Decimal(amount), row_hash=_h("b", desc, amount, book_date),
+        import_batch=_batch(channel),
+        channel=channel,
+        book_date=book_date,
+        description_raw=desc,
+        ref_normalized=norm_ref(desc),
+        ref_core=ref_core(desc),
+        extracted_tokens=extract_tokens(desc),
+        amount=Decimal(amount),
+        row_hash=_h("b", desc, amount, book_date),
     )
 
 
 def _otomax(desc, amount, channel=Channel.BRI, reseller=None, book_date=BD):
-    from apps.core.normalize import strip_otomax_prefix
+    from apps.core.normalize import extract_tokens, strip_otomax_prefix
 
     core = strip_otomax_prefix(desc)
     return OtomaxEntry.objects.create(
-        import_batch=_batch(Channel.OTOMAX), book_date=book_date, reseller_name_raw="X",
-        reseller=reseller, amount=Decimal(amount), description_raw=desc,
-        category=OtomaxCategory.TOPUP_TARTUN, channel_hint=channel,
-        ref_normalized=norm_ref(core), ref_core=ref_core(core), row_hash=_h("o", desc, amount, book_date),
+        import_batch=_batch(Channel.OTOMAX),
+        book_date=book_date,
+        reseller_name_raw="X",
+        reseller=reseller,
+        amount=Decimal(amount),
+        description_raw=desc,
+        category=OtomaxCategory.TOPUP_TARTUN,
+        channel_hint=channel,
+        ref_normalized=norm_ref(core),
+        ref_core=ref_core(core),
+        extracted_tokens=extract_tokens(core),
+        row_hash=_h("o", desc, amount, book_date),
     )
 
 
@@ -75,9 +91,14 @@ def test_qris_aggregate_and_amount_diff():
     r = Reseller.objects.create(code="ALFA2", name="Alfa 2")
     MerchantMap.objects.create(merchant_id="004767951", reseller=r)
     BankMutation.objects.create(
-        import_batch=_batch(Channel.MERCHANT_BCA), channel=Channel.MERCHANT_BCA, book_date=BD,
-        description_raw="QRIS ALFA 2 CELL", ref_normalized="QRIS", amount=Decimal("10760000"),
-        external_ref="004767951", row_hash="qb1",
+        import_batch=_batch(Channel.MERCHANT_BCA),
+        channel=Channel.MERCHANT_BCA,
+        book_date=BD,
+        description_raw="QRIS ALFA 2 CELL",
+        ref_normalized="QRIS",
+        amount=Decimal("10760000"),
+        external_ref="004767951",
+        row_hash="qb1",
     )
     _otomax("TARTUN QR BULK TGL 05-SEP-2026", "10700000", channel=Channel.MERCHANT_BCA, reseller=r)
     stats = run_match(BD)
@@ -166,3 +187,131 @@ def test_adjustment_is_append_only():
     adj.amount = Decimal("1")
     with pytest.raises(ValidationError):
         adj.save()
+
+
+@pytest.mark.django_db
+def test_tag_manual_mutation():
+    from apps.recon.resolve import tag_manual_mutation
+
+    bm = _bank("BIAYA ADM BULANAN", "-2500")
+    run_match(BD)
+    assert Discrepancy.objects.filter(bank_mutation=bm).count() == 1
+
+    tag_manual_mutation(bm, tag="admin", note="Potongan bank rutin")
+    bm.refresh_from_db()
+    assert bm.match_status == MatchStatus.MANUAL
+    assert bm.tag_manual == "admin"
+    assert bm.manual_note == "Potongan bank rutin"
+
+    disc = Discrepancy.objects.get(bank_mutation=bm)
+    assert disc.status == "RESOLVED"
+
+
+@pytest.mark.django_db
+def test_tartun_bulk_outlet_name_and_nominal_match():
+    # Merchant BCA row with outlet name ALFA 1 CELL
+    b = BankMutation.objects.create(
+        import_batch=_batch(Channel.MERCHANT_BCA),
+        channel=Channel.MERCHANT_BCA,
+        book_date=BD,
+        description_raw="QRIS ALFA 1 CELL 004767950",
+        ref_normalized="QRIS",
+        outlet_name="ALFA 1 CELL",
+        amount=Decimal("4374000"),
+        external_ref="004767950",
+        row_hash="bca_alfa1",
+    )
+    # Otomax tartun bulk with reseller PLC ALFA1 PASIR IMPUN
+    o = OtomaxEntry.objects.create(
+        import_batch=_batch(Channel.OTOMAX),
+        book_date=BD,
+        reseller_name_raw="PLC ALFA1 PASIR IMPUN",
+        amount=Decimal("4374000"),
+        description_raw="TARTUN QR BULK TGL 05-SEP-2026",
+        category=OtomaxCategory.TOPUP_TARTUN,
+        channel_hint=Channel.MERCHANT_BCA,
+        ref_normalized="TARTUN",
+        row_hash="oto_alfa1",
+    )
+    stats = run_match(BD)
+    assert stats.matched == 1
+    assert stats.discrepancies == 0
+
+    b.refresh_from_db()
+    o.refresh_from_db()
+    assert b.match_status == MatchStatus.MATCHED
+    assert o.match_status == MatchStatus.MATCHED
+
+
+@pytest.mark.django_db
+def test_tartun_bulk_exact_nominal_fallback():
+    # If outlet name does not match, match by unambiguous exact nominal
+    b = BankMutation.objects.create(
+        import_batch=_batch(Channel.MERCHANT_BCA),
+        channel=Channel.MERCHANT_BCA,
+        book_date=BD,
+        description_raw="QRIS OUTLET UNKNOWN 00999999",
+        ref_normalized="QRIS",
+        outlet_name="UNKNOWN OUTLET",
+        amount=Decimal("1234567"),
+        external_ref="00999999",
+        row_hash="bca_unk",
+    )
+    o = OtomaxEntry.objects.create(
+        import_batch=_batch(Channel.OTOMAX),
+        book_date=BD,
+        reseller_name_raw="PLC SOME RESELLER",
+        amount=Decimal("1234567"),
+        description_raw="TARTUN QR BULK TGL 05-SEP-2026",
+        category=OtomaxCategory.TOPUP_TARTUN,
+        channel_hint=Channel.MERCHANT_BCA,
+        ref_normalized="TARTUN",
+        row_hash="oto_some",
+    )
+    stats = run_match(BD)
+    assert stats.matched == 1
+    b.refresh_from_db()
+    o.refresh_from_db()
+    assert b.match_status == MatchStatus.MATCHED
+    assert o.match_status == MatchStatus.MATCHED
+
+
+@pytest.mark.django_db
+def test_tartun_plc_auto_deposit_nominal_match():
+    # BCA Bank mutation with Tartun PLC
+    b = BankMutation.objects.create(
+        import_batch=_batch(Channel.BCA),
+        channel=Channel.BCA,
+        book_date=BD,
+        description_raw="TRSF E-BANKING CR 0309/FTSCY/WS95271 3190000.00  Tartun PLC111 DEDE SUMPENA B.",
+        ref_normalized="TRSF E BANKING CR TARTUN PLC111 DEDE SUMPENA B",
+        ref_core="PLC111",
+        extracted_tokens=["PLC111"],
+        amount=Decimal("3190000"),
+        row_hash="bca_plc111",
+    )
+    # Otomax entry with Auto Deposit BCA
+    o = OtomaxEntry.objects.create(
+        import_batch=_batch(Channel.OTOMAX),
+        book_date=BD,
+        reseller_name_raw="PLC BUNISARI",
+        amount=Decimal("3190000"),
+        description_raw="Auto Deposit BCA 4373433015",
+        category=OtomaxCategory.TOPUP_TARTUN,
+        channel_hint=Channel.BCA,
+        ref_normalized="AUTO DEPOSIT BCA 4373433015",
+        row_hash="oto_bunisari",
+    )
+    stats = run_match(BD)
+    assert stats.matched == 1
+
+    b.refresh_from_db()
+    o.refresh_from_db()
+    assert b.match_status == MatchStatus.MATCHED
+    assert o.match_status == MatchStatus.MATCHED
+
+    m = Match.objects.filter(bank_mutation=b).first()
+    assert m is not None
+    assert m.amount_bank == Decimal("3190000")
+    assert m.amount_otomax == Decimal("3190000")
+    assert "Auto Deposit" in m.note

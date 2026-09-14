@@ -22,7 +22,16 @@ class MatchStatus(models.TextChoices):
     UNMATCHED = "UNMATCHED", "Belum cocok"
     MATCHED = "MATCHED", "Cocok (otomatis)"
     MANUAL = "MANUAL", "Cocok (manual)"
+    PENDING_SETTLE = "PENDING_SETTLE", "Pending Settle"
     IGNORED = "IGNORED", "Diabaikan"
+
+
+class ManualTag(models.TextChoices):
+    ADMIN = "admin", "Biaya Admin"
+    TARIK_TUNAI = "tarik_tunai", "Tarik Tunai"
+    SETOR_TUNAI = "setor_tunai", "Setor Tunai"
+    REVISI = "revisi", "Revisi"
+    LAINNYA = "lainnya", "Lainnya"
 
 
 class OtomaxCategory(models.TextChoices):

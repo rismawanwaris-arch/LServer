@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Antrean Review Manual — RekonMutasi{% endblock %}
+
+{% block content %}
+<div class="mb-6 flex flex-wrap items-center justify-between gap-4">
+  <div>
+    <h1 class="font-serif text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Antrean Review Manual</h1>
+    <p class="text-sm text-slate-500 mt-1">
+      Mutasi rekening bank yang tidak memiliki pasangan di Otomax (mis. biaya admin, tarik/setor tunai, atau revisi) untuk tanggal <b>{{ book_date|date:"d F Y" }}</b>.
+    </p>
+  </div>
+
+  <form method="get" class="flex items-center gap-2">
+    <input type="hidden" name="tab" value="{{ tab }}">
+    <input type="date" name="d" value="{{ book_date|date:'Y-m-d' }}"
+           class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium shadow-xs dark:border-slate-600 dark:bg-slate-800">
+    <button class="btn-ghost">Ganti Tanggal</button>
+  </form>
+</div>
+
+<!-- Tabs & Channel Filter -->
+<div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-700 mb-6">
+  <div class="flex items-center gap-2">
+    <a href="{% url 'manual-review' %}?d={{ book_date|date:'Y-m-d' }}&tab=unmatched{% if selected_channel %}&channel={{ selected_channel }}{% endif %}"
+       class="px-4 py-2.5 text-sm font-semibold border-b-2 transition -mb-px flex items-center gap-2
+       {% if tab == 'unmatched' %}border-amber-500 text-amber-600 dark:text-amber-400{% else %}border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200{% endif %}">
+      <span>Perlu Review (Belum Di-tag)</span>
+      <span class="rounded-full bg-amber-100 text-amber-800 px-2 py-0.5 text-xs font-bold dark:bg-amber-900/50 dark:text-amber-200">{{ unmatched_count }}</span>
+      <span class="text-xs font-semibold text-amber-600 dark:text-amber-400">· Rp {{ unmatched_total|rupiah }}</span>
+    </a>
+    <a href="{% url 'manual-review' %}?d={{ book_date|date:'Y-m-d' }}&tab=tagged{% if selected_channel %}&channel={{ selected_channel }}{% endif %}"
+       class="px-4 py-2.5 text-sm font-semibold border-b-2 transition -mb-px flex items-center gap-2
+       {% if tab == 'tagged' %}border-emerald-500 text-emerald-600 dark:text-emerald-400{% else %}border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200{% endif %}">
+      <span>Sudah Di-tag (Matched Manual)</span>
+      <span class="rounded-full bg-slate-100 text-slate-700 px-2 py-0.5 text-xs font-bold dark:bg-slate-700 dark:text-slate-300">{{ tagged_count }}</span>
+      <span class="text-xs font-semibold text-emerald-600 dark:text-emerald-400">· Rp {{ tagged_total|rupiah }}</span>
+    </a>
+  </div>
+
+  <form method="get" class="flex items-center gap-2 pb-2">
+    <input type="hidden" name="d" value="{{ book_date|date:'Y-m-d' }}">
+    <input type="hidden" name="tab" value="{{ tab }}">
+    <select name="channel" onchange="this.form.submit()" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium dark:border-slate-600 dark:bg-slate-800">
+      <option value="">Semua Bank</option>
+      {% for val, label in channels %}
+      <option value="{{ val }}" {% if selected_channel == val %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </form>
+</div>
+
+<!-- Summary KPI Bar -->
+<div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+  <div class="card p-4 flex items-center justify-between border-l-4 border-amber-500 bg-amber-50/20 dark:bg-slate-800/80">
+    <div>
+      <p class="text-xs font-bold text-amber-700 dark:text-amber-400 uppercase tracking-wider">Antrean Belum Di-tag</p>
+      <p class="text-2xl font-black text-slate-900 dark:text-white mt-1">{{ unmatched_count }} <span class="text-xs font-normal text-slate-500">transaksi</span></p>
+    </div>
+    <div class="text-right">
+      <p class="text-xs font-semibold text-slate-500 dark:text-slate-400">Total Nominal Menggantung</p>
+      <p class="money text-xl font-black text-amber-600 dark:text-amber-400 mt-1">Rp {{ unmatched_total|rupiah }}</p>
+    </div>
+  </div>
+
+  <div class="card p-4 flex items-center justify-between border-l-4 border-emerald-500 bg-emerald-50/20 dark:bg-slate-800/80">
+    <div>
+      <p class="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">Sudah Di-tag Manual</p>
+      <p class="text-2xl font-black text-slate-900 dark:text-white mt-1">{{ tagged_count }} <span class="text-xs font-normal text-slate-500">transaksi</span></p>
+    </div>
+    <div class="text-right">
+      <p class="text-xs font-semibold text-slate-500 dark:text-slate-400">Total Nominal Diselesaikan</p>
+      <p class="money text-xl font-black text-emerald-600 dark:text-emerald-400 mt-1">Rp {{ tagged_total|rupiah }}</p>
+    </div>
+  </div>
+</div>
+
+<!-- Tab Content: Unmatched Review Queue (PRD Section 9.4) -->
+{% if tab == 'unmatched' %}
+<div class="space-y-4">
+  {% for b in items %}
+  <div class="card p-4 hover:border-slate-300 dark:hover:border-slate-600 transition">
+    <div class="grid gap-4 md:grid-cols-12 items-start">
+      <!-- Info Mutasi (Col 1-7) -->
+      <div class="md:col-span-7 space-y-2">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="flex items-center gap-2">
+            <span class="badge-mute font-bold">{{ b.channel }}</span>
+            <span class="text-xs text-slate-400">{{ b.txn_datetime|date:"d M Y H:i"|default:b.book_date }}</span>
+            {% if b.outlet_name %}
+            <span class="text-xs text-slate-500 font-medium">· Outlet: <b>{{ b.outlet_name }}</b></span>
+            {% endif %}
+          </div>
+          <!-- Badge Nominal di Kolom Kiri -->
+          <span class="money font-black text-sm text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-3 py-1 rounded-lg border border-emerald-200 dark:border-emerald-800 shadow-2xs">
+            Rp {{ b.amount|rupiah }}
+          </span>
+        </div>
+
+        <div class="font-mono text-sm font-semibold text-slate-900 dark:text-white leading-relaxed">
+          {{ b.description_raw }}
+        </div>
+
+        {% if b.extracted_tokens %}
+        <div class="flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
+          <span>Token:</span>
+          {% for tk in b.extracted_tokens %}
+          <span class="badge-info text-[11px] font-mono">{{ tk }}</span>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+
+      <!-- Nominal & Form Tagging (Col 8-12) -->
+      <div class="md:col-span-5 bg-slate-100 p-3.5 rounded-xl border border-slate-200 dark:bg-slate-800 dark:border-slate-700 shadow-xs">
+        <div class="flex items-baseline justify-between mb-2.5 pb-2 border-b border-slate-200 dark:border-slate-700">
+          <span class="text-xs text-slate-600 dark:text-slate-400 font-semibold">Nominal Bank:</span>
+          <span class="money font-black text-lg text-slate-900 dark:text-emerald-400">
+            Rp {{ b.amount|rupiah }}
+          </span>
+        </div>
+
+        <!-- Tagging Form (PRD Section 5 & 9.4) -->
+        <form method="post" action="{% url 'manual-tag-action' b.id %}" class="space-y-2">
+          {% csrf_token %}
+          <input type="hidden" name="book_date" value="{{ book_date|date:'Y-m-d' }}">
+
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-0.5">Tag Kategori</label>
+              <select name="tag" required class="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
+                <option value="">-- Pilih Tag --</option>
+                {% for tag_val, tag_label in manual_tags %}
+                <option value="{{ tag_val }}">{{ tag_label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-0.5">Catatan (opsional)</label>
+              <input type="text" name="note" placeholder="Catatan..."
+                     class="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
+            </div>
+          </div>
+
+          <button type="submit" class="btn-primary w-full justify-center py-1.5 text-xs font-bold">
+            Simpan Tag (Matched Manual)
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+  {% empty %}
+  <div class="card text-center py-12 text-slate-400">
+    <svg class="h-10 w-10 mx-auto text-emerald-500 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+    <div class="font-semibold text-slate-700 dark:text-slate-200">Antrean Review Kosong!</div>
+    <p class="text-xs text-slate-500 mt-1">Semua mutasi bank pada tanggal ini telah cocok atau telah di-tag manual.</p>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- Tab Content: Tagged Manual -->
+{% else %}
+<div class="card overflow-hidden p-0">
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead>
+        <tr>
+          <th>Waktu / Tanggal</th>
+          <th>Channel</th>
+          <th>Keterangan Bank</th>
+          <th class="text-right">Nominal</th>
+          <th>Tag Kategori</th>
+          <th>Catatan</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for b in items %}
+        <tr>
+          <td class="font-mono text-xs text-slate-500 whitespace-nowrap">{{ b.txn_datetime|date:"d M H:i"|default:b.book_date }}</td>
+          <td class="font-bold text-xs">{{ b.channel }}</td>
+          <td class="font-mono text-xs max-w-xs truncate text-slate-800 dark:text-slate-200">{{ b.description_raw }}</td>
+          <td class="money text-right font-semibold">Rp {{ b.amount|rupiah }}</td>
+          <td>
+            <span class="badge-good text-xs">{{ b.get_tag_manual_display }}</span>
+          </td>
+          <td class="text-xs text-slate-600 dark:text-slate-300">{{ b.manual_note|default:"—" }}</td>
+          <td><span class="badge-mute">MATCHED MANUAL</span></td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="7" class="text-center py-10 text-slate-400">
+            Belum ada mutasi yang di-tag manual pada tanggal ini.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

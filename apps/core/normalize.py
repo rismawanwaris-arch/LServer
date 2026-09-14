@@ -38,6 +38,16 @@ def parse_rupiah(raw: str | None) -> Decimal | None:
     return -value if negative else value
 
 
+def clean_mandiri_decimal(raw: str | None) -> str:
+    """Bersihkan anomali angka Mandiri seperti '6500.00.00' -> '6500.00'."""
+    if not raw:
+        return "0"
+    s = raw.strip().replace(",", "")
+    # Jika ada pola dobel desimal seperti 6500.00.00, ambil satu desimal saja
+    s = re.sub(r"(\.\d{2})\.\d{2}$", r"\1", s)
+    return s
+
+
 # --- Referensi ----------------------------------------------------------------
 
 _WS = re.compile(r"\s+")
@@ -45,9 +55,12 @@ _EDC_CORE = re.compile(r"#(\d{6,})#")
 _DANA = re.compile(r"DANA(\d{12,})")
 _ATM = re.compile(r"ATM[LS]TRPRM\s+([0-9A-Z]+)\s+(\d+)")
 _BIFAST = re.compile(r"BFST(\d{10,})")
+_WBNK = re.compile(r"WBNK(\d{10,})")
 _GOPAY = re.compile(r"GOPAY BANK TRANSFER ID([0-9A-Z]+)")
 _BRILINK = re.compile(r"TRANSFER DARI (\d{10,}) VIA BRILINK")
 _OVERBOOK = re.compile(r"(\d{6,}_OB_\d{6,})")
+_PLC = re.compile(r"\b(PLC\w+)\b")
+_DIGITS_LONG = re.compile(r"\b\d{10,}\b")
 
 _OTOMAX_PREFIXES = (
     "REV TARTUN EDC BRI ",
@@ -81,14 +94,65 @@ def strip_otomax_prefix(s: str | None) -> str:
 def ref_core(s: str | None) -> str:
     """Token angka paling stabil dari sebuah keterangan. '' kalau tak ketemu."""
     t = norm_ref(s)
-    for pattern in (_EDC_CORE, _DANA, _BIFAST, _GOPAY, _BRILINK, _OVERBOOK):
+    for pattern in (_EDC_CORE, _DANA, _BIFAST, _WBNK, _GOPAY, _BRILINK, _OVERBOOK):
         m = pattern.search(t)
         if m:
             return m.group(1)
     m = _ATM.search(t)
     if m:
         return f"{m.group(1)}-{m.group(2)}"
+    m = _PLC.search(t)
+    if m:
+        return m.group(1)
     return ""
+
+
+def extract_tokens(s: str | None) -> list[str]:
+    """Ekstrak semua token referensi dari keterangan untuk pencocokan deterministik."""
+    if not s:
+        return []
+    text = norm_ref(s)
+    tokens: list[str] = []
+
+    def add(t: str):
+        cleaned = re.sub(r"^[#\s]+|[#\s]+$", "", t).strip()
+        if cleaned and cleaned not in tokens:
+            tokens.append(cleaned)
+
+    # 1. Pola token spesifik
+    for m in re.finditer(r"DANA\d{10,}", text):
+        add(m.group(0))
+        add(m.group(0)[4:])
+    for m in re.finditer(r"BFST\d{10,}", text):
+        add(m.group(0))
+        add(m.group(0)[4:])
+    for m in re.finditer(r"WBNK\d{10,}", text):
+        add(m.group(0))
+        add(m.group(0)[4:])
+    for m in _ATM.finditer(text):
+        add(f"{m.group(1)}-{m.group(2)}")
+        add(m.group(2))
+    for m in _PLC.finditer(text):
+        add(m.group(0))
+    for m in _EDC_CORE.finditer(text):
+        add(m.group(1))
+    for m in _BRILINK.finditer(text):
+        add(m.group(1))
+    for m in _OVERBOOK.finditer(text):
+        add(m.group(0))
+    for m in _GOPAY.finditer(text):
+        add(m.group(1))
+
+    # 2. Sequence angka panjang (>= 10 digit) yang belum tertangkap
+    for m in _DIGITS_LONG.finditer(text):
+        add(m.group(0))
+
+    # 3. Masukkan juga ref_core jika ada
+    rc = ref_core(text)
+    if rc:
+        add(rc)
+
+    return tokens
 
 
 def match_key(s: str | None) -> tuple[str, str]:
@@ -105,6 +169,12 @@ _TARTUN_CHANNEL = [
     (re.compile(r"\bTARTUN QR\b"), Channel.MERCHANT_BCA),
     (re.compile(r"\bBAYAR KE BRI\b"), Channel.BRI),
     (re.compile(r"\bTIKET DEPOSIT BRI\b"), Channel.BRI),
+    (re.compile(r"\b(?:AUTO|TIKET)?\s*DEPOSIT BCA\b"), Channel.BCA),
+    (re.compile(r"\b(?:AUTO|TIKET)?\s*DEPOSIT BRI\b"), Channel.BRI),
+    (re.compile(r"\b(?:AUTO|TIKET)?\s*DEPOSIT MANDIRI\b"), Channel.MANDIRI),
+    (re.compile(r"\bDEPOSIT -? ?BCA\b"), Channel.BCA),
+    (re.compile(r"\bDEPOSIT -? ?BRI\b"), Channel.BRI),
+    (re.compile(r"\bDEPOSIT -? ?MANDIRI\b"), Channel.MANDIRI),
 ]
 
 
@@ -119,15 +189,13 @@ def classify_otomax(description: str | None) -> tuple[str, str | None]:
         return OtomaxCategory.STOR_OUT, None
     if t.startswith("STOR "):
         return OtomaxCategory.STOR_IN, None
-    if t.startswith("DEPOSIT"):
-        return OtomaxCategory.DEPOSIT, None
-    if t.startswith("TIKET DEPOSIT"):
-        return OtomaxCategory.TOPUP_TARTUN, Channel.BRI
+    if t.startswith("AUTO DEPOSIT") or t.startswith("TIKET DEPOSIT") or t.startswith("DEPOSIT"):
+        return OtomaxCategory.TOPUP_TARTUN, _channel_hint(t)
     if t.startswith("BAYAR KE BRI"):
         return OtomaxCategory.PAYMENT, Channel.BRI
     if t.startswith("TARTUN "):
         return OtomaxCategory.TOPUP_TARTUN, _channel_hint(t)
-    return OtomaxCategory.OTHER, None
+    return OtomaxCategory.OTHER, _channel_hint(t)
 
 
 def _channel_hint(t: str) -> str | None:

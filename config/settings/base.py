@@ -24,6 +24,7 @@ INSTALLED_APPS = [
     "apps.ingest",
     "apps.recon",
     "apps.dashboard",
+    "apps.api",
 ]
 
 MIDDLEWARE = [

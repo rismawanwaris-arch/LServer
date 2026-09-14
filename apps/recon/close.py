@@ -29,9 +29,7 @@ class DayHasDownstream(Exception):
 
 def compute_totals(book_date: date) -> dict:
     def bank_sum(channel):
-        return BankMutation.objects.filter(book_date=book_date, channel=channel).aggregate(
-            s=Sum("amount")
-        )["s"] or ZERO
+        return BankMutation.objects.filter(book_date=book_date, channel=channel).aggregate(s=Sum("amount"))["s"] or ZERO
 
     totals = {
         "bri": bank_sum(Channel.BRI),
@@ -40,9 +38,12 @@ def compute_totals(book_date: date) -> dict:
         "mandiri": bank_sum(Channel.MANDIRI),
     }
     totals["bank"] = sum(totals.values(), ZERO)
-    totals["otomax"] = OtomaxEntry.objects.filter(
-        book_date=book_date, category=OtomaxCategory.TOPUP_TARTUN
-    ).aggregate(s=Sum("amount"))["s"] or ZERO
+    totals["otomax"] = (
+        OtomaxEntry.objects.filter(book_date=book_date, category=OtomaxCategory.TOPUP_TARTUN).aggregate(
+            s=Sum("amount")
+        )["s"]
+        or ZERO
+    )
     totals["selisih"] = totals["bank"] - totals["otomax"]
     return totals
 
@@ -56,9 +57,7 @@ def build_snapshot(book_date: date) -> dict:
         .order_by("reseller__code")
     )
     discrepancies = list(
-        Discrepancy.objects.filter(origin_book_date=book_date).values(
-            "code", "kind", "channel", "amount", "status"
-        )
+        Discrepancy.objects.filter(origin_book_date=book_date).values("code", "kind", "channel", "amount", "status")
     )
     return {
         "book_date": book_date.isoformat(),
@@ -131,9 +130,7 @@ def reopen_day(book_date: date, *, user=None, force: bool = False) -> ReconDay:
         return day
     if not force:
         if Adjustment.objects.filter(book_date=book_date).exists():
-            raise DayHasDownstream(
-                f"{book_date} sudah menerima penyesuaian bertanggal — tidak bisa dibuka."
-            )
+            raise DayHasDownstream(f"{book_date} sudah menerima penyesuaian bertanggal — tidak bisa dibuka.")
         resolved = Discrepancy.objects.filter(
             origin_book_date=book_date,
             status__in=[DiscrepancyStatus.RESOLVED, DiscrepancyStatus.WRITTEN_OFF],

@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Riwayat & Laporan Rekonsiliasi — RekonMutasi{% endblock %}
+
+{% block content %}
+<div class="mb-6 flex flex-wrap items-center justify-between gap-4">
+  <div>
+    <h1 class="font-serif text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Riwayat & Laporan Rekonsiliasi</h1>
+    <p class="text-sm text-slate-500 mt-1">
+      Rekapitulasi per tanggal dan ekspor data pencocokan mutasi bank vs Otomax.
+    </p>
+  </div>
+
+  <!-- Export Excel Button (PRD Section 9.6) -->
+  <a href="{% url 'reports-export' %}?start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}"
+     class="btn-secondary">
+    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+    Export ke Excel (.xlsx)
+  </a>
+</div>
+
+<!-- Date Range Filter Form -->
+<div class="card mb-6 p-4">
+  <form method="get" class="flex flex-wrap items-end gap-4">
+    <div>
+      <label class="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Dari Tanggal</label>
+      <input type="date" name="start_date" value="{{ start_date|date:'Y-m-d' }}"
+             class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium dark:border-slate-600 dark:bg-slate-800">
+    </div>
+
+    <div>
+      <label class="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Sampai Tanggal</label>
+      <input type="date" name="end_date" value="{{ end_date|date:'Y-m-d' }}"
+             class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium dark:border-slate-600 dark:bg-slate-800">
+    </div>
+
+    <button type="submit" class="btn-primary py-1.5 text-xs">Terapkan Filter Rentang</button>
+  </form>
+</div>
+
+<!-- Aggregated Summary for the Range -->
+<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-6">
+  <div class="card border-l-4 border-l-blue-500">
+    <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Total Masuk Bank (Periode)</div>
+    <div class="money mt-1 text-xl font-bold text-slate-900 dark:text-white">Rp {{ summary.total_bank|rupiah }}</div>
+  </div>
+  <div class="card border-l-4 border-l-indigo-500">
+    <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Total Otomax (Periode)</div>
+    <div class="money mt-1 text-xl font-bold text-slate-900 dark:text-white">Rp {{ summary.total_otomax|rupiah }}</div>
+  </div>
+  <div class="card border-l-4 border-l-emerald-500">
+    <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Total Matched (Auto + Manual)</div>
+    <div class="money mt-1 text-xl font-bold text-emerald-600">
+      {{ summary.matched_auto_count|add:summary.matched_manual_count }} transaksi
+    </div>
+  </div>
+  <div class="card border-l-4 {% if summary.selisih == 0 %}border-l-emerald-500{% else %}border-l-rose-500{% endif %}">
+    <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Selisih Bersih Periode</div>
+    <div class="money mt-1 text-xl font-bold {% if summary.selisih == 0 %}text-emerald-600{% else %}text-rose-600{% endif %}">
+      Rp {{ summary.selisih|rupiah }}
+    </div>
+  </div>
+</div>
+
+<!-- Rekapitulasi Harian Table -->
+<div class="card overflow-hidden p-0 mb-6">
+  <div class="px-5 py-4 border-b border-slate-100 dark:border-slate-700 font-bold text-slate-900 dark:text-white">
+    Rekapitulasi Harian ({{ start_date|date:"d M Y" }} — {{ end_date|date:"d M Y" }})
+  </div>
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead>
+        <tr>
+          <th>Tanggal Buku</th>
+          <th>Status</th>
+          <th class="text-right">Total Bank</th>
+          <th class="text-right">Total Otomax</th>
+          <th class="text-right">Selisih</th>
+          <th class="text-center">Matched Auto</th>
+          <th class="text-center">Tag Manual</th>
+          <th class="text-center">Selisih Bank</th>
+          <th class="text-center">Pending Settle</th>
+          <th class="text-right">Aksi</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in daily_rows %}
+        <tr>
+          <td class="font-bold text-xs">{{ row.book_date|date:"d M Y" }}</td>
+          <td>
+            {% if row.day_locked %}<span class="badge-mute text-[10px]">DITUTUP</span>
+            {% elif row.day_status == 'IN_REVIEW' %}<span class="badge-warn text-[10px]">REVIEW</span>
+            {% else %}<span class="badge-mute text-[10px]">{{ row.day_status }}</span>{% endif %}
+          </td>
+          <td class="money text-right font-medium">Rp {{ row.total_bank|rupiah }}</td>
+          <td class="money text-right font-medium">Rp {{ row.total_otomax|rupiah }}</td>
+          <td class="money text-right font-bold {% if row.selisih != 0 %}text-rose-600{% else %}text-emerald-600{% endif %}">
+            Rp {{ row.selisih|rupiah }}
+          </td>
+          <td class="text-center font-mono text-xs text-emerald-600">{{ row.matched_auto_count }}</td>
+          <td class="text-center font-mono text-xs text-slate-600">{{ row.matched_manual_count }}</td>
+          <td class="text-center font-mono text-xs {% if row.unmatched_bank_count > 0 %}text-amber-600 font-bold{% else %}text-slate-400{% endif %}">
+            {{ row.unmatched_bank_count }}
+          </td>
+          <td class="text-center font-mono text-xs {% if row.pending_settle_count > 0 %}text-purple-600 font-bold{% else %}text-slate-400{% endif %}">
+            {{ row.pending_settle_count }}
+          </td>
+          <td class="text-right">
+            <a href="{% url 'day' %}?d={{ row.book_date|date:'Y-m-d' }}" class="text-xs text-indigo-600 hover:underline font-medium">
+              Buka Dashboard &rarr;
+            </a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="10" class="text-center py-8 text-slate-400">Tidak ada tanggal dalam rentang ini.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

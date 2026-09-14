@@ -11,11 +11,11 @@ _BANK = {
 }
 
 
-def parse_file(channel: str, text: str) -> ParseResult:
+def parse_file(channel: str, content: str | bytes) -> ParseResult:
     if channel == Channel.OTOMAX:
-        return otomax.parse(text)
+        return otomax.parse(content)
     try:
-        return _BANK[channel](text)
+        return _BANK[channel](content)
     except KeyError as exc:
         raise ParserError(f"channel tidak dikenal: {channel}") from exc
 

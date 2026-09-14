@@ -34,7 +34,15 @@ class AdjustmentAdmin(admin.ModelAdmin):
 
 @admin.register(ReconDay)
 class ReconDayAdmin(SimpleHistoryAdmin):
-    list_display = ["book_date", "status", "locked", "total_in_bank", "total_out_otomax",
-                    "selisih_initial", "selisih_current", "unmatched_count"]
+    list_display = [
+        "book_date",
+        "status",
+        "locked",
+        "total_in_bank",
+        "total_out_otomax",
+        "selisih_initial",
+        "selisih_current",
+        "unmatched_count",
+    ]
     list_filter = ["status", "locked"]
     readonly_fields = [f.name for f in ReconDay._meta.fields]

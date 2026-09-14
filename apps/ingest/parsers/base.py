@@ -11,6 +11,7 @@ class ParsedBankRow:
     amount: Decimal  # bertanda; positif = kredit, negatif = debit
     txn_datetime: datetime | None = None
     external_ref: str = ""
+    outlet_name: str = ""
     frequency: int | None = None
     review_flag: str = ""
 
@@ -33,3 +34,15 @@ class ParseResult:
 
 class ParserError(ValueError):
     pass
+
+
+def to_text(content: str | bytes) -> str:
+    """Konversi bytes ke str dengan aman mendukung berbagai encoding CSV bank."""
+    if isinstance(content, str):
+        return content
+    for enc in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+        try:
+            return content.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return content.decode("utf-8", errors="replace")

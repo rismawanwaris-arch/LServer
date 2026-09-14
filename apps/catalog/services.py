@@ -10,11 +10,7 @@ def resolve_reseller(raw_name: str | None) -> Reseller | None:
     key = norm_ref(raw_name)
     if not key:
         return None
-    alias = (
-        ResellerAlias.objects.select_related("reseller")
-        .filter(alias_norm=key)
-        .first()
-    )
+    alias = ResellerAlias.objects.select_related("reseller").filter(alias_norm=key).first()
     return alias.reseller if alias else None
 
 

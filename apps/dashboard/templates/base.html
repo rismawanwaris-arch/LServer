@@ -4,45 +4,145 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Rekonsiliasi{% endblock %}</title>
+  <title>{% block title %}Rekonsiliasi Mutasi vs Otomax{% endblock %}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@600&display=swap">
-  <link rel="stylesheet" href="{% static 'css/tailwind.css' %}">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:wght@600&display=swap">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"IBM Plex Sans"', 'sans-serif'],
+            mono: ['"IBM Plex Mono"', 'monospace'],
+            serif: ['"IBM Plex Serif"', 'serif'],
+          }
+        }
+      }
+    }
+  </script>
+  <style type="text/tailwindcss">
+    @layer components {
+      .card {
+        @apply rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800;
+      }
+      .btn {
+        @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:opacity-50 disabled:pointer-events-none;
+      }
+      .btn-primary {
+        @apply btn bg-indigo-600 text-white shadow-sm hover:bg-indigo-700;
+      }
+      .btn-secondary {
+        @apply btn bg-emerald-600 text-white shadow-sm hover:bg-emerald-700;
+      }
+      .btn-ghost {
+        @apply btn border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700;
+      }
+      .btn-danger {
+        @apply btn bg-rose-600 text-white hover:bg-rose-700;
+      }
+      .badge {
+        @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold;
+      }
+      .badge-good { @apply badge bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300; }
+      .badge-warn { @apply badge bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300; }
+      .badge-crit { @apply badge bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300; }
+      .badge-mute { @apply badge bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300; }
+      .badge-info { @apply badge bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300; }
+      .money { font-variant-numeric: tabular-nums; }
+      th, td { @apply px-3.5 py-2.5 text-left; }
+      thead th { @apply text-xs font-bold uppercase tracking-wider text-slate-500 bg-slate-50/75 dark:bg-slate-800/80; }
+      tbody tr { @apply border-t border-slate-100 transition hover:bg-slate-50/50 dark:border-slate-700/60 dark:hover:bg-slate-800/50; }
+    }
+  </style>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/htmx/2.0.3/htmx.min.js" defer></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.14.1/cdn.min.js" defer></script>
 </head>
-<body class="min-h-full bg-slate-50 font-sans text-slate-900 dark:bg-slate-900 dark:text-slate-100">
-  <header class="border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800">
-    <div class="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
-      <a href="{% url 'day' %}" class="font-serif text-lg">Rekonsiliasi Harian</a>
-      {% if user.is_authenticated %}
-      <nav class="flex items-center gap-3 text-sm">
-        <a class="text-slate-500 hover:text-indigo-600" href="{% url 'day' %}">Rekonsiliasi</a>
-        {% if user.is_superuser %}
-        <a class="text-slate-500 hover:text-rose-600" href="{% url 'data-admin' %}">Hapus data</a>
+<body class="min-h-full bg-slate-100/70 font-sans text-slate-900 antialiased dark:bg-slate-900 dark:text-slate-100">
+  <header class="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur shadow-xs dark:border-slate-700 dark:bg-slate-800/95">
+    <div class="mx-auto flex max-w-7xl items-center justify-between px-4 py-2.5">
+      <div class="flex items-center gap-6">
+        <a href="{% url 'day' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}" class="flex items-center gap-2.5">
+          <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-600 text-white font-bold text-base shadow-sm">
+            R
+          </div>
+          <div>
+            <div class="font-serif text-lg font-bold tracking-tight text-slate-900 dark:text-white leading-tight">RekonMutasi</div>
+            <div class="text-[11px] text-slate-500 font-medium">Bank vs Otomax</div>
+          </div>
+        </a>
+
+        {% if user.is_authenticated %}
+        <nav class="hidden md:flex items-center gap-1 text-sm font-medium">
+          <a class="px-3 py-1.5 rounded-lg text-slate-700 hover:text-indigo-600 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
+             href="{% url 'day' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}">
+            Dashboard
+          </a>
+          <a class="px-3 py-1.5 rounded-lg text-slate-700 hover:text-indigo-600 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
+             href="{% url 'upload' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}">
+            Upload Data
+          </a>
+          <a class="px-3 py-1.5 rounded-lg text-slate-700 hover:text-indigo-600 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
+             href="{% url 'matches' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}">
+            Hasil Cocok
+          </a>
+          <a class="px-3 py-1.5 rounded-lg text-slate-700 hover:text-indigo-600 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
+             href="{% url 'manual-review' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}">
+            Review Manual
+          </a>
+          <a class="px-3 py-1.5 rounded-lg text-slate-700 hover:text-indigo-600 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
+             href="{% url 'pending-settle' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}">
+            Pending Settle
+          </a>
+          <a class="px-3 py-1.5 rounded-lg text-slate-700 hover:text-indigo-600 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
+             href="{% url 'reports' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}">
+            Laporan
+          </a>
+        </nav>
         {% endif %}
-        <a class="text-slate-500 hover:text-indigo-600" href="/admin/">Admin</a>
-        <form method="post" action="{% url 'logout' %}">{% csrf_token %}
-          <button class="text-slate-500 hover:text-rose-600">Keluar</button>
+      </div>
+
+      {% if user.is_authenticated %}
+      <div class="flex items-center gap-3 text-sm">
+        {% if user.is_superuser %}
+        <a class="text-xs text-rose-600 font-medium hover:underline hidden sm:inline" href="{% url 'data-admin' %}">Hapus data</a>
+        {% endif %}
+        <a class="text-xs text-slate-500 font-medium hover:text-indigo-600 hidden sm:inline" href="/admin/">Django Admin</a>
+        <form method="post" action="{% url 'logout' %}" class="inline">{% csrf_token %}
+          <button class="text-xs text-slate-500 font-medium hover:text-rose-600 px-2 py-1 rounded-md hover:bg-rose-50 dark:hover:bg-rose-950/40">Keluar</button>
         </form>
-      </nav>
+      </div>
       {% endif %}
     </div>
+
+    {% if user.is_authenticated %}
+    <!-- Mobile Navigation Subbar -->
+    <div class="md:hidden flex items-center gap-2 overflow-x-auto px-4 py-2 border-t border-slate-100 dark:border-slate-700 text-xs font-medium">
+      <a class="whitespace-nowrap px-2.5 py-1 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-200" href="{% url 'day' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}">Dashboard</a>
+      <a class="whitespace-nowrap px-2.5 py-1 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300" href="{% url 'upload' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}">Upload</a>
+      <a class="whitespace-nowrap px-2.5 py-1 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300" href="{% url 'matches' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}">Hasil Cocok</a>
+      <a class="whitespace-nowrap px-2.5 py-1 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300" href="{% url 'manual-review' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}">Review</a>
+      <a class="whitespace-nowrap px-2.5 py-1 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300" href="{% url 'pending-settle' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}">Pending</a>
+      <a class="whitespace-nowrap px-2.5 py-1 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300" href="{% url 'reports' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}">Laporan</a>
+    </div>
+    {% endif %}
   </header>
 
   {% if messages %}
-  <div class="mx-auto max-w-6xl px-4 pt-4">
+  <div class="mx-auto max-w-7xl px-4 pt-4">
     {% for m in messages %}
-    <div class="mb-2 rounded-lg border px-3 py-2 text-sm
-      {% if m.tags == 'error' %}border-rose-300 bg-rose-50 text-rose-800
-      {% elif m.tags == 'success' %}border-emerald-300 bg-emerald-50 text-emerald-800
-      {% else %}border-slate-300 bg-slate-100 text-slate-700{% endif %}">{{ m }}</div>
+    <div class="mb-2.5 flex items-center justify-between rounded-xl border px-4 py-3 text-sm font-medium shadow-xs
+      {% if m.tags == 'error' %}border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-800 dark:bg-rose-950/50 dark:text-rose-200
+      {% elif m.tags == 'success' %}border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200
+      {% else %}border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-800 dark:bg-blue-950/50 dark:text-blue-200{% endif %}">
+      <span>{{ m }}</span>
+    </div>
     {% endfor %}
   </div>
   {% endif %}
 
-  <main class="mx-auto max-w-6xl px-4 py-6">
+  <main class="mx-auto max-w-7xl px-4 py-6">
     {% block content %}{% endblock %}
   </main>
 </body>

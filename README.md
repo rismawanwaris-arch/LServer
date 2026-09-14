@@ -53,12 +53,32 @@ Atau lewat UI di `/` (unggah → jalankan pencocokan → tutup buku).
 uv run pytest
 ```
 
-## Deploy ZimaOS
+## Deploy ZimaOS (Port 3300)
 
+### Cara 1: Lewat Terminal / SSH ZimaOS
 ```bash
-git clone ... && cd LaporanServer
-cp .env.example .env      # isi SECRET_KEY, DB_PASSWORD, ALLOWED_HOSTS
+# 1. Salin project ke ZimaOS atau git clone
+git clone <repo-url> /DATA/AppData/laporanServer
+cd /DATA/AppData/laporanServer
+
+# 2. Siapkan file .env
+cp .env.example .env
+# Edit .env sesuaikan IP ZimaOS Anda (misal: 192.168.1.50) di CSRF_TRUSTED_ORIGINS dan DB_PASSWORD
+
+# 3. Jalankan container
 docker compose -f compose.zima.yml up -d --build
 ```
 
-App di `:8091`. Postgres bind-mount ke `./data/pg`, backup harian ke `./data/backups`.
+### Cara 2: Lewat Web UI ZimaOS (Custom App)
+1. Buka dashboard ZimaOS / CasaOS.
+2. Klik tombol **+** di pojok kiri atas -> pilih **Install a customized app**.
+3. Klik tombol **Import** (ikon terminal/dokumen di pojok kanan atas modal).
+4. Salin seluruh isi file `compose.zima.yml` dan paste ke dalamnya.
+5. Lengkapi Environment Variables (`SECRET_KEY`, `DB_PASSWORD`, `DATABASE_URL`, `CSRF_TRUSTED_ORIGINS`).
+6. Port aplikasi otomatis diset ke `3300`. Klik **Install**.
+
+Aplikasi dapat diakses di browser: `http://<IP_ZIMAOS>:3300`
+- Web dashboard: port `3300`
+- Database: Postgres 16 di `./data/pg`
+- Otomatis backup: Setiap hari ke `./data/backups` (retensi 14 hari)
+- Login awal: Username `admin` / Password `admin12345` (sesuai `.env`)

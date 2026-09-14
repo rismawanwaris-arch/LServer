@@ -4,10 +4,30 @@ import re
 from datetime import datetime
 
 _ID_MONTHS = {
-    "januari": 1, "februari": 2, "maret": 3, "april": 4, "mei": 5, "juni": 6,
-    "juli": 7, "agustus": 8, "september": 9, "oktober": 10, "november": 11, "desember": 12,
-    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6, "jul": 7, "agu": 8, "agt": 8,
-    "sep": 9, "okt": 10, "nov": 11, "des": 12,
+    "januari": 1,
+    "februari": 2,
+    "maret": 3,
+    "april": 4,
+    "mei": 5,
+    "juni": 6,
+    "juli": 7,
+    "agustus": 8,
+    "september": 9,
+    "oktober": 10,
+    "november": 11,
+    "desember": 12,
+    "jan": 1,
+    "feb": 2,
+    "mar": 3,
+    "apr": 4,
+    "jun": 6,
+    "jul": 7,
+    "agu": 8,
+    "agt": 8,
+    "sep": 9,
+    "okt": 10,
+    "nov": 11,
+    "des": 12,
 }
 
 _LONG = re.compile(r"(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})(?:\s+(\d{2}):(\d{2}):(\d{2}))?")

@@ -5,7 +5,10 @@ from datetime import date
 from django.db import transaction
 from django.utils import timezone
 
-from .models import Adjustment, Discrepancy, ReconDay
+from apps.core.enums import MatchStatus, MatchType
+from apps.ingest.models import BankMutation
+
+from .models import Adjustment, Discrepancy, Match, ReconDay
 
 
 class DiscrepancyClosed(Exception):
@@ -57,6 +60,49 @@ def resolve_discrepancy(
 
 
 def write_off(discrepancy: Discrepancy, *, reason: str, user=None) -> Adjustment:
-    return resolve_discrepancy(
-        discrepancy, resolution_type="WRITE_OFF", reason=reason, user=user
+    return resolve_discrepancy(discrepancy, resolution_type="WRITE_OFF", reason=reason, user=user)
+
+
+@transaction.atomic
+def tag_manual_mutation(
+    bank_mutation: BankMutation,
+    tag: str,
+    note: str = "",
+    user=None,
+) -> BankMutation:
+    """Beri tag manual untuk mutasi bank selisih (admin/tarik tunai/setor tunai/revisi/lainnya).
+
+    Status mutasi berubah jadi MATCHED_MANUAL (MANUAL).
+    Jika ada Discrepancy yang mengacu ke mutasi ini, selesaikan dengan keterangan tag manual.
+    """
+    from decimal import Decimal
+
+    bm = BankMutation.objects.select_for_update().get(pk=bank_mutation.pk)
+    bm.tag_manual = tag
+    bm.manual_note = note
+    bm.match_status = MatchStatus.MANUAL
+    bm.save(update_fields=["tag_manual", "manual_note", "match_status", "updated_at"])
+
+    # Buat record Match tipe MANUAL jika belum ada
+    Match.objects.get_or_create(
+        book_date=bm.book_date,
+        channel=bm.channel,
+        bank_mutation=bm,
+        defaults=dict(
+            match_type=MatchType.MANUAL,
+            amount_bank=bm.amount,
+            amount_otomax=Decimal("0.00"),
+            note=f"Tag manual: {tag}. {note}".strip(),
+            matched_by=user,
+        ),
     )
+
+    for disc in Discrepancy.objects.filter(bank_mutation=bm, status="OPEN"):
+        resolve_discrepancy(
+            disc,
+            resolution_type="DATA_FIX",
+            reason=f"Tag manual: {tag}. {note}".strip(),
+            user=user,
+        )
+
+    return bm

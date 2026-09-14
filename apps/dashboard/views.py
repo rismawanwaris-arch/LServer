@@ -1,46 +1,54 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
+from decimal import Decimal
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, user_passes_test
-from django.shortcuts import redirect, render
+from django.db import models
+from django.http import HttpResponse
+from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from apps.core.enums import Channel
+from apps.core.enums import Channel, ManualTag, MatchStatus
 from apps.ingest.models import BankMutation, ImportBatch, OtomaxEntry
-from apps.ingest.services import ImportBlocked, import_file
+from apps.ingest.services import ImportBlocked, import_file, preview_file
 from apps.recon.carry import carry_forward
 from apps.recon.close import DayHasDownstream, DayLocked, DayNotReady, close_day, reopen_day
 from apps.recon.engine import run_match
-from apps.recon.models import Adjustment, Discrepancy, ReconDay
+from apps.recon.models import Adjustment, Discrepancy, Match, ReconDay
 from apps.recon.purge import (
     DayIsClosed,
     preview_all,
     purge_all_transactions,
     purge_day,
 )
-from apps.recon.resolve import write_off
+from apps.recon.reports import generate_excel_report, get_daily_summary, get_range_summary
+from apps.recon.resolve import tag_manual_mutation, write_off
 from apps.recon.selectors import alarm_discrepancies, cumulative_open_total, day_overview
 
 staff_only = user_passes_test(lambda u: u.is_superuser)
 
 
-def _parse_date(raw: str | None) -> date:
+def _parse_date(raw: str | None, default=None) -> date:
     if raw:
         try:
             return date.fromisoformat(raw)
         except ValueError:
             pass
-    return timezone.localdate()
+    return default or timezone.localdate()
+
+
+# --- Halaman 1: Dashboard ----------------------------------------------------
 
 
 @login_required
 def day_view(request):
     book_date = _parse_date(request.GET.get("d"))
     ctx = day_overview(book_date)
-    ctx["alarms"] = alarm_discrepancies()
+    ctx["summary"] = get_daily_summary(book_date)
+    ctx["alarms"] = alarm_discrepancies(today=book_date)
     ctx["cumulative_open"] = cumulative_open_total()
     ctx["channels"] = Channel.choices
     day = ctx["day"]
@@ -48,38 +56,283 @@ def day_view(request):
         day
         and day.locked
         and not Adjustment.objects.filter(book_date=book_date).exists()
-        and not Discrepancy.objects.filter(
-            origin_book_date=book_date, status__in=["RESOLVED", "WRITTEN_OFF"]
-        ).exists()
+        and not Discrepancy.objects.filter(origin_book_date=book_date, status__in=["RESOLVED", "WRITTEN_OFF"]).exists()
     )
     return render(request, "dashboard/day.html", ctx)
+
+
+# --- Halaman 2: Upload Data & Preview ----------------------------------------
+
+
+@login_required
+def upload_view(request):
+    book_date = _parse_date(request.GET.get("d") or request.POST.get("book_date"))
+    batches = ImportBatch.objects.filter(book_date=book_date).order_by("-created_at")
+
+    preview_data = None
+    if request.method == "POST":
+        action = request.POST.get("action")
+        channel = request.POST.get("channel")
+        upload_file = request.FILES.get("file")
+
+        if not upload_file or channel not in Channel.values:
+            messages.error(request, "Pilih channel dan file yang valid.")
+            return redirect(f"/upload/?d={book_date}")
+
+        content = upload_file.read()
+        filename = upload_file.name
+
+        if action == "preview":
+            try:
+                preview_data = preview_file(channel, content)
+                preview_data["filename"] = filename
+            except Exception as exc:
+                messages.error(request, f"Gagal membaca preview: {exc}")
+        else:
+            # Action == 'import'
+            try:
+                batch = import_file(
+                    channel=channel,
+                    content=content,
+                    book_date=book_date,
+                    filename=filename,
+                    user=request.user,
+                )
+                messages.success(
+                    request,
+                    f"Berhasil mengimpor {batch.channel}: {batch.row_count} baris "
+                    f"({batch.quarantined_count} dikarantina).",
+                )
+                return redirect(f"/upload/?d={book_date}")
+            except ImportBlocked as exc:
+                messages.error(request, str(exc))
+            except Exception as exc:
+                messages.error(request, f"Gagal mengimpor file: {exc}")
+
+    return render(
+        request,
+        "dashboard/upload.html",
+        {
+            "book_date": book_date,
+            "channels": Channel.choices,
+            "batches": batches,
+            "preview": preview_data,
+        },
+    )
 
 
 @login_required
 @require_POST
 def upload(request):
+    """Legacy redirect handler for upload."""
     book_date = _parse_date(request.POST.get("book_date"))
     channel = request.POST.get("channel")
     upload_file = request.FILES.get("file")
     if not upload_file or channel not in Channel.values:
         messages.error(request, "Pilih channel dan file.")
-        return redirect(f"/?d={book_date}")
+        return redirect(f"/upload/?d={book_date}")
     try:
         batch = import_file(
             channel=channel,
-            text=upload_file.read().decode("utf-8", errors="replace"),
+            content=upload_file.read(),
             book_date=book_date,
             filename=upload_file.name,
             user=request.user,
         )
+        messages.success(
+            request,
+            f"{batch.channel}: {batch.row_count} baris ({batch.quarantined_count} dikarantina).",
+        )
     except ImportBlocked as exc:
         messages.error(request, str(exc))
-        return redirect(f"/?d={book_date}")
-    messages.success(
-        request,
-        f"{batch.channel}: {batch.row_count} baris ({batch.quarantined_count} dikarantina).",
+    except Exception as exc:
+        messages.error(request, f"Gagal: {exc}")
+    return redirect(f"/upload/?d={book_date}")
+
+
+# --- Halaman 3: Hasil Rekonsiliasi ------------------------------------------
+
+
+@login_required
+def matches_view(request):
+    book_date = _parse_date(request.GET.get("d"))
+    channel = request.GET.get("channel", "")
+    query = request.GET.get("q", "").strip()
+
+    qs = Match.objects.filter(book_date=book_date, voided_at__isnull=True).select_related(
+        "bank_mutation", "otomax_entry"
     )
-    return redirect(f"/?d={book_date}")
+    if channel and channel in Channel.values:
+        qs = qs.filter(channel=channel)
+    if query:
+        qs = (
+            qs.filter(bank_mutation__description_raw__icontains=query)
+            | qs.filter(otomax_entry__description_raw__icontains=query)
+            | qs.filter(otomax_entry__reseller_name_raw__icontains=query)
+        )
+
+    matches = qs.order_by("-match_type", "-amount_bank")
+
+    return render(
+        request,
+        "dashboard/matches.html",
+        {
+            "book_date": book_date,
+            "selected_channel": channel,
+            "channels": Channel.choices,
+            "query": query,
+            "matches": matches,
+            "total_count": matches.count(),
+        },
+    )
+
+
+# --- Halaman 4: Antrean Review Manual ----------------------------------------
+
+
+@login_required
+def manual_review_view(request):
+    book_date = _parse_date(request.GET.get("d"))
+    tab = request.GET.get("tab", "unmatched")  # 'unmatched' or 'tagged'
+    channel = request.GET.get("channel", "")
+
+    qs = BankMutation.objects.filter(book_date=book_date)
+    if channel and channel in Channel.values:
+        qs = qs.filter(channel=channel)
+
+    if tab == "tagged":
+        items = qs.filter(match_status=MatchStatus.MANUAL).order_by("-updated_at")
+    else:
+        items = qs.filter(match_status=MatchStatus.UNMATCHED).order_by("-amount")
+
+    unmatched_qs = qs.filter(match_status=MatchStatus.UNMATCHED)
+    tagged_qs = qs.filter(match_status=MatchStatus.MANUAL)
+
+    unmatched_count = unmatched_qs.count()
+    unmatched_total = unmatched_qs.aggregate(t=models.Sum("amount"))["t"] or Decimal("0.00")
+
+    tagged_count = tagged_qs.count()
+    tagged_total = tagged_qs.aggregate(t=models.Sum("amount"))["t"] or Decimal("0.00")
+
+    return render(
+        request,
+        "dashboard/manual_review.html",
+        {
+            "book_date": book_date,
+            "tab": tab,
+            "selected_channel": channel,
+            "channels": Channel.choices,
+            "items": items,
+            "unmatched_count": unmatched_count,
+            "unmatched_total": unmatched_total,
+            "tagged_count": tagged_count,
+            "tagged_total": tagged_total,
+            "manual_tags": ManualTag.choices,
+        },
+    )
+
+
+@login_required
+@require_POST
+def manual_tag_action(request, pk: int):
+    bm = get_object_or_404(BankMutation, pk=pk)
+    tag = request.POST.get("tag")
+    note = request.POST.get("note", "").strip()
+    book_date = request.POST.get("book_date") or bm.book_date.isoformat()
+
+    if not tag or tag not in ManualTag.values:
+        messages.error(request, "Pilih tag kategori yang valid.")
+        return redirect(f"/review-manual/?d={book_date}")
+
+    tag_manual_mutation(bm, tag=tag, note=note, user=request.user)
+    messages.success(request, f"Mutasi Rp {bm.amount:,.0f} berhasil di-tag sebagai '{bm.get_tag_manual_display()}'.")
+    return redirect(f"/review-manual/?d={book_date}")
+
+
+# --- Halaman 5: Pending Settle -----------------------------------------------
+
+
+@login_required
+def pending_settle_view(request):
+    book_date = _parse_date(request.GET.get("d"))
+    channel = request.GET.get("channel", "")
+
+    qs = OtomaxEntry.objects.filter(
+        book_date=book_date,
+        match_status__in=[MatchStatus.PENDING_SETTLE, MatchStatus.UNMATCHED],
+    )
+    if channel and channel in Channel.values:
+        qs = qs.filter(channel_hint=channel)
+
+    items = qs.order_by("-amount")
+    total_amount = sum((i.amount for i in items), Decimal("0"))
+
+    return render(
+        request,
+        "dashboard/pending_settle.html",
+        {
+            "book_date": book_date,
+            "selected_channel": channel,
+            "channels": Channel.choices,
+            "items": items,
+            "count": items.count(),
+            "total_amount": total_amount,
+        },
+    )
+
+
+# --- Halaman 6: Riwayat & Laporan --------------------------------------------
+
+
+@login_required
+def reports_view(request):
+    today = timezone.localdate()
+    start_date = _parse_date(request.GET.get("start_date"), default=today - timedelta(days=6))
+    end_date = _parse_date(request.GET.get("end_date"), default=today)
+
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
+
+    summary = get_range_summary(start_date, end_date)
+
+    # Breakdown per day in range
+    curr = start_date
+    daily_rows = []
+    while curr <= end_date:
+        d_sum = get_daily_summary(curr)
+        daily_rows.append(d_sum)
+        curr += timedelta(days=1)
+    daily_rows.reverse()
+
+    return render(
+        request,
+        "dashboard/reports.html",
+        {
+            "start_date": start_date,
+            "end_date": end_date,
+            "summary": summary,
+            "daily_rows": daily_rows,
+        },
+    )
+
+
+@login_required
+def reports_export_action(request):
+    start_date = _parse_date(request.GET.get("start_date"))
+    end_date = _parse_date(request.GET.get("end_date"))
+    if "start_date" not in request.GET and "end_date" not in request.GET and "d" in request.GET:
+        start_date = end_date = _parse_date(request.GET.get("d"))
+
+    excel_bytes = generate_excel_report(start_date, end_date)
+    response = HttpResponse(
+        excel_bytes,
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = f'attachment; filename="rekonsiliasi_{start_date}_{end_date}.xlsx"'
+    return response
+
+
+# --- Mesin Rekon & Kontrol Buku ----------------------------------------------
 
 
 @login_required
@@ -90,8 +343,7 @@ def run_engine(request):
     resolved = carry_forward(book_date, user=request.user)
     messages.success(
         request,
-        f"Cocok: {stats.matched} · discrepancy baru: {stats.discrepancies} · "
-        f"selisih lama ditutup: {resolved}.",
+        f"Cocok: {stats.matched} · discrepancy baru: {stats.discrepancies} · " f"selisih lama ditutup: {resolved}.",
     )
     return redirect(f"/?d={book_date}")
 
@@ -138,26 +390,27 @@ def resolve_view(request, pk: int):
 
 # --- Hapus data --------------------------------------------------------------
 
+
 @login_required
 @staff_only
 def data_admin(request):
-    from apps.recon.models import Match
-
     dates = set(ImportBatch.objects.values_list("book_date", flat=True)) | set(
         ReconDay.objects.values_list("book_date", flat=True)
     )
     rows = []
     for bd in sorted(dates, reverse=True):
         day = ReconDay.objects.filter(book_date=bd).first()
-        rows.append({
-            "book_date": bd,
-            "locked": bool(day and day.locked),
-            "status": day.get_status_display() if day else "belum ada",
-            "bank": BankMutation.objects.filter(book_date=bd).count(),
-            "otomax": OtomaxEntry.objects.filter(book_date=bd).count(),
-            "match": Match.objects.filter(book_date=bd).count(),
-            "discrepancy": Discrepancy.objects.filter(origin_book_date=bd).count(),
-        })
+        rows.append(
+            {
+                "book_date": bd,
+                "locked": bool(day and day.locked),
+                "status": day.get_status_display() if day else "belum ada",
+                "bank": BankMutation.objects.filter(book_date=bd).count(),
+                "otomax": OtomaxEntry.objects.filter(book_date=bd).count(),
+                "match": Match.objects.filter(book_date=bd).count(),
+                "discrepancy": Discrepancy.objects.filter(origin_book_date=bd).count(),
+            }
+        )
     return render(request, "dashboard/data.html", {"rows": rows, "totals": preview_all()})
 
 
@@ -187,7 +440,6 @@ def purge_all_view(request):
     counts = purge_all_transactions(include_history=request.POST.get("include_history") == "1")
     messages.success(
         request,
-        f"Semua data transaksi dihapus ({sum(counts.values())} baris). "
-        "Reseller & mapping merchant tetap.",
+        f"Semua data transaksi dihapus ({sum(counts.values())} baris). " "Reseller & mapping merchant tetap.",
     )
     return redirect("data-admin")

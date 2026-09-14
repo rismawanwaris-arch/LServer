@@ -1,4 +1,21 @@
 # Deploy ZimaOS: docker compose -f compose.zima.yml up -d --build
+x-casaos:
+  architectures:
+    - amd64
+    - arm64
+  main: app
+  description:
+    en_us: Rekonsiliasi harian mutasi bank (BRI, BCA, Merchant BCA, Mandiri) vs OTOMAX.
+  tagline:
+    en_us: Rekonsiliasi Mutasi Bank & Otomax
+  developer: Laporan Server
+  author: Laporan Server
+  icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/django.png
+  title:
+    en_us: Laporan Server
+  index: /
+  port_map: "3300"
+
 services:
   app:
     build: .
@@ -8,7 +25,7 @@ services:
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.prod
     ports:
-      - "8091:8000"            # 3000/8080 sudah terpakai di ZimaOS
+      - "3300:8000"            # Akses via http://<ip-zimaos>:3300
     depends_on:
       db:
         condition: service_healthy
@@ -16,6 +33,7 @@ services:
       - ./data/media:/app/media
     command: >
       sh -c "python manage.py migrate --noinput &&
+             (python manage.py createsuperuser --noinput 2>/dev/null || true) &&
              gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 120"
 
   db:

@@ -36,12 +36,13 @@ class Match(TimeStampedModel):
     amount_diff = money_field(default=ZERO)
     confidence = models.PositiveSmallIntegerField(null=True, blank=True)
     note = models.TextField(blank=True)
-    matched_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL
-    )
+    matched_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
     voided_at = models.DateTimeField(null=True, blank=True)
     voided_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
         related_name="voided_matches",
     )
     history = HistoricalRecords()
@@ -49,11 +50,13 @@ class Match(TimeStampedModel):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["bank_mutation"], condition=models.Q(voided_at__isnull=True),
+                fields=["bank_mutation"],
+                condition=models.Q(voided_at__isnull=True),
                 name="uniq_active_bank_match",
             ),
             models.UniqueConstraint(
-                fields=["otomax_entry"], condition=models.Q(voided_at__isnull=True),
+                fields=["otomax_entry"],
+                condition=models.Q(voided_at__isnull=True),
                 name="uniq_active_otomax_match",
             ),
         ]
@@ -79,15 +82,11 @@ class Discrepancy(TimeStampedModel):
         max_length=12, choices=DiscrepancyStatus.choices, default=DiscrepancyStatus.OPEN, db_index=True
     )
     resolved_book_date = models.DateField(null=True, blank=True)
-    resolution_type = models.CharField(
-        max_length=12, choices=ResolutionType.choices, blank=True
-    )
+    resolution_type = models.CharField(max_length=12, choices=ResolutionType.choices, blank=True)
     resolution_match = models.ForeignKey(
         Match, null=True, blank=True, on_delete=models.SET_NULL, related_name="resolves"
     )
-    resolved_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL
-    )
+    resolved_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
     resolved_at = models.DateTimeField(null=True, blank=True)
     note = models.TextField(blank=True)
     history = HistoricalRecords()
@@ -104,14 +103,10 @@ class Adjustment(TimeStampedModel):
     """Penyesuaian bertanggal ke hari yang sudah ditutup. Append-only."""
 
     book_date = models.DateField(db_index=True, help_text="= discrepancy.origin_book_date")
-    discrepancy = models.ForeignKey(
-        Discrepancy, on_delete=models.PROTECT, related_name="adjustments"
-    )
+    discrepancy = models.ForeignKey(Discrepancy, on_delete=models.PROTECT, related_name="adjustments")
     amount = money_field(help_text="Bertanda; menggerakkan selisih hari asal.")
     reason = models.TextField()
-    created_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL
-    )
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
     history = HistoricalRecords()
 
     def save(self, *args, **kwargs):
@@ -143,9 +138,7 @@ class ReconDay(TimeStampedModel):
     unmatched_count = models.PositiveIntegerField(default=0)
 
     snapshot = models.JSONField(default=dict, blank=True)
-    closed_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL
-    )
+    closed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
     closed_at = models.DateTimeField(null=True, blank=True)
     history = HistoricalRecords()
 

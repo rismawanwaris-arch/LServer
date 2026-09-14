@@ -2,7 +2,7 @@ from django.conf import settings
 from django.db import models
 
 from apps.catalog.models import Reseller
-from apps.core.enums import Channel, ImportStatus, MatchStatus, OtomaxCategory
+from apps.core.enums import Channel, ImportStatus, ManualTag, MatchStatus, OtomaxCategory
 from apps.core.models import TimeStampedModel, money_field
 
 
@@ -15,9 +15,7 @@ class ImportBatch(TimeStampedModel):
     quarantined_count = models.PositiveIntegerField(default=0)
     status = models.CharField(max_length=12, choices=ImportStatus.choices, default=ImportStatus.PARSED)
     notes = models.TextField(blank=True)
-    uploaded_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL
-    )
+    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
 
     class Meta:
         ordering = ["-created_at"]
@@ -37,18 +35,25 @@ class BankMutation(TimeStampedModel):
     description_raw = models.TextField()
     ref_normalized = models.TextField(db_index=True)
     ref_core = models.CharField(max_length=80, blank=True, db_index=True)
+    extracted_tokens = models.JSONField(default=list, blank=True)
+    outlet_name = models.CharField(max_length=150, blank=True)
     amount = money_field()
     external_ref = models.CharField(max_length=40, blank=True, db_index=True)
     frequency = models.PositiveIntegerField(null=True, blank=True)
 
     row_hash = models.CharField(max_length=64, unique=True)
     match_status = models.CharField(
-        max_length=12, choices=MatchStatus.choices, default=MatchStatus.UNMATCHED, db_index=True
+        max_length=16, choices=MatchStatus.choices, default=MatchStatus.UNMATCHED, db_index=True
     )
+    tag_manual = models.CharField(max_length=20, choices=ManualTag.choices, blank=True, default="", db_index=True)
+    manual_note = models.TextField(blank=True)
     review_flag = models.CharField(max_length=120, blank=True)
 
     class Meta:
-        indexes = [models.Index(fields=["book_date", "channel", "match_status"])]
+        indexes = [
+            models.Index(fields=["book_date", "channel", "match_status"]),
+            models.Index(fields=["match_status", "tag_manual"]),
+        ]
 
     def __str__(self) -> str:
         return f"{self.channel} {self.amount} — {self.ref_normalized[:40]}"
@@ -74,10 +79,11 @@ class OtomaxEntry(TimeStampedModel):
     channel_hint = models.CharField(max_length=16, choices=Channel.choices, blank=True, db_index=True)
     ref_normalized = models.TextField(blank=True, db_index=True)
     ref_core = models.CharField(max_length=80, blank=True, db_index=True)
+    extracted_tokens = models.JSONField(default=list, blank=True)
 
     row_hash = models.CharField(max_length=64, unique=True)
     match_status = models.CharField(
-        max_length=12, choices=MatchStatus.choices, default=MatchStatus.UNMATCHED, db_index=True
+        max_length=16, choices=MatchStatus.choices, default=MatchStatus.UNMATCHED, db_index=True
     )
 
     class Meta:
