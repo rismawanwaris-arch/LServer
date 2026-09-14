@@ -111,8 +111,9 @@
         {% endif %}
       </div>
 
-      <!-- Nominal & Form Tagging (Col 8-12) -->
-      <div class="md:col-span-5 bg-slate-100 p-3.5 rounded-xl border border-slate-200 dark:bg-slate-800 dark:border-slate-700 shadow-xs">
+      <!-- Nominal & Form Tagging / Matching (Col 8-12) -->
+      <div class="md:col-span-5 bg-slate-100 p-3.5 rounded-xl border border-slate-200 dark:bg-slate-800 dark:border-slate-700 shadow-xs"
+           x-data="{ mode: 'pair' }">
         <div class="flex items-baseline justify-between mb-2.5 pb-2 border-b border-slate-200 dark:border-slate-700">
           <span class="text-xs text-slate-600 dark:text-slate-400 font-semibold">Nominal Bank:</span>
           <span class="money font-black text-lg text-slate-900 dark:text-emerald-400">
@@ -120,33 +121,81 @@
           </span>
         </div>
 
-        <!-- Tagging Form (PRD Section 5 & 9.4) -->
-        <form method="post" action="{% url 'manual-tag-action' b.id %}" class="space-y-2">
-          {% csrf_token %}
-          <input type="hidden" name="book_date" value="{{ book_date|date:'Y-m-d' }}">
+        <!-- Mode Toggle -->
+        <div class="flex items-center gap-1 mb-2.5 bg-slate-200/80 dark:bg-slate-700/60 p-1 rounded-lg text-xs font-semibold">
+          <button type="button" @click="mode = 'pair'"
+                  :class="mode === 'pair' ? 'bg-white text-indigo-600 shadow-xs dark:bg-slate-800 dark:text-indigo-400' : 'text-slate-600 hover:text-slate-900 dark:text-slate-400'"
+                  class="flex-1 py-1 rounded-md transition text-center">
+            Cocokkan ke Otomax
+          </button>
+          <button type="button" @click="mode = 'tag'"
+                  :class="mode === 'tag' ? 'bg-white text-indigo-600 shadow-xs dark:bg-slate-800 dark:text-indigo-400' : 'text-slate-600 hover:text-slate-900 dark:text-slate-400'"
+                  class="flex-1 py-1 rounded-md transition text-center">
+            Beri Tag Kategori
+          </button>
+        </div>
 
-          <div class="grid grid-cols-2 gap-2">
+        <!-- 1. Pasangkan ke Otomax -->
+        <div x-show="mode === 'pair'">
+          <form method="post" action="{% url 'manual-match' %}" class="space-y-2">
+            {% csrf_token %}
+            <input type="hidden" name="book_date" value="{{ book_date|date:'Y-m-d' }}">
+            <input type="hidden" name="bank_id" value="{{ b.id }}">
+
             <div>
-              <label class="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-0.5">Tag Kategori</label>
-              <select name="tag" required class="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
-                <option value="">-- Pilih Tag --</option>
-                {% for tag_val, tag_label in manual_tags %}
-                <option value="{{ tag_val }}">{{ tag_label }}</option>
+              <label class="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-0.5">Pilih Entri Otomax Lawan:</label>
+              <select name="otomax_id" required class="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
+                <option value="">-- Pilih Transaksi Otomax --</option>
+                {% for o in unmatched_otomax %}
+                <option value="{{ o.id }}">
+                  {% if o.amount == b.amount %}★ [NOMINAL SAMA: Rp {{ o.amount|rupiah }}]{% else %}[Rp {{ o.amount|rupiah }}]{% endif %}
+                  {{ o.reseller_name_raw }} ({{ o.description_raw|truncatechars:28 }})
+                </option>
                 {% endfor %}
               </select>
             </div>
 
             <div>
               <label class="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-0.5">Catatan (opsional)</label>
-              <input type="text" name="note" placeholder="Catatan..."
+              <input type="text" name="note" placeholder="Misal: Transfer BI-Fast atau setor tunai..."
                      class="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
             </div>
-          </div>
 
-          <button type="submit" class="btn-primary w-full justify-center py-1.5 text-xs font-bold">
-            Simpan Tag (Matched Manual)
-          </button>
-        </form>
+            <button type="submit" class="btn-primary w-full justify-center py-1.5 text-xs font-bold">
+              Pasangkan ke Otomax &rarr;
+            </button>
+          </form>
+        </div>
+
+        <!-- 2. Tagging Form (PRD Section 5 & 9.4) -->
+        <div x-show="mode === 'tag'" style="display: none;">
+          <form method="post" action="{% url 'manual-tag-action' b.id %}" class="space-y-2">
+            {% csrf_token %}
+            <input type="hidden" name="book_date" value="{{ book_date|date:'Y-m-d' }}">
+
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-0.5">Tag Kategori</label>
+                <select name="tag" required class="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
+                  <option value="">-- Pilih Tag --</option>
+                  {% for tag_val, tag_label in manual_tags %}
+                  <option value="{{ tag_val }}">{{ tag_label }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              <div>
+                <label class="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-0.5">Catatan (opsional)</label>
+                <input type="text" name="note" placeholder="Catatan..."
+                       class="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
+              </div>
+            </div>
+
+            <button type="submit" class="btn-primary w-full justify-center py-1.5 text-xs font-bold">
+              Simpan Tag (Matched Manual)
+            </button>
+          </form>
+        </div>
       </div>
     </div>
   </div>

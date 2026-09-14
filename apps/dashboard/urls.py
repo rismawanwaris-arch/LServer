@@ -10,6 +10,8 @@ urlpatterns = [
     path("upload/", views.upload_view, name="upload"),
     # 3. Hasil Rekonsiliasi
     path("matches/", views.matches_view, name="matches"),
+    path("matches/unpair/<int:pk>/", views.unpair_match_action, name="unpair-match"),
+    path("manual-match/", views.manual_match_action, name="manual-match"),
     # 4. Antrean Review Manual
     path("review-manual/", views.manual_review_view, name="manual-review"),
     path("review-manual/tag/<int:pk>/", views.manual_tag_action, name="manual-tag-action"),

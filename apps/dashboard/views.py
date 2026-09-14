@@ -25,7 +25,12 @@ from apps.recon.purge import (
     purge_day,
 )
 from apps.recon.reports import generate_excel_report, get_daily_summary, get_range_summary
-from apps.recon.resolve import tag_manual_mutation, write_off
+from apps.recon.resolve import (
+    manual_pair_transactions,
+    tag_manual_mutation,
+    unpair_match,
+    write_off,
+)
 from apps.recon.selectors import alarm_discrepancies, cumulative_open_total, day_overview
 
 staff_only = user_passes_test(lambda u: u.is_superuser)
@@ -214,6 +219,13 @@ def manual_review_view(request):
     tagged_count = tagged_qs.count()
     tagged_total = tagged_qs.aggregate(t=models.Sum("amount"))["t"] or Decimal("0.00")
 
+    # Daftar entri Otomax belum cocok untuk opsi pencocokan manual
+    unmatched_otomax = OtomaxEntry.objects.filter(
+        book_date__gte=book_date - timedelta(days=2),
+        book_date__lte=book_date + timedelta(days=1),
+        match_status__in=[MatchStatus.PENDING_SETTLE, MatchStatus.UNMATCHED],
+    ).order_by("-amount")
+
     return render(
         request,
         "dashboard/manual_review.html",
@@ -228,6 +240,7 @@ def manual_review_view(request):
             "tagged_count": tagged_count,
             "tagged_total": tagged_total,
             "manual_tags": ManualTag.choices,
+            "unmatched_otomax": unmatched_otomax,
         },
     )
 
@@ -249,6 +262,53 @@ def manual_tag_action(request, pk: int):
     return redirect(f"/review-manual/?d={book_date}")
 
 
+@login_required
+@require_POST
+def manual_match_action(request):
+    otomax_id = request.POST.get("otomax_id")
+    bank_id = request.POST.get("bank_id")
+    note = request.POST.get("note", "").strip()
+    book_date = request.POST.get("book_date")
+    fallback_url = f"/pending-settle/?d={book_date}" if book_date else "/"
+    next_url = request.POST.get("next_url") or request.META.get("HTTP_REFERER") or fallback_url
+
+    if not otomax_id or not bank_id:
+        messages.error(request, "Pilih transaksi Otomax dan mutasi Bank yang akan dicocokkan.")
+        return redirect(next_url)
+
+    bm = get_object_or_404(BankMutation, pk=bank_id)
+    o = get_object_or_404(OtomaxEntry, pk=otomax_id)
+
+    try:
+        manual_pair_transactions(bank_mutation=bm, otomax_entry=o, note=note, user=request.user)
+        messages.success(
+            request,
+            f"Berhasil mencocokkan Otomax '{o.reseller_name_raw}' (Rp {o.amount:,.0f}) "
+            f"dengan mutasi {bm.channel} (Rp {bm.amount:,.0f}).",
+        )
+    except ValueError as e:
+        messages.error(request, str(e))
+    except Exception as e:
+        messages.error(request, f"Gagal mencocokkan: {e}")
+
+    return redirect(next_url)
+
+
+@login_required
+@require_POST
+def unpair_match_action(request, pk: int):
+    match = get_object_or_404(Match, pk=pk)
+    next_url = request.POST.get("next_url") or request.META.get("HTTP_REFERER") or f"/matches/?d={match.book_date}"
+
+    try:
+        unpair_match(match, user=request.user)
+        messages.success(request, f"Pencocokan #{match.id} berhasil dibatalkan.")
+    except Exception as e:
+        messages.error(request, f"Gagal membatalkan pencocokan: {e}")
+
+    return redirect(next_url)
+
+
 # --- Halaman 5: Pending Settle -----------------------------------------------
 
 
@@ -267,6 +327,13 @@ def pending_settle_view(request):
     items = qs.order_by("-amount")
     total_amount = sum((i.amount for i in items), Decimal("0"))
 
+    # Daftar mutasi bank yang belum cocok untuk kandidat pencocokan manual
+    unmatched_banks = BankMutation.objects.filter(
+        book_date__gte=book_date - timedelta(days=2),
+        book_date__lte=book_date + timedelta(days=1),
+        match_status=MatchStatus.UNMATCHED,
+    ).order_by("-amount", "-txn_datetime")
+
     return render(
         request,
         "dashboard/pending_settle.html",
@@ -277,6 +344,7 @@ def pending_settle_view(request):
             "items": items,
             "count": items.count(),
             "total_amount": total_amount,
+            "unmatched_banks": unmatched_banks,
         },
     )
 

@@ -141,3 +141,65 @@ def test_dashboard_reports_and_export(auth_client):
     export_res = auth_client.get("/reports/export/", {"start_date": "2026-09-01", "end_date": "2026-09-10"})
     assert export_res.status_code == 200
     assert export_res["Content-Type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+@pytest.mark.django_db
+def test_manual_match_and_unpair_action(auth_client):
+    d = date(2026, 9, 5)
+    batch_b = ImportBatch.objects.create(channel=Channel.BRI, book_date=d, source_filename="b.csv", file_hash="hbm1")
+    batch_o = ImportBatch.objects.create(channel=Channel.OTOMAX, book_date=d, source_filename="o.csv", file_hash="hom1")
+
+    bm = BankMutation.objects.create(
+        import_batch=batch_b,
+        book_date=d,
+        channel=Channel.BRI,
+        amount=Decimal("1800000"),
+        description_raw="Transfer BI-Fast dari BANK NEG",
+        row_hash="b_unmatched_1",
+        match_status=MatchStatus.UNMATCHED,
+    )
+    oe = OtomaxEntry.objects.create(
+        import_batch=batch_o,
+        book_date=d,
+        reseller_name_raw="PLC CL 2",
+        amount=Decimal("1800000"),
+        description_raw="TARTUN TF BRI BFST215401000596",
+        row_hash="o_pending_1",
+        match_status=MatchStatus.PENDING_SETTLE,
+    )
+
+    # 1. Post to /manual-match/
+    res = auth_client.post(
+        "/manual-match/",
+        {
+            "bank_id": bm.pk,
+            "otomax_id": oe.pk,
+            "note": "Cocok transfer manual",
+            "book_date": "2026-09-05",
+        },
+    )
+    assert res.status_code in (200, 302)
+
+    bm.refresh_from_db()
+    oe.refresh_from_db()
+    assert bm.match_status == MatchStatus.MANUAL
+    assert oe.match_status == MatchStatus.MANUAL
+
+    match = Match.objects.filter(bank_mutation=bm, otomax_entry=oe, voided_at__isnull=True).first()
+    assert match is not None
+    assert match.amount_bank == Decimal("1800000")
+    assert match.amount_diff == Decimal("0.00")
+    assert "Cocok transfer manual" in match.note
+
+    # 2. Post to /matches/unpair/<id>/
+    unpair_res = auth_client.post(f"/matches/unpair/{match.pk}/")
+    assert unpair_res.status_code in (200, 302)
+
+    match.refresh_from_db()
+    assert match.voided_at is not None
+
+    bm.refresh_from_db()
+    oe.refresh_from_db()
+    assert bm.match_status == MatchStatus.UNMATCHED
+    assert oe.match_status == MatchStatus.PENDING_SETTLE
+

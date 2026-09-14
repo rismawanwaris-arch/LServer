@@ -45,56 +45,282 @@
 </div>
 
 <!-- Table Pending Settle (PRD Section 9.5) -->
-<div class="card overflow-hidden p-0">
-  <div class="overflow-x-auto">
-    <table class="w-full text-sm">
-      <thead>
-        <tr>
-          <th>Waktu Entri</th>
-          <th>Reseller</th>
-          <th>Perkiraan Channel</th>
-          <th>Keterangan Transaksi</th>
-          <th>Token Referensi</th>
-          <th class="text-right">Nominal</th>
-          <th>Status</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for o in items %}
-        <tr>
-          <td class="font-mono text-xs text-slate-500 whitespace-nowrap">{{ o.entry_datetime|date:"d M H:i"|default:o.book_date }}</td>
-          <td class="font-bold text-xs text-slate-900 dark:text-white">{{ o.reseller_name_raw }}</td>
-          <td>
-            {% if o.channel_hint %}
-            <span class="badge-mute">{{ o.channel_hint }}</span>
-            {% else %}
-            <span class="text-slate-400 text-xs">—</span>
-            {% endif %}
-          </td>
-          <td class="font-mono text-xs text-slate-700 dark:text-slate-300 max-w-sm truncate" title="{{ o.description_raw }}">
-            {{ o.description_raw }}
-          </td>
-          <td>
-            {% for tk in o.extracted_tokens %}
-            <span class="badge-info text-[10px]">{{ tk }}</span>
-            {% empty %}<span class="text-slate-400 text-xs">—</span>{% endfor %}
-          </td>
-          <td class="money text-right font-semibold text-purple-600">
-            Rp {{ o.amount|rupiah }}
-          </td>
-          <td>
-            <span class="badge-warn text-[11px]">PENDING SETTLE</span>
-          </td>
-        </tr>
-        {% empty %}
-        <tr>
-          <td colspan="7" class="text-center py-12 text-slate-400">
-            Tidak ada transaksi Otomax yang berstatus pending settle untuk tanggal ini.
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+<div x-data="{
+  modalOpen: false,
+  activeOtomax: null,
+  selectedBankId: null,
+  filterChannel: '',
+  searchQuery: '',
+  onlyExactAmount: true,
+  banks: [
+    {% for b in unmatched_banks %}
+    {
+      id: {{ b.id }},
+      channel: '{{ b.channel }}',
+      amount: {{ b.amount|stringformat:'.2f' }},
+      amount_formatted: 'Rp {{ b.amount|rupiah }}',
+      date: '{{ b.txn_datetime|date:'d M H:i'|default:b.book_date }}',
+      desc: '{{ b.description_raw|escapejs }}',
+      outlet: '{{ b.outlet_name|default:''|escapejs }}'
+    }{% if not forloop.last %},{% endif %}
+    {% endfor %}
+  ],
+  openMatch(o) {
+    this.activeOtomax = o;
+    this.selectedBankId = null;
+    this.filterChannel = o.channel || '';
+    this.searchQuery = '';
+    this.onlyExactAmount = true;
+    this.modalOpen = true;
+  },
+  filteredBanks() {
+    if (!this.activeOtomax) return [];
+    return this.banks.filter(b => {
+      if (this.filterChannel && b.channel !== this.filterChannel) return false;
+      if (this.onlyExactAmount && parseFloat(b.amount) !== parseFloat(this.activeOtomax.amount)) return false;
+      if (this.searchQuery) {
+        const q = this.searchQuery.toLowerCase();
+        const matchDesc = b.desc.toLowerCase().includes(q);
+        const matchOutlet = b.outlet.toLowerCase().includes(q);
+        const matchAmt = b.amount_formatted.toLowerCase().includes(q);
+        if (!matchDesc && !matchOutlet && !matchAmt) return false;
+      }
+      return true;
+    });
+  },
+  exactCount() {
+    if (!this.activeOtomax) return 0;
+    return this.banks.filter(b => parseFloat(b.amount) === parseFloat(this.activeOtomax.amount)).length;
+  }
+}">
+
+  <div class="card overflow-hidden p-0 mb-6">
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr>
+            <th>Waktu Entri</th>
+            <th>Reseller</th>
+            <th>Perkiraan Channel</th>
+            <th>Keterangan Transaksi</th>
+            <th>Token Referensi</th>
+            <th class="text-right">Nominal</th>
+            <th>Status</th>
+            <th class="text-center">Aksi</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for o in items %}
+          <tr class="hover:bg-slate-50/60 dark:hover:bg-slate-800/60 transition">
+            <td class="font-mono text-xs text-slate-500 whitespace-nowrap">{{ o.entry_datetime|date:"d M H:i"|default:o.book_date }}</td>
+            <td class="font-bold text-xs text-slate-900 dark:text-white">{{ o.reseller_name_raw }}</td>
+            <td>
+              {% if o.channel_hint %}
+              <span class="badge-mute">{{ o.channel_hint }}</span>
+              {% else %}
+              <span class="text-slate-400 text-xs">—</span>
+              {% endif %}
+            </td>
+            <td class="font-mono text-xs text-slate-700 dark:text-slate-300 max-w-xs truncate" title="{{ o.description_raw }}">
+              {{ o.description_raw }}
+            </td>
+            <td>
+              {% for tk in o.extracted_tokens %}
+              <span class="badge-info text-[10px]">{{ tk }}</span>
+              {% empty %}<span class="text-slate-400 text-xs">—</span>{% endfor %}
+            </td>
+            <td class="money text-right font-bold text-purple-600 dark:text-purple-400">
+              Rp {{ o.amount|rupiah }}
+            </td>
+            <td>
+              <span class="badge-warn text-[11px]">PENDING SETTLE</span>
+            </td>
+            <td class="text-center whitespace-nowrap">
+              <button type="button"
+                      @click="openMatch({
+                        id: {{ o.id }},
+                        reseller: '{{ o.reseller_name_raw|escapejs }}',
+                        channel: '{{ o.channel_hint|default:''|escapejs }}',
+                        amount: '{{ o.amount|stringformat:'.2f' }}',
+                        amount_formatted: 'Rp {{ o.amount|rupiah }}',
+                        date: '{{ o.entry_datetime|date:'d M H:i'|default:o.book_date }}',
+                        desc: '{{ o.description_raw|escapejs }}'
+                      })"
+                      class="btn-primary py-1 px-3 text-xs font-semibold shadow-xs">
+                Cocokkan Manual &rarr;
+              </button>
+            </td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="8" class="text-center py-12 text-slate-400">
+              Tidak ada transaksi Otomax yang berstatus pending settle untuk tanggal ini.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
   </div>
+
+  <!-- Modal Pencocokan Manual (Alpine.js) -->
+  <div x-show="modalOpen"
+       x-cloak
+       class="fixed inset-0 z-50 overflow-y-auto"
+       aria-labelledby="modal-title" role="dialog" aria-modal="true">
+    <!-- Backdrop -->
+    <div x-show="modalOpen"
+         x-transition:enter="ease-out duration-200"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="ease-in duration-150"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs transition-opacity"
+         @click="modalOpen = false"></div>
+
+    <div class="flex min-h-full items-center justify-center p-4 text-center sm:p-0">
+      <div x-show="modalOpen"
+           x-transition:enter="ease-out duration-200"
+           x-transition:enter-start="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95"
+           x-transition:enter-end="opacity-100 translate-y-0 sm:scale-100"
+           x-transition:leave="ease-in duration-150"
+           x-transition:leave-start="opacity-100 translate-y-0 sm:scale-100"
+           x-transition:leave-end="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95"
+           class="relative transform overflow-hidden rounded-2xl bg-white text-left shadow-2xl transition-all sm:my-8 sm:w-full sm:max-w-3xl dark:bg-slate-800 dark:border dark:border-slate-700">
+
+        <form method="post" action="{% url 'manual-match' %}">
+          {% csrf_token %}
+          <input type="hidden" name="book_date" value="{{ book_date|date:'Y-m-d' }}">
+          <input type="hidden" name="otomax_id" :value="activeOtomax ? activeOtomax.id : ''">
+          <input type="hidden" name="bank_id" :value="selectedBankId">
+
+          <!-- Modal Header -->
+          <div class="px-6 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between bg-slate-50 dark:bg-slate-800/80">
+            <div>
+              <h3 class="text-base font-bold text-slate-900 dark:text-white" id="modal-title">
+                Cocokkan Manual Transaksi Otomax
+              </h3>
+              <p class="text-xs text-slate-500 mt-0.5">
+                Pilih mutasi bank yang sesuai untuk dipasangkan sebagai <b>MATCHED (MANUAL)</b>.
+              </p>
+            </div>
+            <button type="button" @click="modalOpen = false" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+              <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </div>
+
+          <!-- Modal Body -->
+          <div class="p-6 space-y-5">
+            <!-- Otomax Card Details -->
+            <template x-if="activeOtomax">
+              <div class="rounded-xl border-2 border-purple-200 bg-purple-50/50 p-4 dark:border-purple-900/50 dark:bg-purple-950/20">
+                <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+                  <div class="flex items-center gap-2">
+                    <span class="badge-mute font-bold text-xs uppercase" x-text="activeOtomax.channel || 'OTOMAX'"></span>
+                    <span class="text-xs text-slate-500" x-text="activeOtomax.date"></span>
+                  </div>
+                  <span class="money font-black text-xl text-purple-700 dark:text-purple-300" x-text="activeOtomax.amount_formatted"></span>
+                </div>
+                <div class="font-bold text-slate-900 dark:text-white text-sm" x-text="activeOtomax.reseller"></div>
+                <div class="font-mono text-xs text-slate-600 dark:text-slate-300 mt-1" x-text="activeOtomax.desc"></div>
+              </div>
+            </template>
+
+            <!-- Filter Candidates -->
+            <div class="flex flex-wrap items-center justify-between gap-3 bg-slate-100 dark:bg-slate-700/50 p-3 rounded-xl">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="text-xs font-semibold text-slate-700 dark:text-slate-300">Filter Bank:</span>
+                <select x-model="filterChannel" class="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs font-medium dark:border-slate-600 dark:bg-slate-800">
+                  <option value="">Semua Bank</option>
+                  {% for val, label in channels %}
+                  <option value="{{ val }}">{{ label }}</option>
+                  {% endfor %}
+                </select>
+
+                <label class="inline-flex items-center gap-1.5 text-xs text-slate-700 dark:text-slate-300 font-medium ml-2 cursor-pointer">
+                  <input type="checkbox" x-model="onlyExactAmount" class="rounded text-indigo-600 focus:ring-indigo-500">
+                  <span>Hanya Nominal Sama (<span x-text="exactCount()"></span> kandidat)</span>
+                </label>
+              </div>
+
+              <div class="w-full sm:w-auto">
+                <input type="text" x-model="searchQuery" placeholder="Cari keterangan / outlet..."
+                       class="w-full sm:w-48 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
+              </div>
+            </div>
+
+            <!-- List of Candidates -->
+            <div>
+              <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
+                Pilih Mutasi Bank Lawan (<span x-text="filteredBanks().length"></span> tersedia):
+              </label>
+
+              <div class="max-h-60 overflow-y-auto space-y-2 pr-1">
+                <template x-for="b in filteredBanks()" :key="b.id">
+                  <div @click="selectedBankId = b.id"
+                       :class="selectedBankId === b.id
+                         ? 'border-indigo-600 bg-indigo-50/70 dark:bg-indigo-950/40 dark:border-indigo-400 ring-2 ring-indigo-500'
+                         : 'border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-600'"
+                       class="cursor-pointer rounded-xl border p-3 transition flex items-start justify-between gap-3 shadow-2xs">
+                    <div class="flex items-start gap-3">
+                      <input type="radio" name="_bank_select" :checked="selectedBankId === b.id"
+                             class="mt-1 text-indigo-600 focus:ring-indigo-500 cursor-pointer">
+                      <div>
+                        <div class="flex items-center gap-2">
+                          <span class="badge-mute font-bold text-[10px]" x-text="b.channel"></span>
+                          <span class="text-[11px] text-slate-400" x-text="b.date"></span>
+                          <template x-if="parseFloat(b.amount) === parseFloat(activeOtomax.amount)">
+                            <span class="badge-good text-[10px] font-bold">★ Nominal Sama</span>
+                          </template>
+                          <template x-if="b.outlet">
+                            <span class="text-[11px] text-slate-500">Outlet: <b x-text="b.outlet"></b></span>
+                          </template>
+                        </div>
+                        <div class="font-mono text-xs font-semibold text-slate-800 dark:text-slate-200 mt-1" x-text="b.desc"></div>
+                      </div>
+                    </div>
+
+                    <div class="text-right whitespace-nowrap">
+                      <span class="money font-black text-sm text-emerald-600 dark:text-emerald-400" x-text="b.amount_formatted"></span>
+                    </div>
+                  </div>
+                </template>
+
+                <template x-if="filteredBanks().length === 0">
+                  <div class="rounded-xl border border-dashed border-slate-300 p-8 text-center text-slate-400 dark:border-slate-700">
+                    <p class="text-xs font-medium">Tidak ada mutasi bank yang cocok dengan filter saat ini.</p>
+                    <p class="text-[11px] text-slate-500 mt-1">Coba hapus centang "Hanya Nominal Sama" atau ubah pilihan filter bank.</p>
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <!-- Catatan Tambahan -->
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                Catatan Pencocokan (Opsional):
+              </label>
+              <input type="text" name="note" placeholder="Misal: Cocok transfer BI-Fast atau setor tunai..."
+                     class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
+            </div>
+          </div>
+
+          <!-- Modal Footer -->
+          <div class="px-6 py-3 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 flex items-center justify-end gap-3 rounded-b-2xl">
+            <button type="button" @click="modalOpen = false" class="btn-ghost text-xs">
+              Batal
+            </button>
+            <button type="submit"
+                    :disabled="!selectedBankId"
+                    class="btn-primary text-xs font-bold px-4 py-2 disabled:opacity-50">
+              Pasangkan Sekarang (Match Manual)
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
 </div>
 {% endblock %}
