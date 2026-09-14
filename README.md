@@ -82,3 +82,4 @@ Aplikasi dapat diakses di browser: `http://<IP_ZIMAOS>:3300`
 - Database: Postgres 16 di `./data/pg`
 - Otomatis backup: Setiap hari ke `./data/backups` (retensi 14 hari)
 - Login awal: Username `admin` / Password `admin12345` (sesuai `.env`)
+# LServer
