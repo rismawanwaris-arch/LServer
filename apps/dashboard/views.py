@@ -220,11 +220,34 @@ def manual_review_view(request):
     tagged_total = tagged_qs.aggregate(t=models.Sum("amount"))["t"] or Decimal("0.00")
 
     # Daftar entri Otomax belum cocok untuk opsi pencocokan manual
-    unmatched_otomax = OtomaxEntry.objects.filter(
-        book_date__gte=book_date - timedelta(days=2),
-        book_date__lte=book_date + timedelta(days=1),
-        match_status__in=[MatchStatus.PENDING_SETTLE, MatchStatus.UNMATCHED],
-    ).order_by("-amount")
+    unmatched_otomax = list(
+        OtomaxEntry.objects.filter(
+            book_date__gte=book_date - timedelta(days=2),
+            book_date__lte=book_date + timedelta(days=1),
+            match_status__in=[MatchStatus.PENDING_SETTLE, MatchStatus.UNMATCHED],
+        ).order_by("-amount")
+    )
+
+    from collections import defaultdict
+    otomax_by_amount = defaultdict(list)
+    for o in unmatched_otomax:
+        otomax_by_amount[o.amount].append(o)
+
+    items_list = list(items)
+    banks_by_amount = defaultdict(list)
+    for b in items_list:
+        banks_by_amount[b.amount].append(b)
+
+    review_unique_match_count = 0
+    for b in items_list:
+        candidates = otomax_by_amount.get(b.amount, [])
+        b.candidate_otomax = candidates[0] if candidates else None
+        b.candidate_count = len(candidates)
+        if len(candidates) == 1 and len(banks_by_amount[b.amount]) == 1:
+            b.is_unique_candidate = True
+            review_unique_match_count += 1
+        else:
+            b.is_unique_candidate = False
 
     return render(
         request,
@@ -234,13 +257,14 @@ def manual_review_view(request):
             "tab": tab,
             "selected_channel": channel,
             "channels": Channel.choices,
-            "items": items,
+            "items": items_list,
             "unmatched_count": unmatched_count,
             "unmatched_total": unmatched_total,
             "tagged_count": tagged_count,
             "tagged_total": tagged_total,
             "manual_tags": ManualTag.choices,
             "unmatched_otomax": unmatched_otomax,
+            "review_unique_match_count": review_unique_match_count,
         },
     )
 
@@ -309,11 +333,72 @@ def unpair_match_action(request, pk: int):
     return redirect(next_url)
 
 
+@login_required
+@require_POST
+def bulk_manual_match_action(request):
+    from collections import defaultdict
+
+    book_date = _parse_date(request.POST.get("book_date"))
+    next_url = request.POST.get("next_url") or request.META.get("HTTP_REFERER") or f"/pending-settle/?d={book_date}"
+
+    unmatched_banks = list(
+        BankMutation.objects.filter(
+            book_date__gte=book_date - timedelta(days=2),
+            book_date__lte=book_date + timedelta(days=1),
+            match_status=MatchStatus.UNMATCHED,
+        )
+    )
+    pending_otomax = list(
+        OtomaxEntry.objects.filter(
+            book_date__gte=book_date - timedelta(days=2),
+            book_date__lte=book_date + timedelta(days=1),
+            match_status__in=[MatchStatus.PENDING_SETTLE, MatchStatus.UNMATCHED],
+        )
+    )
+
+    banks_by_amt = defaultdict(list)
+    for b in unmatched_banks:
+        banks_by_amt[b.amount].append(b)
+
+    otomax_by_amt = defaultdict(list)
+    for o in pending_otomax:
+        otomax_by_amt[o.amount].append(o)
+
+    matched_count = 0
+    for amt, b_list in banks_by_amt.items():
+        o_list = otomax_by_amt.get(amt, [])
+        if len(b_list) == 1 and len(o_list) == 1:
+            bm = b_list[0]
+            oe = o_list[0]
+            try:
+                manual_pair_transactions(
+                    bank_mutation=bm,
+                    otomax_entry=oe,
+                    note=f"Pencocokan cepat nominal unik persis (Rp {amt:,.0f})",
+                    user=request.user,
+                )
+                matched_count += 1
+            except Exception:
+                pass
+
+    if matched_count > 0:
+        messages.success(
+            request,
+            f"Berhasil langsung memasangkan {matched_count} transaksi yang memiliki referensi pasangan cocok!",
+        )
+    else:
+        messages.info(request, "Tidak ditemukan transaksi dengan pasangan referensi 1-ke-1 yang cocok.")
+
+    return redirect(next_url)
+
+
 # --- Halaman 5: Pending Settle -----------------------------------------------
 
 
 @login_required
 def pending_settle_view(request):
+    from collections import defaultdict
+
     book_date = _parse_date(request.GET.get("d"))
     channel = request.GET.get("channel", "")
 
@@ -324,15 +409,42 @@ def pending_settle_view(request):
     if channel and channel in Channel.values:
         qs = qs.filter(channel_hint=channel)
 
-    items = qs.order_by("-amount")
+    items = list(qs.order_by("-amount"))
     total_amount = sum((i.amount for i in items), Decimal("0"))
 
     # Daftar mutasi bank yang belum cocok untuk kandidat pencocokan manual
-    unmatched_banks = BankMutation.objects.filter(
-        book_date__gte=book_date - timedelta(days=2),
-        book_date__lte=book_date + timedelta(days=1),
-        match_status=MatchStatus.UNMATCHED,
-    ).order_by("-amount", "-txn_datetime")
+    unmatched_banks = list(
+        BankMutation.objects.filter(
+            book_date__gte=book_date - timedelta(days=2),
+            book_date__lte=book_date + timedelta(days=1),
+            match_status=MatchStatus.UNMATCHED,
+        ).order_by("-amount", "-txn_datetime")
+    )
+
+    banks_by_amount = defaultdict(list)
+    for b in unmatched_banks:
+        banks_by_amount[b.amount].append(b)
+
+    otomax_by_amount = defaultdict(list)
+    for o in items:
+        otomax_by_amount[o.amount].append(o)
+
+    unique_match_count = 0
+    for o in items:
+        candidates = banks_by_amount.get(o.amount, [])
+        if o.channel_hint:
+            ch_candidates = [b for b in candidates if b.channel == o.channel_hint]
+            best_candidate = ch_candidates[0] if ch_candidates else (candidates[0] if candidates else None)
+        else:
+            best_candidate = candidates[0] if candidates else None
+
+        o.candidate_bank = best_candidate
+        o.candidate_count = len(candidates)
+        if len(candidates) == 1 and len(otomax_by_amount[o.amount]) == 1:
+            o.is_unique_candidate = True
+            unique_match_count += 1
+        else:
+            o.is_unique_candidate = False
 
     return render(
         request,
@@ -342,9 +454,10 @@ def pending_settle_view(request):
             "selected_channel": channel,
             "channels": Channel.choices,
             "items": items,
-            "count": items.count(),
+            "count": len(items),
             "total_amount": total_amount,
             "unmatched_banks": unmatched_banks,
+            "unique_match_count": unique_match_count,
         },
     )
 

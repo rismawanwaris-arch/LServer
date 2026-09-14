@@ -203,3 +203,72 @@ def test_manual_match_and_unpair_action(auth_client):
     assert bm.match_status == MatchStatus.UNMATCHED
     assert oe.match_status == MatchStatus.PENDING_SETTLE
 
+
+@pytest.mark.django_db
+def test_bulk_manual_match_action(auth_client):
+    d = date(2026, 9, 5)
+    batch_b = ImportBatch.objects.create(channel=Channel.BRI, book_date=d, source_filename="b.csv", file_hash="hbm2")
+    batch_o = ImportBatch.objects.create(channel=Channel.OTOMAX, book_date=d, source_filename="o.csv", file_hash="hom2")
+
+    # Pair 1: Unik Rp 2.500.000
+    bm1 = BankMutation.objects.create(
+        import_batch=batch_b,
+        book_date=d,
+        channel=Channel.BRI,
+        amount=Decimal("2500000"),
+        description_raw="Transfer BI-Fast 2.5jt",
+        row_hash="b_unmatched_2",
+        match_status=MatchStatus.UNMATCHED,
+    )
+    oe1 = OtomaxEntry.objects.create(
+        import_batch=batch_o,
+        book_date=d,
+        reseller_name_raw="PLC 2.5JT",
+        amount=Decimal("2500000"),
+        description_raw="TARTUN TF BRI 2.5jt",
+        row_hash="o_pending_2",
+        match_status=MatchStatus.PENDING_SETTLE,
+    )
+
+    # Pair 2: Ambigu Rp 100.000 (2 bank vs 1 otomax -> tidak boleh di-bulk)
+    BankMutation.objects.create(
+        import_batch=batch_b,
+        book_date=d,
+        channel=Channel.BRI,
+        amount=Decimal("100000"),
+        description_raw="Transfer 100rb A",
+        row_hash="b_unmatched_3a",
+        match_status=MatchStatus.UNMATCHED,
+    )
+    BankMutation.objects.create(
+        import_batch=batch_b,
+        book_date=d,
+        channel=Channel.BRI,
+        amount=Decimal("100000"),
+        description_raw="Transfer 100rb B",
+        row_hash="b_unmatched_3b",
+        match_status=MatchStatus.UNMATCHED,
+    )
+    OtomaxEntry.objects.create(
+        import_batch=batch_o,
+        book_date=d,
+        reseller_name_raw="PLC 100RB",
+        amount=Decimal("100000"),
+        description_raw="TARTUN 100rb",
+        row_hash="o_pending_3",
+        match_status=MatchStatus.PENDING_SETTLE,
+    )
+
+    res = auth_client.post("/manual-match/bulk/", {"book_date": "2026-09-05"})
+    assert res.status_code in (200, 302)
+
+    bm1.refresh_from_db()
+    oe1.refresh_from_db()
+    # Yang unik 2.5jt harus otomatis MATCHED (MANUAL)
+    assert bm1.match_status == MatchStatus.MANUAL
+    assert oe1.match_status == MatchStatus.MANUAL
+
+    # Yang ambigu 100rb tetap UNMATCHED / PENDING_SETTLE
+    assert BankMutation.objects.filter(amount=Decimal("100000"), match_status=MatchStatus.UNMATCHED).count() == 2
+
+

@@ -94,6 +94,34 @@
   }
 }">
 
+  <!-- Banner Pasangkan Cepat Otomatis (Jika ada pasangan referensi unik) -->
+  {% if unique_match_count > 0 %}
+  <div class="card bg-emerald-50 border-emerald-200 dark:bg-emerald-950/40 dark:border-emerald-800 p-4 mb-6 flex flex-wrap items-center justify-between gap-4 shadow-sm">
+    <div class="flex items-center gap-3">
+      <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-600 text-white font-bold text-lg shadow-sm">
+        ⚡
+      </div>
+      <div>
+        <h3 class="font-bold text-slate-900 dark:text-white text-sm">
+          Ditemukan {{ unique_match_count }} Transaksi yang Memiliki Pasangan Referensi Otomatis
+        </h3>
+        <p class="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
+          Transaksi di bawah memiliki lawan mutasi bank dengan nominal persis unik (1-ke-1) yang siap langsung dipasangkan.
+        </p>
+      </div>
+    </div>
+    <form method="post" action="{% url 'manual-match-bulk' %}">
+      {% csrf_token %}
+      <input type="hidden" name="book_date" value="{{ book_date|date:'Y-m-d' }}">
+      <button type="submit"
+              onclick="return confirm('Pasangkan langsung seluruh {{ unique_match_count }} transaksi yang sudah memiliki pasangan referensi unik?');"
+              class="btn-secondary font-bold text-xs py-2 px-4 shadow-sm">
+        ⚡ Langsung Pasangkan Semua ({{ unique_match_count }} Transaksi)
+      </button>
+    </form>
+  </div>
+  {% endif %}
+
   <div class="card overflow-hidden p-0 mb-6">
     <div class="overflow-x-auto">
       <table class="w-full text-sm">
@@ -106,7 +134,7 @@
             <th>Token Referensi</th>
             <th class="text-right">Nominal</th>
             <th>Status</th>
-            <th class="text-center">Aksi</th>
+            <th class="text-center">Aksi Pencocokan</th>
           </tr>
         </thead>
         <tbody>
@@ -136,6 +164,37 @@
               <span class="badge-warn text-[11px]">PENDING SETTLE</span>
             </td>
             <td class="text-center whitespace-nowrap">
+              {% if o.candidate_bank %}
+              <div class="inline-flex items-center gap-1.5">
+                <form method="post" action="{% url 'manual-match' %}" class="inline">
+                  {% csrf_token %}
+                  <input type="hidden" name="book_date" value="{{ book_date|date:'Y-m-d' }}">
+                  <input type="hidden" name="otomax_id" value="{{ o.id }}">
+                  <input type="hidden" name="bank_id" value="{{ o.candidate_bank.id }}">
+                  <input type="hidden" name="note" value="Pencocokan cepat nominal sama ({{ o.candidate_bank.channel }})">
+                  <button type="submit"
+                          title="Lawan ditemukan: {{ o.candidate_bank.channel }} Rp {{ o.candidate_bank.amount|rupiah }} - {{ o.candidate_bank.description_raw }}"
+                          class="btn-secondary py-1 px-2.5 text-xs font-bold shadow-xs">
+                    ⚡ Langsung Pasangkan ({{ o.candidate_bank.channel }})
+                  </button>
+                </form>
+
+                <button type="button"
+                        @click="openMatch({
+                          id: {{ o.id }},
+                          reseller: '{{ o.reseller_name_raw|escapejs }}',
+                          channel: '{{ o.channel_hint|default:''|escapejs }}',
+                          amount: '{{ o.amount|stringformat:'.2f' }}',
+                          amount_formatted: 'Rp {{ o.amount|rupiah }}',
+                          date: '{{ o.entry_datetime|date:'d M H:i'|default:o.book_date }}',
+                          desc: '{{ o.description_raw|escapejs }}'
+                        })"
+                        title="Pilih mutasi bank lainnya secara manual"
+                        class="btn-ghost py-1 px-2 text-xs text-slate-500">
+                  Lainnya...
+                </button>
+              </div>
+              {% else %}
               <button type="button"
                       @click="openMatch({
                         id: {{ o.id }},
@@ -146,9 +205,10 @@
                         date: '{{ o.entry_datetime|date:'d M H:i'|default:o.book_date }}',
                         desc: '{{ o.description_raw|escapejs }}'
                       })"
-                      class="btn-primary py-1 px-3 text-xs font-semibold shadow-xs">
-                Cocokkan Manual &rarr;
+                      class="btn-ghost py-1 px-3 text-xs font-semibold">
+                Pilih Manual &rarr;
               </button>
+              {% endif %}
             </td>
           </tr>
           {% empty %}
