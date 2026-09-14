@@ -192,6 +192,65 @@ def matches_view(request):
     )
 
 
+def _find_auto_pairs(unmatched_banks, pending_otomax):
+    import re
+    from collections import defaultdict
+
+    def get_name_from_bank(desc):
+        parts = (desc or "").split(" - ")
+        return parts[-1].strip().upper() if len(parts) >= 2 else ""
+
+    def get_name_from_otomax(desc):
+        m = re.search(r"BFST\d+([A-Z\s]+?)(?::|$)", (desc or "").upper())
+        if m:
+            return m.group(1).strip()
+        return ""
+
+    used_b = set()
+    used_o = set()
+    pairs = []
+
+    # Tahap 1: Nama pengirim + nominal persis
+    for o in pending_otomax:
+        o_name = get_name_from_otomax(o.description_raw or "")
+        if not o_name or len(o_name) < 3:
+            continue
+        for b in unmatched_banks:
+            if b.id in used_b:
+                continue
+            if b.amount != o.amount:
+                continue
+            b_name = get_name_from_bank(b.description_raw or "")
+            if b_name and len(b_name) >= 3 and (o_name in b_name or b_name in o_name):
+                pairs.append((b, o, f"Cocok referensi nama ({b_name}) & nominal persis"))
+                used_b.add(b.id)
+                used_o.add(o.id)
+                break
+
+    # Tahap 2: Nominal 1-ke-1 unik
+    rem_banks = [b for b in unmatched_banks if b.id not in used_b]
+    rem_otomax = [o for o in pending_otomax if o.id not in used_o]
+
+    banks_by_amt = defaultdict(list)
+    for b in rem_banks:
+        banks_by_amt[b.amount].append(b)
+
+    otomax_by_amt = defaultdict(list)
+    for o in rem_otomax:
+        otomax_by_amt[o.amount].append(o)
+
+    for amt, b_list in banks_by_amt.items():
+        o_list = otomax_by_amt.get(amt, [])
+        if len(b_list) == 1 and len(o_list) == 1:
+            bm = b_list[0]
+            oe = o_list[0]
+            pairs.append((bm, oe, f"Cocok referensi nominal unik persis (Rp {amt:,.0f})"))
+            used_b.add(bm.id)
+            used_o.add(oe.id)
+
+    return pairs
+
+
 # --- Halaman 4: Antrean Review Manual ----------------------------------------
 
 
@@ -228,26 +287,9 @@ def manual_review_view(request):
         ).order_by("-amount")
     )
 
-    from collections import defaultdict
-    otomax_by_amount = defaultdict(list)
-    for o in unmatched_otomax:
-        otomax_by_amount[o.amount].append(o)
-
     items_list = list(items)
-    banks_by_amount = defaultdict(list)
-    for b in items_list:
-        banks_by_amount[b.amount].append(b)
-
-    review_unique_match_count = 0
-    for b in items_list:
-        candidates = otomax_by_amount.get(b.amount, [])
-        b.candidate_otomax = candidates[0] if candidates else None
-        b.candidate_count = len(candidates)
-        if len(candidates) == 1 and len(banks_by_amount[b.amount]) == 1:
-            b.is_unique_candidate = True
-            review_unique_match_count += 1
-        else:
-            b.is_unique_candidate = False
+    auto_pairs = _find_auto_pairs(items_list, unmatched_otomax)
+    auto_pairable_count = len(auto_pairs)
 
     return render(
         request,
@@ -264,7 +306,7 @@ def manual_review_view(request):
             "tagged_total": tagged_total,
             "manual_tags": ManualTag.choices,
             "unmatched_otomax": unmatched_otomax,
-            "review_unique_match_count": review_unique_match_count,
+            "auto_pairable_count": auto_pairable_count,
         },
     )
 
@@ -336,8 +378,6 @@ def unpair_match_action(request, pk: int):
 @login_required
 @require_POST
 def bulk_manual_match_action(request):
-    from collections import defaultdict
-
     book_date = _parse_date(request.POST.get("book_date"))
     next_url = request.POST.get("next_url") or request.META.get("HTTP_REFERER") or f"/pending-settle/?d={book_date}"
 
@@ -356,38 +396,27 @@ def bulk_manual_match_action(request):
         )
     )
 
-    banks_by_amt = defaultdict(list)
-    for b in unmatched_banks:
-        banks_by_amt[b.amount].append(b)
-
-    otomax_by_amt = defaultdict(list)
-    for o in pending_otomax:
-        otomax_by_amt[o.amount].append(o)
-
+    pairs = _find_auto_pairs(unmatched_banks, pending_otomax)
     matched_count = 0
-    for amt, b_list in banks_by_amt.items():
-        o_list = otomax_by_amt.get(amt, [])
-        if len(b_list) == 1 and len(o_list) == 1:
-            bm = b_list[0]
-            oe = o_list[0]
-            try:
-                manual_pair_transactions(
-                    bank_mutation=bm,
-                    otomax_entry=oe,
-                    note=f"Pencocokan cepat nominal unik persis (Rp {amt:,.0f})",
-                    user=request.user,
-                )
-                matched_count += 1
-            except Exception:
-                pass
+    for bm, oe, note in pairs:
+        try:
+            manual_pair_transactions(
+                bank_mutation=bm,
+                otomax_entry=oe,
+                note=note,
+                user=request.user,
+            )
+            matched_count += 1
+        except Exception:
+            pass
 
     if matched_count > 0:
         messages.success(
             request,
-            f"Berhasil langsung memasangkan {matched_count} transaksi yang memiliki referensi pasangan cocok!",
+            f"Berhasil memasangkan {matched_count} transaksi secara otomatis berdasarkan referensi yang cocok!",
         )
     else:
-        messages.info(request, "Tidak ditemukan transaksi dengan pasangan referensi 1-ke-1 yang cocok.")
+        messages.info(request, "Tidak ditemukan transaksi dengan referensi pasangan yang cocok.")
 
     return redirect(next_url)
 
@@ -397,8 +426,6 @@ def bulk_manual_match_action(request):
 
 @login_required
 def pending_settle_view(request):
-    from collections import defaultdict
-
     book_date = _parse_date(request.GET.get("d"))
     channel = request.GET.get("channel", "")
 
@@ -421,30 +448,8 @@ def pending_settle_view(request):
         ).order_by("-amount", "-txn_datetime")
     )
 
-    banks_by_amount = defaultdict(list)
-    for b in unmatched_banks:
-        banks_by_amount[b.amount].append(b)
-
-    otomax_by_amount = defaultdict(list)
-    for o in items:
-        otomax_by_amount[o.amount].append(o)
-
-    unique_match_count = 0
-    for o in items:
-        candidates = banks_by_amount.get(o.amount, [])
-        if o.channel_hint:
-            ch_candidates = [b for b in candidates if b.channel == o.channel_hint]
-            best_candidate = ch_candidates[0] if ch_candidates else (candidates[0] if candidates else None)
-        else:
-            best_candidate = candidates[0] if candidates else None
-
-        o.candidate_bank = best_candidate
-        o.candidate_count = len(candidates)
-        if len(candidates) == 1 and len(otomax_by_amount[o.amount]) == 1:
-            o.is_unique_candidate = True
-            unique_match_count += 1
-        else:
-            o.is_unique_candidate = False
+    auto_pairs = _find_auto_pairs(unmatched_banks, items)
+    auto_pairable_count = len(auto_pairs)
 
     return render(
         request,
@@ -457,7 +462,7 @@ def pending_settle_view(request):
             "count": len(items),
             "total_amount": total_amount,
             "unmatched_banks": unmatched_banks,
-            "unique_match_count": unique_match_count,
+            "auto_pairable_count": auto_pairable_count,
         },
     )
 

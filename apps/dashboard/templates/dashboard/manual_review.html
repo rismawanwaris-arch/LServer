@@ -78,8 +78,8 @@
 <!-- Tab Content: Unmatched Review Queue (PRD Section 9.4) -->
 {% if tab == 'unmatched' %}
 
-<!-- Banner Pasangkan Cepat Otomatis (Jika ada pasangan referensi unik) -->
-{% if review_unique_match_count > 0 %}
+<!-- SATU TOMBOL TUNGGAL DI BAGIAN ATAS UNTUK PENCOCOKAN DATA YANG COCOK -->
+{% if auto_pairable_count > 0 %}
 <div class="card bg-emerald-50 border-emerald-200 dark:bg-emerald-950/40 dark:border-emerald-800 p-4 mb-6 flex flex-wrap items-center justify-between gap-4 shadow-sm">
   <div class="flex items-center gap-3">
     <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-600 text-white font-bold text-lg shadow-sm">
@@ -87,10 +87,10 @@
     </div>
     <div>
       <h3 class="font-bold text-slate-900 dark:text-white text-sm">
-        Ditemukan {{ review_unique_match_count }} Mutasi Bank yang Memiliki Pasangan Otomax Unik
+        Pencocokan Cepat Otomatis
       </h3>
       <p class="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
-        Mutasi bank di bawah memiliki pasangan nominal persis unik (1-ke-1) di data Otomax yang siap langsung dipasangkan.
+        Ditemukan <b>{{ auto_pairable_count }} data transaksi</b> yang memiliki data referensi pasangannya (nama pengirim / nominal unik).
       </p>
     </div>
   </div>
@@ -98,9 +98,10 @@
     {% csrf_token %}
     <input type="hidden" name="book_date" value="{{ book_date|date:'Y-m-d' }}">
     <button type="submit"
-            onclick="return confirm('Pasangkan langsung seluruh {{ review_unique_match_count }} transaksi yang sudah memiliki pasangan referensi unik?');"
-            class="btn-secondary font-bold text-xs py-2 px-4 shadow-sm">
-      ⚡ Langsung Pasangkan Semua ({{ review_unique_match_count }} Transaksi)
+            onclick="return confirm('Pasangkan langsung seluruh {{ auto_pairable_count }} transaksi yang sudah memiliki data referensi pasangannya?');"
+            class="btn-secondary font-bold text-xs py-2.5 px-5 shadow-sm flex items-center gap-2">
+      <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+      <span>Pasangkan Semua Data yang Cocok ({{ auto_pairable_count }} Transaksi)</span>
     </button>
   </form>
 </div>
@@ -149,34 +150,6 @@
             Rp {{ b.amount|rupiah }}
           </span>
         </div>
-
-        <!-- Opsi 1-Click Pasangkan Cepat jika ada lawan ditemukan -->
-        {% if b.candidate_otomax %}
-        <div class="mb-3 p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 dark:bg-emerald-950/50 dark:border-emerald-800 flex items-center justify-between gap-2 shadow-2xs">
-          <div class="text-xs">
-            <div class="font-bold text-emerald-800 dark:text-emerald-300 text-[11px] flex items-center gap-1">
-              <span>⚡ Lawan Otomax Ditemukan:</span>
-            </div>
-            <div class="font-semibold text-slate-900 dark:text-white text-xs mt-0.5">
-              {{ b.candidate_otomax.reseller_name_raw }}
-            </div>
-            <div class="font-mono text-[10px] text-slate-500 truncate max-w-[150px]">
-              {{ b.candidate_otomax.description_raw }}
-            </div>
-          </div>
-          <form method="post" action="{% url 'manual-match' %}" class="inline">
-            {% csrf_token %}
-            <input type="hidden" name="book_date" value="{{ book_date|date:'Y-m-d' }}">
-            <input type="hidden" name="bank_id" value="{{ b.id }}">
-            <input type="hidden" name="otomax_id" value="{{ b.candidate_otomax.id }}">
-            <input type="hidden" name="note" value="Pencocokan cepat referensi cocok: {{ b.channel }}">
-            <button type="submit"
-                    class="btn-secondary py-1.5 px-3 text-xs font-bold shadow-xs whitespace-nowrap">
-              ⚡ Langsung Pasangkan
-            </button>
-          </form>
-        </div>
-        {% endif %}
 
         <!-- Mode Toggle -->
         <div class="flex items-center gap-1 mb-2.5 bg-slate-200/80 dark:bg-slate-700/60 p-1 rounded-lg text-xs font-semibold">
