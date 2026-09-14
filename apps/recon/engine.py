@@ -106,6 +106,18 @@ def _match_ref(book_date: date, channel: str) -> RunStats:
         o = take(by_norm, (b.ref_normalized, b.amount))
         mtype = MatchType.AUTO_EXACT
 
+        # 1b. Subparts match jika keterangan menggabungkan beberapa sumber (misal REMARK_CUSTOM [TRREMK])
+        if o is None and "[" in b.ref_normalized and "]" in b.ref_normalized:
+            parts = b.ref_normalized.split("[", 1)
+            p1 = parts[0].strip()
+            p2 = parts[1].split("]", 1)[0].strip()
+            if p1:
+                o = take(by_norm, (p1, b.amount))
+            if o is None and p2:
+                o = take(by_norm, (p2, b.amount))
+            if o is not None:
+                mtype = MatchType.AUTO_EXACT
+
         # 2. Token match (Priority 1)
         if o is None:
             # Check ref_core first
@@ -183,12 +195,23 @@ def _match_auto_deposit_candidate(bank: BankMutation, otomax: list[OtomaxEntry],
 def _fuzzy_candidate(bank, otomax, used):
     threshold = settings.MATCH_FUZZY_THRESHOLD
     best, best_score = None, threshold
+    bank_norms = [bank.ref_normalized]
+    if "[" in bank.ref_normalized and "]" in bank.ref_normalized:
+        parts = bank.ref_normalized.split("[", 1)
+        p1 = parts[0].strip()
+        p2 = parts[1].split("]", 1)[0].strip()
+        if p1:
+            bank_norms.append(p1)
+        if p2:
+            bank_norms.append(p2)
+
     for o in otomax:
         if o.id in used or o.amount != bank.amount:
             continue
-        score = fuzz.token_sort_ratio(bank.ref_normalized, o.ref_normalized)
-        if score >= best_score:
-            best, best_score = o, score
+        for bn in bank_norms:
+            score = fuzz.token_sort_ratio(bn, o.ref_normalized)
+            if score >= best_score:
+                best, best_score = o, score
     if best:
         used.add(best.id)
         best._fuzzy_score = int(best_score)

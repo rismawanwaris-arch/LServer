@@ -45,13 +45,22 @@ def _parse_csv(text: str, result: ParseResult) -> bool:
     for row in reader:
         row_upper = {k.strip().upper(): v.strip() for k, v in row.items() if k and v is not None}
         tgl_raw = row_upper.get("TGL_TRAN") or row_upper.get("TANGGAL") or ""
-        desc = (
-            row_upper.get("REMARK_CUSTOM")
-            or row_upper.get("TRREMK")
-            or row_upper.get("DESK_TRAN")
-            or row_upper.get("KETERANGAN")
-            or ""
-        )
+        rc = row_upper.get("REMARK_CUSTOM", "").strip()
+        tr = row_upper.get("TRREMK", "").strip()
+        dt = row_upper.get("DESK_TRAN", "").strip()
+        ket = row_upper.get("KETERANGAN", "").strip()
+
+        if rc and tr and rc.upper() != tr.upper():
+            desc = f"{rc} [{tr}]"
+        elif rc:
+            desc = rc
+        elif tr:
+            desc = tr
+        elif dt:
+            desc = dt
+        else:
+            desc = ket
+
         glsign = row_upper.get("GLSIGN", "").upper()
         kredit = _parse_num(row_upper.get("MUTASI_KREDIT"))
         debet = _parse_num(row_upper.get("MUTASI_DEBET"))

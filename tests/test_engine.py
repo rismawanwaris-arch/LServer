@@ -315,3 +315,44 @@ def test_tartun_plc_auto_deposit_nominal_match():
     assert m.amount_bank == Decimal("3190000")
     assert m.amount_otomax == Decimal("3190000")
     assert "Auto Deposit" in m.note
+
+
+@pytest.mark.django_db
+def test_match_bri_combined_descriptions():
+    # Case 1: Otomax matches the TRREMK part (inside brackets) - e.g. BI-Fast
+    b1 = _bank(
+        desc="Transfer BI-Fast - Ujang Wawan [BFST215401000596563UJANG WAWAN :BMRIIDJA]",
+        amount="4090000",
+        channel=Channel.BRI,
+    )
+    o1 = _otomax(
+        desc="TARTUN TF BRI BFST215401000596563UJANG WAWAN :BMRIIDJA",
+        amount="4090000",
+        channel=Channel.BRI,
+    )
+
+    # Case 2: Otomax matches the REMARK_CUSTOM part (before brackets) - e.g. BRImo
+    b2 = _bank(
+        desc="Transfer Dari Budiharno via BRImo [NBMB BUDIHARNO TO SYAIFUL]",
+        amount="1005000",
+        channel=Channel.BRI,
+    )
+    o2 = _otomax(
+        desc="TARTUN TF BRI Transfer Dari Budiharno via BRImo",
+        amount="1005000",
+        channel=Channel.BRI,
+    )
+
+    stats = run_match(BD)
+    assert stats.matched >= 2
+
+    b1.refresh_from_db()
+    o1.refresh_from_db()
+    assert b1.match_status == MatchStatus.MATCHED
+    assert o1.match_status == MatchStatus.MATCHED
+
+    b2.refresh_from_db()
+    o2.refresh_from_db()
+    assert b2.match_status == MatchStatus.MATCHED
+    assert o2.match_status == MatchStatus.MATCHED
+
