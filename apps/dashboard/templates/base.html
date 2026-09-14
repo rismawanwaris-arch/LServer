@@ -59,95 +59,186 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/htmx/2.0.3/htmx.min.js" defer></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.14.1/cdn.min.js" defer></script>
 </head>
-<body class="min-h-full bg-slate-100/70 font-sans text-slate-900 antialiased dark:bg-slate-900 dark:text-slate-100">
-  <header class="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur shadow-xs dark:border-slate-700 dark:bg-slate-800/95">
-    <div class="mx-auto flex max-w-7xl items-center justify-between px-4 py-2.5">
-      <div class="flex items-center gap-6">
-        <a href="{% url 'day' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}" class="flex items-center gap-2.5">
-          <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-600 text-white font-bold text-base shadow-sm">
+<body class="min-h-full bg-slate-100/70 font-sans text-slate-900 antialiased dark:bg-slate-900 dark:text-slate-100"
+      x-data="{ mobileMenuOpen: false }">
+
+  <div class="min-h-screen flex">
+    {% if user.is_authenticated %}
+    <!-- Backdrop Overlay untuk Mobile -->
+    <div x-show="mobileMenuOpen"
+         x-transition:enter="transition-opacity ease-linear duration-200"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition-opacity ease-linear duration-200"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         @click="mobileMenuOpen = false"
+         class="fixed inset-0 z-40 bg-slate-900/60 backdrop-blur-xs md:hidden"
+         style="display: none;"></div>
+
+    <!-- SIDEBAR NAV -->
+    <aside :class="mobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'"
+           class="fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-slate-200 bg-white transition-transform duration-200 ease-in-out dark:border-slate-800 dark:bg-slate-900 md:static md:h-screen md:sticky md:top-0">
+      
+      <!-- Brand Logo Header -->
+      <div class="flex h-16 items-center justify-between px-5 border-b border-slate-100 dark:border-slate-800">
+        <a href="{% url 'day' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}" class="flex items-center gap-3 group">
+          <div class="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-600 text-white font-bold text-base shadow-sm group-hover:bg-indigo-700 transition">
             R
           </div>
           <div>
             <div class="font-serif text-lg font-bold tracking-tight text-slate-900 dark:text-white leading-tight">RekonMutasi</div>
-            <div class="text-[11px] text-slate-500 font-medium">Bank vs Otomax</div>
+            <div class="text-[11px] text-slate-400 font-medium">Bank vs Otomax</div>
           </div>
         </a>
-
-        {% if user.is_authenticated %}
-        <nav class="hidden md:flex items-center gap-1 text-sm font-medium">
-          <a class="px-3 py-1.5 rounded-lg text-slate-700 hover:text-indigo-600 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
-             href="{% url 'day' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}">
-            Dashboard
-          </a>
-          <a class="px-3 py-1.5 rounded-lg text-slate-700 hover:text-indigo-600 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
-             href="{% url 'upload' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}">
-            Upload Data
-          </a>
-          <a class="px-3 py-1.5 rounded-lg text-slate-700 hover:text-indigo-600 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
-             href="{% url 'exclusion-rules' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}">
-            Aturan Filter
-          </a>
-          <a class="px-3 py-1.5 rounded-lg text-slate-700 hover:text-indigo-600 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
-             href="{% url 'matches' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}">
-            Hasil Cocok
-          </a>
-          <a class="px-3 py-1.5 rounded-lg text-slate-700 hover:text-indigo-600 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
-             href="{% url 'manual-review' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}">
-            Review Manual
-          </a>
-          <a class="px-3 py-1.5 rounded-lg text-slate-700 hover:text-indigo-600 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
-             href="{% url 'pending-settle' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}">
-            Pending Settle
-          </a>
-          <a class="px-3 py-1.5 rounded-lg text-slate-700 hover:text-indigo-600 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
-             href="{% url 'reports' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}">
-            Laporan
-          </a>
-        </nav>
-        {% endif %}
+        <button @click="mobileMenuOpen = false" class="md:hidden text-slate-400 hover:text-slate-600">
+          <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
       </div>
 
-      {% if user.is_authenticated %}
-      <div class="flex items-center gap-3 text-sm">
-        {% if user.is_superuser %}
-        <a class="text-xs text-rose-600 font-medium hover:underline hidden sm:inline" href="{% url 'data-admin' %}">Hapus data</a>
-        {% endif %}
-        <a class="text-xs text-slate-500 font-medium hover:text-indigo-600 hidden sm:inline" href="/admin/">Django Admin</a>
+      <!-- Navigation Menu Groups -->
+      <div class="flex-1 overflow-y-auto px-3 py-4 space-y-6 text-xs">
+        <!-- Kelompok 1: Utama & Data Mentah -->
+        <div>
+          <div class="px-3 mb-2 font-bold uppercase tracking-wider text-[10px] text-slate-400 dark:text-slate-500">
+            Menu Utama
+          </div>
+          <nav class="space-y-1">
+            <a href="{% url 'day' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}"
+               class="flex items-center gap-3 px-3 py-2 rounded-lg font-medium transition {% if request.resolver_match.url_name == 'day' %}bg-indigo-50 text-indigo-700 font-semibold dark:bg-indigo-950/60 dark:text-indigo-300 shadow-2xs{% else %}text-slate-600 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800/60 dark:hover:text-white{% endif %}">
+              <svg class="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+              <span>Dashboard</span>
+            </a>
+
+            <a href="{% url 'upload' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}"
+               class="flex items-center gap-3 px-3 py-2 rounded-lg font-medium transition {% if request.resolver_match.url_name == 'upload' %}bg-indigo-50 text-indigo-700 font-semibold dark:bg-indigo-950/60 dark:text-indigo-300 shadow-2xs{% else %}text-slate-600 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800/60 dark:hover:text-white{% endif %}">
+              <svg class="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+              <span>Upload Data</span>
+            </a>
+
+            <a href="{% url 'exclusion-rules' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}"
+               class="flex items-center gap-3 px-3 py-2 rounded-lg font-medium transition {% if request.resolver_match.url_name == 'exclusion-rules' %}bg-indigo-50 text-indigo-700 font-semibold dark:bg-indigo-950/60 dark:text-indigo-300 shadow-2xs{% else %}text-slate-600 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800/60 dark:hover:text-white{% endif %}">
+              <svg class="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
+              <span>Aturan Filter</span>
+            </a>
+          </nav>
+        </div>
+
+        <!-- Kelompok 2: Hasil & Penanganan -->
+        <div>
+          <div class="px-3 mb-2 font-bold uppercase tracking-wider text-[10px] text-slate-400 dark:text-slate-500">
+            Pencocokan
+          </div>
+          <nav class="space-y-1">
+            <a href="{% url 'matches' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}"
+               class="flex items-center gap-3 px-3 py-2 rounded-lg font-medium transition {% if request.resolver_match.url_name == 'matches' %}bg-indigo-50 text-indigo-700 font-semibold dark:bg-indigo-950/60 dark:text-indigo-300 shadow-2xs{% else %}text-slate-600 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800/60 dark:hover:text-white{% endif %}">
+              <svg class="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              <span>Hasil Cocok</span>
+            </a>
+
+            <a href="{% url 'manual-review' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}"
+               class="flex items-center gap-3 px-3 py-2 rounded-lg font-medium transition {% if request.resolver_match.url_name == 'manual-review' %}bg-indigo-50 text-indigo-700 font-semibold dark:bg-indigo-950/60 dark:text-indigo-300 shadow-2xs{% else %}text-slate-600 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800/60 dark:hover:text-white{% endif %}">
+              <svg class="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>
+              <span>Review Manual</span>
+            </a>
+
+            <a href="{% url 'pending-settle' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}"
+               class="flex items-center gap-3 px-3 py-2 rounded-lg font-medium transition {% if request.resolver_match.url_name == 'pending-settle' %}bg-indigo-50 text-indigo-700 font-semibold dark:bg-indigo-950/60 dark:text-indigo-300 shadow-2xs{% else %}text-slate-600 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800/60 dark:hover:text-white{% endif %}">
+              <svg class="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              <span>Pending Settle</span>
+            </a>
+          </nav>
+        </div>
+
+        <!-- Kelompok 3: Laporan & Alat -->
+        <div>
+          <div class="px-3 mb-2 font-bold uppercase tracking-wider text-[10px] text-slate-400 dark:text-slate-500">
+            Laporan & Sistem
+          </div>
+          <nav class="space-y-1">
+            <a href="{% url 'reports' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}"
+               class="flex items-center gap-3 px-3 py-2 rounded-lg font-medium transition {% if request.resolver_match.url_name == 'reports' %}bg-indigo-50 text-indigo-700 font-semibold dark:bg-indigo-950/60 dark:text-indigo-300 shadow-2xs{% else %}text-slate-600 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800/60 dark:hover:text-white{% endif %}">
+              <svg class="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+              <span>Laporan Rekonsiliasi</span>
+            </a>
+
+            {% if user.is_superuser %}
+            <a href="{% url 'data-admin' %}"
+               class="flex items-center gap-3 px-3 py-2 rounded-lg font-medium transition {% if request.resolver_match.url_name == 'data-admin' %}bg-rose-50 text-rose-700 font-semibold dark:bg-rose-950/60 dark:text-rose-300{% else %}text-slate-600 hover:bg-rose-50 hover:text-rose-700 dark:text-slate-300 dark:hover:bg-rose-950/40 dark:hover:text-rose-300{% endif %}">
+              <svg class="h-4 w-4 flex-shrink-0 text-rose-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+              <span>Reset & Purge Data</span>
+            </a>
+            {% endif %}
+
+            <a href="/admin/" target="_blank"
+               class="flex items-center gap-3 px-3 py-2 rounded-lg font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800/60 dark:hover:text-white transition">
+              <svg class="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+              <span>Django Admin</span>
+            </a>
+          </nav>
+        </div>
+      </div>
+
+      <!-- User Profile & Logout Bottom Bar -->
+      <div class="border-t border-slate-100 dark:border-slate-800 p-3.5 flex items-center justify-between">
+        <div class="flex items-center gap-2.5 min-w-0">
+          <div class="h-8 w-8 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center font-bold text-xs text-slate-700 dark:text-slate-300 flex-shrink-0">
+            {{ user.username|slice:":1"|upper }}
+          </div>
+          <div class="min-w-0">
+            <div class="font-semibold text-xs text-slate-800 dark:text-slate-200 truncate">{{ user.username }}</div>
+            <div class="text-[10px] text-slate-400">{% if user.is_superuser %}Administrator{% else %}Operator{% endif %}</div>
+          </div>
+        </div>
+
         <form method="post" action="{% url 'logout' %}" class="inline">{% csrf_token %}
-          <button class="text-xs text-slate-500 font-medium hover:text-rose-600 px-2 py-1 rounded-md hover:bg-rose-50 dark:hover:bg-rose-950/40">Keluar</button>
+          <button title="Keluar" class="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition">
+            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
+          </button>
         </form>
       </div>
-      {% endif %}
-    </div>
-
-    {% if user.is_authenticated %}
-    <!-- Mobile Navigation Subbar -->
-    <div class="md:hidden flex items-center gap-2 overflow-x-auto px-4 py-2 border-t border-slate-100 dark:border-slate-700 text-xs font-medium">
-      <a class="whitespace-nowrap px-2.5 py-1 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-200" href="{% url 'day' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}">Dashboard</a>
-      <a class="whitespace-nowrap px-2.5 py-1 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300" href="{% url 'upload' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}">Upload</a>
-      <a class="whitespace-nowrap px-2.5 py-1 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300" href="{% url 'matches' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}">Hasil Cocok</a>
-      <a class="whitespace-nowrap px-2.5 py-1 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300" href="{% url 'manual-review' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}">Review</a>
-      <a class="whitespace-nowrap px-2.5 py-1 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300" href="{% url 'pending-settle' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}">Pending</a>
-      <a class="whitespace-nowrap px-2.5 py-1 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300" href="{% url 'reports' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}">Laporan</a>
-    </div>
+    </aside>
     {% endif %}
-  </header>
 
-  {% if messages %}
-  <div class="mx-auto max-w-7xl px-4 pt-4">
-    {% for m in messages %}
-    <div class="mb-2.5 flex items-center justify-between rounded-xl border px-4 py-3 text-sm font-medium shadow-xs
-      {% if m.tags == 'error' %}border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-800 dark:bg-rose-950/50 dark:text-rose-200
-      {% elif m.tags == 'success' %}border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200
-      {% else %}border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-800 dark:bg-blue-950/50 dark:text-blue-200{% endif %}">
-      <span>{{ m }}</span>
+    <!-- MAIN AREA (Header + Content) -->
+    <div class="flex-1 flex flex-col min-w-0 overflow-y-auto">
+      {% if user.is_authenticated %}
+      <!-- Mobile Top Navbar Header -->
+      <header class="md:hidden flex h-14 items-center justify-between border-b border-slate-200 bg-white px-4 shadow-xs dark:border-slate-800 dark:bg-slate-900 sticky top-0 z-30">
+        <div class="flex items-center gap-3">
+          <button @click="mobileMenuOpen = true" class="p-1.5 rounded-lg text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
+            <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+          </button>
+          <div class="font-serif font-bold text-sm text-slate-900 dark:text-white">RekonMutasi</div>
+        </div>
+        {% if book_date %}
+        <span class="font-mono text-xs text-slate-500">{{ book_date|date:"d M Y" }}</span>
+        {% endif %}
+      </header>
+      {% endif %}
+
+      <!-- Alert Flash Messages -->
+      {% if messages %}
+      <div class="px-4 sm:px-6 lg:px-8 pt-4">
+        {% for m in messages %}
+        <div class="mb-2.5 flex items-center justify-between rounded-xl border px-4 py-3 text-sm font-medium shadow-xs
+          {% if m.tags == 'error' %}border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-800 dark:bg-rose-950/50 dark:text-rose-200
+          {% elif m.tags == 'success' %}border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200
+          {% else %}border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-800 dark:bg-blue-950/50 dark:text-blue-200{% endif %}">
+          <span>{{ m }}</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <!-- Primary Page Content -->
+      <main class="flex-1 w-full max-w-7xl mx-auto {% if user.is_authenticated %}px-4 sm:px-6 lg:px-8 py-6{% else %}flex items-center justify-center p-4{% endif %}">
+        {% block content %}{% endblock %}
+      </main>
     </div>
-    {% endfor %}
   </div>
-  {% endif %}
 
-  <main class="mx-auto max-w-7xl px-4 py-6">
-    {% block content %}{% endblock %}
-  </main>
 </body>
 </html>
