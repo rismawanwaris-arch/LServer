@@ -8,6 +8,7 @@ urlpatterns = [
     path("", views.day_view, name="day"),
     # 2. Upload Data & Preview
     path("upload/", views.upload_view, name="upload"),
+    path("upload/delete-batch/<int:pk>/", views.delete_batch_action, name="delete-batch"),
     # 3. Hasil Rekonsiliasi
     path("matches/", views.matches_view, name="matches"),
     path("matches/unpair/<int:pk>/", views.unpair_match_action, name="unpair-match"),

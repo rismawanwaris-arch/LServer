@@ -272,3 +272,27 @@ def test_bulk_manual_match_action(auth_client):
     assert BankMutation.objects.filter(amount=Decimal("100000"), match_status=MatchStatus.UNMATCHED).count() == 2
 
 
+@pytest.mark.django_db
+def test_dashboard_delete_batch_action(auth_client):
+    d = date(2026, 9, 5)
+    batch = ImportBatch.objects.create(channel=Channel.BCA, book_date=d, source_filename="bca.csv", file_hash="hbca")
+    BankMutation.objects.create(
+        import_batch=batch,
+        book_date=d,
+        channel=Channel.BCA,
+        amount=Decimal("500000"),
+        description_raw="Transfer BCA",
+        row_hash="bm_del_test",
+        match_status=MatchStatus.UNMATCHED,
+    )
+    assert ImportBatch.objects.filter(id=batch.id).exists()
+    assert BankMutation.objects.filter(import_batch=batch).count() == 1
+
+    res = auth_client.post(f"/upload/delete-batch/{batch.id}/", {"book_date": "2026-09-05"})
+    assert res.status_code == 302
+    assert "/upload/?d=2026-09-05" in res.url
+    assert not ImportBatch.objects.filter(id=batch.id).exists()
+    assert BankMutation.objects.filter(row_hash="bm_del_test").count() == 0
+
+
+

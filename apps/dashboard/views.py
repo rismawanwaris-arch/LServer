@@ -20,6 +20,7 @@ from apps.recon.engine import run_match
 from apps.recon.models import Adjustment, Discrepancy, Match, ReconDay
 from apps.recon.purge import (
     DayIsClosed,
+    delete_import_batch,
     preview_all,
     purge_all_transactions,
     purge_day,
@@ -153,6 +154,34 @@ def upload(request):
     except Exception as exc:
         messages.error(request, f"Gagal: {exc}")
     return redirect(f"/upload/?d={book_date}")
+
+
+@login_required
+@require_POST
+def delete_batch_action(request, pk: int):
+    book_date_raw = request.POST.get("book_date")
+    try:
+        res = delete_import_batch(pk)
+        bdate = res["book_date"]
+        unlinked_msg = (
+            f" ({res['matches_unlinked']} pasangan terkait direset ke belum cocok)."
+            if res["matches_unlinked"] > 0
+            else ""
+        )
+        messages.success(
+            request,
+            f"Batch {res['channel']} ({res['filename']}) berhasil dihapus. "
+            f"{res['row_count']} baris data telah dibersihkan{unlinked_msg}",
+        )
+        return redirect(f"/upload/?d={bdate}")
+    except DayIsClosed as exc:
+        messages.error(request, str(exc))
+    except Exception as exc:
+        messages.error(request, f"Gagal menghapus batch: {exc}")
+
+    target_d = book_date_raw or ""
+    return redirect(f"/upload/?d={target_d}" if target_d else "/upload/")
+
 
 
 # --- Halaman 3: Hasil Rekonsiliasi ------------------------------------------

@@ -172,6 +172,7 @@
               <th>Karantina</th>
               <th>Status</th>
               <th>Waktu Upload</th>
+              <th class="text-center">Aksi</th>
             </tr>
           </thead>
           <tbody>
@@ -189,10 +190,25 @@
                 {% else %}<span class="badge-crit">GAGAL</span>{% endif %}
               </td>
               <td class="text-xs text-slate-400">{{ b.created_at|date:"H:i:s" }}</td>
+              <td class="text-center whitespace-nowrap">
+                <form method="post" action="{% url 'delete-batch' b.id %}" class="inline"
+                      onsubmit="return confirm('Hapus batch {{ b.channel }} ({{ b.source_filename }})? Seluruh data transaksi dari file ini akan dibersihkan.');">
+                  {% csrf_token %}
+                  <input type="hidden" name="book_date" value="{{ book_date|date:'Y-m-d' }}">
+                  <button type="submit"
+                          title="Hapus batch ini"
+                          class="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-md text-rose-600 hover:text-white hover:bg-rose-600 border border-rose-200 dark:border-rose-900 transition-colors shadow-2xs">
+                    <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                    <span>Hapus</span>
+                  </button>
+                </form>
+              </td>
             </tr>
             {% empty %}
             <tr>
-              <td colspan="6" class="text-center py-6 text-slate-400">
+              <td colspan="7" class="text-center py-6 text-slate-400">
                 Belum ada file diunggah untuk tanggal ini.
               </td>
             </tr>

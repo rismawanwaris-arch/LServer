@@ -7,8 +7,9 @@ from __future__ import annotations
 
 from datetime import date
 
-from django.db import transaction
+from django.db import models, transaction
 
+from apps.core.enums import MatchStatus
 from apps.ingest.models import BankMutation, DebitIgnored, ImportBatch, OtomaxEntry
 
 from .models import Adjustment, Discrepancy, Match, ReconDay
@@ -66,3 +67,61 @@ def purge_all_transactions(*, include_history: bool = False) -> dict[str, int]:
         for model in _HISTORY_MODELS:
             model.history.all().delete()
     return counts
+
+
+@transaction.atomic
+def delete_import_batch(batch_id: int, *, include_closed: bool = False) -> dict:
+    batch = ImportBatch.objects.select_for_update().get(id=batch_id)
+    day = ReconDay.objects.select_for_update().filter(book_date=batch.book_date).first()
+    if day and day.locked and not include_closed:
+        raise DayIsClosed(f"Tanggal {batch.book_date} sudah ditutup — penghapusan batch ditolak.")
+
+    # 1. Kumpulkan ID bank mutation dan otomax entry milik batch ini
+    bank_ids = list(batch.mutations.values_list("id", flat=True))
+    otomax_ids = list(batch.otomax.values_list("id", flat=True))
+
+    # 2. Cari semua pasangan Match yang melibatkan mutasi / entri di batch ini
+    matches = Match.objects.filter(
+        models.Q(bank_mutation_id__in=bank_ids) | models.Q(otomax_entry_id__in=otomax_ids)
+    )
+
+    # Catat ID pasangan dari batch lain yang selamat agar statusnya direset ke UNMATCHED
+    surviving_bank_ids = set()
+    surviving_otomax_ids = set()
+    for m in matches:
+        if m.bank_mutation_id and m.bank_mutation_id not in bank_ids:
+            surviving_bank_ids.add(m.bank_mutation_id)
+        if m.otomax_entry_id and m.otomax_entry_id not in otomax_ids:
+            surviving_otomax_ids.add(m.otomax_entry_id)
+
+    # 3. Cari selisih (Discrepancy) yang melibatkan mutasi / entri di batch ini
+    discrepancies = Discrepancy.objects.filter(
+        models.Q(bank_mutation_id__in=bank_ids) | models.Q(otomax_entry_id__in=otomax_ids)
+    )
+    discrepancy_ids = list(discrepancies.values_list("id", flat=True))
+
+    # 4. Hapus Adjustment yang mengacu pada discrepancy tersebut
+    Adjustment.objects.filter(discrepancy_id__in=discrepancy_ids).delete()
+
+    # 5. Hapus Discrepancy & Match
+    discrepancies.delete()
+    matches.delete()
+
+    # 6. Reset status pasangan yang masih ada ke UNMATCHED
+    if surviving_bank_ids:
+        BankMutation.objects.filter(id__in=surviving_bank_ids).update(match_status=MatchStatus.UNMATCHED)
+    if surviving_otomax_ids:
+        OtomaxEntry.objects.filter(id__in=surviving_otomax_ids).update(match_status=MatchStatus.UNMATCHED)
+
+    # 7. Hapus batch (cascade ke BankMutation, OtomaxEntry, DebitIgnored)
+    actual_rows = len(bank_ids) + len(otomax_ids) + batch.debits.count()
+    res = {
+        "channel": batch.channel,
+        "filename": batch.source_filename,
+        "book_date": batch.book_date,
+        "row_count": batch.row_count or actual_rows,
+        "matches_unlinked": len(surviving_bank_ids) + len(surviving_otomax_ids),
+    }
+    batch.delete()
+    return res
+
