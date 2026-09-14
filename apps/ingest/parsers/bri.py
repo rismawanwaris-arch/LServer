@@ -30,7 +30,12 @@ def _parse_num(val: str | None) -> Decimal:
 
 def _parse_csv(text: str, result: ParseResult) -> bool:
     first_few = text[:2000].upper()
-    if "TGL_TRAN" not in first_few and "REMARK_CUSTOM" not in first_few and "GLSIGN" not in first_few:
+    if (
+        "TGL_TRAN" not in first_few
+        and "REMARK_CUSTOM" not in first_few
+        and "TRREMK" not in first_few
+        and "GLSIGN" not in first_few
+    ):
         return False
 
     reader = csv.DictReader(io.StringIO(text), delimiter=",", skipinitialspace=True)
@@ -40,7 +45,13 @@ def _parse_csv(text: str, result: ParseResult) -> bool:
     for row in reader:
         row_upper = {k.strip().upper(): v.strip() for k, v in row.items() if k and v is not None}
         tgl_raw = row_upper.get("TGL_TRAN") or row_upper.get("TANGGAL") or ""
-        desc = row_upper.get("REMARK_CUSTOM") or row_upper.get("DESK_TRAN") or row_upper.get("KETERANGAN") or ""
+        desc = (
+            row_upper.get("TRREMK")
+            or row_upper.get("REMARK_CUSTOM")
+            or row_upper.get("DESK_TRAN")
+            or row_upper.get("KETERANGAN")
+            or ""
+        )
         glsign = row_upper.get("GLSIGN", "").upper()
         kredit = _parse_num(row_upper.get("MUTASI_KREDIT"))
         debet = _parse_num(row_upper.get("MUTASI_DEBET"))

@@ -16,6 +16,18 @@ def test_parse_bri_csv():
     assert res.bank_rows[1].amount == Decimal("-2500.00")
 
 
+def test_parse_bri_csv_with_trremk():
+    bri_csv = (
+        '"ID","NOREK","TGL_TRAN","MUTASI_DEBET","MUTASI_KREDIT","GLSIGN","TRREMK","REMARK_CUSTOM"\n'
+        '"1","215401000596563","2026-09-12 06:14:36","0.00","200000.00","Cr",'
+        '"BFST215401000596563CECEP SUPRIA:SSPIIDJA","Transfer BI-Fast - Cecep"\n'
+    )
+    res = parse_file(Channel.BRI, bri_csv)
+    assert len(res.bank_rows) == 1
+    assert res.bank_rows[0].description_raw == "BFST215401000596563CECEP SUPRIA:SSPIIDJA"
+    assert res.bank_rows[0].amount == Decimal("200000.00")
+
+
 def test_parse_mandiri_csv():
     mandiri_csv = """Date;Remark;Reference No.;Debit Amount;Credit Amount;Balance
 05/09/26 14.30;TARTUN TF MANDIRI MCM;REF12345;0;6500.00.00;1000000.00
