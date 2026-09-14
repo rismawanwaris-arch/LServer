@@ -97,6 +97,7 @@
   <form method="post" action="{% url 'manual-match-bulk' %}">
     {% csrf_token %}
     <input type="hidden" name="book_date" value="{{ book_date|date:'Y-m-d' }}">
+    <input type="hidden" name="next_url" value="{{ request.get_full_path }}">
     <button type="submit"
             onclick="return confirm('Pasangkan langsung seluruh {{ auto_pairable_count }} transaksi yang sudah memiliki data referensi pasangannya?');"
             class="btn-secondary font-bold text-xs py-2.5 px-5 shadow-sm flex items-center gap-2">
@@ -171,6 +172,7 @@
             {% csrf_token %}
             <input type="hidden" name="book_date" value="{{ book_date|date:'Y-m-d' }}">
             <input type="hidden" name="bank_id" value="{{ b.id }}">
+            <input type="hidden" name="next_url" value="{{ request.get_full_path }}">
 
             <div>
               <label class="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-0.5">Pilih Entri Otomax Lawan:</label>
@@ -202,6 +204,7 @@
           <form method="post" action="{% url 'manual-tag-action' b.id %}" class="space-y-2">
             {% csrf_token %}
             <input type="hidden" name="book_date" value="{{ book_date|date:'Y-m-d' }}">
+            <input type="hidden" name="next_url" value="{{ request.get_full_path }}">
 
             <div class="grid grid-cols-2 gap-2">
               <div>
@@ -249,24 +252,59 @@
           <th>Channel</th>
           <th>Keterangan Bank</th>
           <th class="text-right">Nominal</th>
-          <th>Tag Kategori</th>
+          <th>Status / Lawan Pasangan</th>
           <th>Catatan</th>
-          <th>Status</th>
+          <th class="text-center">Aksi</th>
         </tr>
       </thead>
       <tbody>
         {% for b in items %}
+        {% with m=b.active_matches.0 %}
         <tr>
           <td class="font-mono text-xs text-slate-500 whitespace-nowrap">{{ b.txn_datetime|date:"d M H:i"|default:b.book_date }}</td>
           <td class="font-bold text-xs">{{ b.channel }}</td>
-          <td class="font-mono text-xs max-w-xs truncate text-slate-800 dark:text-slate-200">{{ b.description_raw }}</td>
+          <td class="font-mono text-xs max-w-xs truncate text-slate-800 dark:text-slate-200" title="{{ b.description_raw }}">{{ b.description_raw }}</td>
           <td class="money text-right font-semibold">Rp {{ b.amount|rupiah }}</td>
           <td>
-            <span class="badge-good text-xs">{{ b.get_tag_manual_display }}</span>
+            {% if m and m.otomax_entry %}
+            <div class="space-y-0.5">
+              <span class="badge bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300 font-bold text-[11px]">
+                Lawan: {{ m.otomax_entry.reseller_name_raw }}
+              </span>
+              <div class="font-mono text-[10px] text-slate-500 truncate max-w-xs" title="{{ m.otomax_entry.description_raw }}">
+                {{ m.otomax_entry.description_raw }}
+              </div>
+            </div>
+            {% elif b.tag_manual %}
+            <span class="badge-good text-xs font-semibold">{{ b.get_tag_manual_display }}</span>
+            {% else %}
+            <span class="badge-mute text-xs">MATCHED MANUAL</span>
+            {% endif %}
           </td>
-          <td class="text-xs text-slate-600 dark:text-slate-300">{{ b.manual_note|default:"—" }}</td>
-          <td><span class="badge-mute">MATCHED MANUAL</span></td>
+          <td class="text-xs text-slate-600 dark:text-slate-300">
+            {% if m and m.otomax_entry %}
+              {{ m.note|default:"Pencocokan manual" }}
+            {% else %}
+              {{ b.manual_note|default:"—" }}
+            {% endif %}
+          </td>
+          <td class="text-center whitespace-nowrap">
+            {% if m %}
+            <form method="post" action="{% url 'unpair-match' m.id %}" class="inline">
+              {% csrf_token %}
+              <input type="hidden" name="next_url" value="{{ request.get_full_path }}">
+              <button type="submit"
+                      onclick="return confirm('Batalkan penyelesaian data ini? Transaksi akan kembali ke antrean belum cocok.');"
+                      class="btn-ghost py-1 px-2.5 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40">
+                Batalkan
+              </button>
+            </form>
+            {% else %}
+            <span class="text-slate-400 text-xs">—</span>
+            {% endif %}
+          </td>
         </tr>
+        {% endwith %}
         {% empty %}
         <tr>
           <td colspan="7" class="text-center py-10 text-slate-400">

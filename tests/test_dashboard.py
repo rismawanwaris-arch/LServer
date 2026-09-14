@@ -295,4 +295,137 @@ def test_dashboard_delete_batch_action(auth_client):
     assert BankMutation.objects.filter(row_hash="bm_del_test").count() == 0
 
 
+@pytest.mark.django_db
+def test_pending_settle_tabs_and_tag_otomax(auth_client):
+    d = date(2026, 9, 5)
+    batch_o = ImportBatch.objects.create(
+        channel=Channel.OTOMAX, book_date=d, source_filename="o.csv", file_hash="ho_tab"
+    )
+    oe = OtomaxEntry.objects.create(
+        import_batch=batch_o,
+        book_date=d,
+        reseller_name_raw="PLC REV",
+        amount=Decimal("-905000"),
+        description_raw="REVISI TIKET CS DEBI",
+        row_hash="oe_rev_1",
+        match_status=MatchStatus.PENDING_SETTLE,
+    )
+
+    # 1. Check Belum Settle tab
+    res = auth_client.get("/pending-settle/", {"d": "2026-09-05", "tab": "pending"})
+    assert res.status_code == 200
+    assert "REVISI TIKET CS DEBI" in res.content.decode()
+
+    # 2. Tag Otomax
+    tag_res = auth_client.post(
+        f"/pending-settle/tag/{oe.pk}/",
+        {"tag": "revisi", "note": "Koreksi CS", "book_date": "2026-09-05"},
+    )
+    assert tag_res.status_code in (200, 302)
+
+    oe.refresh_from_db()
+    assert oe.match_status == MatchStatus.MANUAL
+
+    # 3. Check Sudah Selesai tab
+    res_resolved = auth_client.get("/pending-settle/", {"d": "2026-09-05", "tab": "resolved"})
+    assert res_resolved.status_code == 200
+    content = res_resolved.content.decode()
+    assert "REVISI TIKET CS DEBI" in content
+    assert "Koreksi CS" in content
+
+
+@pytest.mark.django_db
+def test_bidirectional_sync_between_review_and_pending_settle(auth_client):
+    d = date(2026, 9, 5)
+    batch_b = ImportBatch.objects.create(
+        channel=Channel.BRI, book_date=d, source_filename="b.csv", file_hash="hb_sync"
+    )
+    batch_o = ImportBatch.objects.create(
+        channel=Channel.OTOMAX, book_date=d, source_filename="o.csv", file_hash="ho_sync"
+    )
+
+    bm = BankMutation.objects.create(
+        import_batch=batch_b,
+        book_date=d,
+        channel=Channel.BRI,
+        amount=Decimal("996000"),
+        description_raw="Transfer BI-Fast DEBI RIZKI ADITYA",
+        row_hash="bm_sync_1",
+        match_status=MatchStatus.UNMATCHED,
+    )
+    oe = OtomaxEntry.objects.create(
+        import_batch=batch_o,
+        book_date=d,
+        reseller_name_raw="PLC DEBI",
+        amount=Decimal("996000"),
+        description_raw="BFST590209540026DEBI RIZKI ADITYA",
+        row_hash="oe_sync_1",
+        match_status=MatchStatus.PENDING_SETTLE,
+    )
+
+    # Before pairing:
+    # Manual Review: bm is in 'unmatched', oe is in dropdown
+    res_mr = auth_client.get("/review-manual/", {"d": "2026-09-05", "tab": "unmatched"})
+    assert "Transfer BI-Fast DEBI RIZKI ADITYA" in res_mr.content.decode()
+    assert "PLC DEBI" in res_mr.content.decode()
+
+    # Pending Settle: oe is in 'pending'
+    res_ps = auth_client.get("/pending-settle/", {"d": "2026-09-05", "tab": "pending"})
+    assert "BFST590209540026DEBI RIZKI ADITYA" in res_ps.content.decode()
+
+    # Pair them
+    match_res = auth_client.post(
+        "/manual-match/",
+        {"bank_id": bm.pk, "otomax_id": oe.pk, "note": "Sync pair test", "book_date": "2026-09-05"},
+    )
+    assert match_res.status_code in (200, 302)
+
+    bm.refresh_from_db()
+    oe.refresh_from_db()
+    assert bm.match_status == MatchStatus.MANUAL
+    assert oe.match_status == MatchStatus.MANUAL
+
+    # After pairing:
+    # 1. Manual Review: bm NOT in 'unmatched' items, IS in 'tagged', oe NOT in dropdown
+    res_mr_unm = auth_client.get("/review-manual/", {"d": "2026-09-05", "tab": "unmatched"})
+    assert len(res_mr_unm.context["items"]) == 0
+    assert len(res_mr_unm.context["unmatched_otomax"]) == 0
+
+    res_mr_tag = auth_client.get("/review-manual/", {"d": "2026-09-05", "tab": "tagged"})
+    assert len(res_mr_tag.context["items"]) == 1
+    assert "Transfer BI-Fast DEBI RIZKI ADITYA" in res_mr_tag.content.decode()
+    assert "Lawan: PLC DEBI" in res_mr_tag.content.decode()
+
+    # 2. Pending Settle: oe NOT in 'pending', IS in 'resolved' with partner bank info
+    res_ps_unm = auth_client.get("/pending-settle/", {"d": "2026-09-05", "tab": "pending"})
+    assert len(res_ps_unm.context["items"]) == 0
+
+    res_ps_res = auth_client.get("/pending-settle/", {"d": "2026-09-05", "tab": "resolved"})
+    assert len(res_ps_res.context["items"]) == 1
+    assert "BFST590209540026DEBI RIZKI ADITYA" in res_ps_res.content.decode()
+    assert "Lawan: BRI" in res_ps_res.content.decode()
+
+    # 3. Unpair from Pending Settle
+    match = Match.objects.filter(bank_mutation=bm, otomax_entry=oe, voided_at__isnull=True).first()
+    assert match is not None
+    unpair_res = auth_client.post(
+        f"/matches/unpair/{match.pk}/", {"next_url": "/pending-settle/?d=2026-09-05&tab=resolved"}
+    )
+    assert unpair_res.status_code in (200, 302)
+
+    bm.refresh_from_db()
+    oe.refresh_from_db()
+    assert bm.match_status == MatchStatus.UNMATCHED
+    assert oe.match_status == MatchStatus.PENDING_SETTLE
+
+    # Re-check both are back in their respective queues!
+    res_mr_back = auth_client.get("/review-manual/", {"d": "2026-09-05", "tab": "unmatched"})
+    assert "Transfer BI-Fast DEBI RIZKI ADITYA" in res_mr_back.content.decode()
+    assert "PLC DEBI" in res_mr_back.content.decode()
+
+    res_ps_back = auth_client.get("/pending-settle/", {"d": "2026-09-05", "tab": "pending"})
+    assert "BFST590209540026DEBI RIZKI ADITYA" in res_ps_back.content.decode()
+
+
+
 

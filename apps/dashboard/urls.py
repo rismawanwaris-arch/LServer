@@ -19,6 +19,7 @@ urlpatterns = [
     path("review-manual/tag/<int:pk>/", views.manual_tag_action, name="manual-tag-action"),
     # 5. Pending Settle
     path("pending-settle/", views.pending_settle_view, name="pending-settle"),
+    path("pending-settle/tag/<int:pk>/", views.manual_tag_otomax_action, name="manual-tag-otomax-action"),
     # 6. Riwayat & Laporan
     path("reports/", views.reports_view, name="reports"),
     path("reports/export/", views.reports_export_action, name="reports-export"),

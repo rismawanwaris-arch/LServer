@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 
 from django.db import transaction
 from django.utils import timezone
 
-from apps.core.enums import MatchStatus, MatchType
+from apps.core.enums import Channel, MatchStatus, MatchType
 from apps.ingest.models import BankMutation, OtomaxEntry
 
 from .models import Adjustment, Discrepancy, Match, ReconDay
@@ -106,6 +107,53 @@ def tag_manual_mutation(
         )
 
     return bm
+
+
+@transaction.atomic
+def tag_manual_otomax(
+    otomax_entry: OtomaxEntry,
+    tag: str,
+    note: str = "",
+    user=None,
+) -> OtomaxEntry:
+    """Beri tag manual untuk transaksi Otomax selisih (revisi, retur, setor tunai langsung, dll).
+
+    Status transaksi berubah jadi MATCHED_MANUAL (MANUAL).
+    Jika ada Discrepancy yang mengacu ke transaksi ini, selesaikan dengan keterangan tag manual.
+    """
+    o = OtomaxEntry.objects.select_for_update().get(pk=otomax_entry.pk)
+    o.match_status = MatchStatus.MANUAL
+    o.save(update_fields=["match_status", "updated_at"])
+
+    tag_note = f"Tag manual Otomax: {tag}. {note}".strip()
+    match, _ = Match.objects.get_or_create(
+        book_date=o.book_date,
+        channel=o.channel_hint or Channel.OTOMAX,
+        otomax_entry=o,
+        defaults=dict(
+            match_type=MatchType.MANUAL,
+            amount_bank=Decimal("0.00"),
+            amount_otomax=o.amount,
+            note=tag_note,
+            matched_by=user,
+        ),
+    )
+
+    for disc in Discrepancy.objects.filter(otomax_entry=o, status="OPEN"):
+        resolve_discrepancy(
+            disc,
+            match=match,
+            resolution_type="DATA_FIX",
+            reason=tag_note,
+            user=user,
+        )
+
+    day, _ = ReconDay.objects.select_for_update().get_or_create(book_date=o.book_date)
+    day.recompute_selisih()
+    day.save(update_fields=["selisih_adjustments", "selisih_current", "updated_at"])
+
+    return o
+
 
 @transaction.atomic
 def manual_pair_transactions(
