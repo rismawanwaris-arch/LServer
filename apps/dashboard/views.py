@@ -97,7 +97,7 @@ def upload_view(request):
 
         if action == "preview":
             try:
-                preview_data = preview_file(channel, content)
+                preview_data = preview_file(channel, content, book_date=book_date)
                 preview_data["filename"] = filename
             except Exception as exc:
                 messages.error(request, f"Gagal membaca preview: {exc}")
@@ -111,12 +111,20 @@ def upload_view(request):
                     filename=filename,
                     user=request.user,
                 )
-                messages.success(
-                    request,
-                    f"Berhasil mengimpor {batch.channel}: {batch.row_count} baris "
-                    f"({batch.quarantined_count} dikarantina).",
-                )
-                return redirect(f"/upload/?d={book_date}")
+                if batch.book_date != book_date:
+                    messages.success(
+                        request,
+                        f"Berhasil mengimpor {batch.channel}: {batch.row_count} baris. "
+                        f"Tanggal transaksi terdeteksi {batch.book_date.strftime('%d %b %Y')}, "
+                        f"data otomatis disimpan dan dialihkan ke tanggal tersebut.",
+                    )
+                else:
+                    messages.success(
+                        request,
+                        f"Berhasil mengimpor {batch.channel}: {batch.row_count} baris "
+                        f"({batch.quarantined_count} dikarantina).",
+                    )
+                return redirect(f"/upload/?d={batch.book_date}")
             except ImportBlocked as exc:
                 messages.error(request, str(exc))
             except Exception as exc:
@@ -152,10 +160,19 @@ def upload(request):
             filename=upload_file.name,
             user=request.user,
         )
-        messages.success(
-            request,
-            f"{batch.channel}: {batch.row_count} baris ({batch.quarantined_count} dikarantina).",
-        )
+        if batch.book_date != book_date:
+            messages.success(
+                request,
+                f"{batch.channel}: {batch.row_count} baris. "
+                f"Terdeteksi tanggal transaksi {batch.book_date.strftime('%d %b %Y')}, "
+                f"data otomatis dialihkan ke tanggal tersebut.",
+            )
+        else:
+            messages.success(
+                request,
+                f"{batch.channel}: {batch.row_count} baris ({batch.quarantined_count} dikarantina).",
+            )
+        return redirect(f"/upload/?d={batch.book_date}")
     except ImportBlocked as exc:
         messages.error(request, str(exc))
     except Exception as exc:

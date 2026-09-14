@@ -35,6 +35,40 @@ def test_dashboard_upload_view(auth_client):
 
 
 @pytest.mark.django_db
+def test_upload_auto_syncs_date_from_file(auth_client):
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    csv_data = (
+        b"TGL_TRAN,MUTASI_DEBET,MUTASI_KREDIT,GLSIGN,REMARK_CUSTOM,DESK_TRAN\n"
+        b"2026-09-12 10:15:00,0,500000,Cr,DANA123,TRANSFER DANA\n"
+    )
+    upfile = SimpleUploadedFile("bri_12sep.csv", csv_data, content_type="text/csv")
+
+    # Upload while form date is set to 2026-09-14
+    res = auth_client.post(
+        "/upload/",
+        {
+            "action": "import",
+            "channel": Channel.BRI,
+            "book_date": "2026-09-14",
+            "file": upfile,
+        },
+    )
+    assert res.status_code == 302
+    # Verify redirect automatically goes to 2026-09-12!
+    assert "d=2026-09-12" in res.url
+
+    # Verify both batch and mutation are synced to 2026-09-12
+    batch = ImportBatch.objects.filter(source_filename="bri_12sep.csv").first()
+    assert batch is not None
+    assert batch.book_date == date(2026, 9, 12)
+
+    bm = BankMutation.objects.filter(import_batch=batch).first()
+    assert bm is not None
+    assert bm.book_date == date(2026, 9, 12)
+
+
+@pytest.mark.django_db
 def test_dashboard_matches_view(auth_client):
     d = date(2026, 9, 5)
     ReconDay.objects.create(book_date=d)

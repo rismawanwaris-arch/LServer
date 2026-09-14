@@ -67,6 +67,17 @@ def purge_day(book_date: date, *, include_closed: bool = False) -> dict[str, int
     ExcludedTransaction.objects.filter(book_date=book_date).delete()
     ImportBatch.objects.filter(book_date=book_date).delete()
     ReconDay.objects.filter(book_date=book_date).delete()
+
+    # Bersihkan juga batch kosong tanpa data transaksi (orphan) jika ada
+    for b in ImportBatch.objects.all():
+        if (
+            b.mutations.count() == 0
+            and b.otomax.count() == 0
+            and b.debits.count() == 0
+            and b.excluded_transactions.count() == 0
+        ):
+            b.delete()
+
     return counts
 
 

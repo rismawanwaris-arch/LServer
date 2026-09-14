@@ -37,9 +37,16 @@ class ImportBlocked(Exception):
     pass
 
 
-def preview_file(channel: str, content: str | bytes) -> dict:
+def preview_file(channel: str, content: str | bytes, book_date: date | None = None) -> dict:
     """Preview parsing file sebelum disimpan ke database."""
     result: ParseResult = parse_file(channel, content)
+    if result.book_date and book_date and result.book_date != book_date:
+        result.warnings.append(
+            f"Perhatian: Tanggal transaksi di file ini terdeteksi {result.book_date.strftime('%d %B %Y')} "
+            f"(berbeda dengan tanggal form {book_date.strftime('%d %B %Y')}). "
+            f"Saat disimpan, sistem akan otomatis menyimpannya ke tanggal {result.book_date.strftime('%d %B %Y')}."
+        )
+
     rows_preview = []
     if channel == Channel.OTOMAX:
         for r in result.otomax_rows[:20]:
@@ -98,19 +105,24 @@ def import_file(
     filename: str,
     user=None,
 ) -> ImportBatch:
-    day = ReconDay.objects.filter(book_date=book_date).first()
-    if day and day.locked:
-        raise ImportBlocked(f"Tanggal {book_date} sudah ditutup — impor ditolak.")
-
     data = content if content is not None else text
     if data is None:
         raise ValueError("content or text is required")
 
     result = parse_file(channel, data)
+
+    # Otomatis deteksi tanggal buku dari isi file:
+    # Jika parser mendeteksi tanggal dominan di file, gunakan tanggal tersebut agar batch dan transaksi selalu sinkron.
+    effective_book_date = result.book_date or book_date
+
+    day = ReconDay.objects.filter(book_date=effective_book_date).first()
+    if day and day.locked:
+        raise ImportBlocked(f"Tanggal {effective_book_date} sudah ditutup — impor ditolak.")
+
     content_bytes = data if isinstance(data, bytes) else data.encode("utf-8")
     batch = ImportBatch.objects.create(
         channel=channel,
-        book_date=book_date,
+        book_date=effective_book_date,
         source_filename=filename,
         file_hash=_hash(channel, hashlib.sha256(content_bytes).hexdigest()),
         uploaded_by=user,
@@ -118,9 +130,9 @@ def import_file(
 
     quarantined = 0
     if channel == Channel.OTOMAX:
-        quarantined = _persist_otomax(batch, result, book_date)
+        quarantined = _persist_otomax(batch, result, effective_book_date)
     else:
-        quarantined = _persist_bank(batch, result, channel, book_date)
+        quarantined = _persist_bank(batch, result, channel, effective_book_date)
 
     batch.row_count = (
         batch.mutations.count()
