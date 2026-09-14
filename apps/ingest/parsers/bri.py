@@ -46,8 +46,8 @@ def _parse_csv(text: str, result: ParseResult) -> bool:
         row_upper = {k.strip().upper(): v.strip() for k, v in row.items() if k and v is not None}
         tgl_raw = row_upper.get("TGL_TRAN") or row_upper.get("TANGGAL") or ""
         desc = (
-            row_upper.get("TRREMK")
-            or row_upper.get("REMARK_CUSTOM")
+            row_upper.get("REMARK_CUSTOM")
+            or row_upper.get("TRREMK")
             or row_upper.get("DESK_TRAN")
             or row_upper.get("KETERANGAN")
             or ""

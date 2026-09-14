@@ -1,0 +1,267 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Pengaturan Aturan Filter — RekonMutasi{% endblock %}
+
+{% block content %}
+<div class="mb-6 flex flex-wrap items-center justify-between gap-4">
+  <div>
+    <h1 class="font-serif text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Pengaturan Aturan Filter Data</h1>
+    <p class="text-sm text-slate-500 mt-1">
+      Pisahkan otomatis transaksi tertentu (mis. biaya admin, pajak, sweep, atau transfer internal) ke tabel khusus agar tidak masuk ke pengolahan mesin rekonsiliasi.
+    </p>
+  </div>
+
+  <form method="get" class="flex items-center gap-2">
+    <input type="date" name="d" value="{{ book_date|date:'Y-m-d' }}"
+           class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium shadow-xs dark:border-slate-600 dark:bg-slate-800">
+    <button class="btn-ghost">Ganti Tanggal</button>
+  </form>
+</div>
+
+<div x-data="{ activeTab: 'rules' }">
+  <!-- Navigation Tabs -->
+  <div class="flex items-center gap-2 border-b border-slate-200 dark:border-slate-700 mb-6">
+    <button type="button" @click="activeTab = 'rules'"
+            :class="activeTab === 'rules' ? 'border-indigo-600 text-indigo-600 dark:text-indigo-400 font-bold' : 'border-transparent text-slate-500 hover:text-slate-700 font-medium'"
+            class="px-4 py-2.5 text-sm border-b-2 transition -mb-px flex items-center gap-2">
+      <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+      </svg>
+      <span>Daftar Aturan Pemisahan</span>
+      <span class="rounded-full bg-indigo-100 text-indigo-800 px-2 py-0.5 text-xs font-bold dark:bg-indigo-900/50 dark:text-indigo-200">{{ rules.count }}</span>
+    </button>
+
+    <button type="button" @click="activeTab = 'data'"
+            :class="activeTab === 'data' ? 'border-indigo-600 text-indigo-600 dark:text-indigo-400 font-bold' : 'border-transparent text-slate-500 hover:text-slate-700 font-medium'"
+            class="px-4 py-2.5 text-sm border-b-2 transition -mb-px flex items-center gap-2">
+      <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+      </svg>
+      <span>Data Dikecualikan ({{ book_date|date:"d M Y" }})</span>
+      <span class="rounded-full bg-amber-100 text-amber-800 px-2 py-0.5 text-xs font-bold dark:bg-amber-900/50 dark:text-amber-200">{{ total_excluded_count }}</span>
+    </button>
+  </div>
+
+  <!-- TAB 1: PENGATURAN ATURAN -->
+  <div x-show="activeTab === 'rules'" class="space-y-6">
+    <div class="grid gap-6 lg:grid-cols-3">
+      <!-- Form Tambah Aturan (Left 1 col) -->
+      <div class="card lg:col-span-1">
+        <h2 class="font-bold text-slate-900 dark:text-white mb-3">Tambah Aturan Baru</h2>
+        <p class="text-xs text-slate-500 mb-4">
+          Setiap file baru yang diunggah akan otomatis disaring menggunakan aturan aktif di bawah ini.
+        </p>
+
+        <form method="post" action="{% url 'add-exclusion-rule' %}" class="space-y-3.5 text-xs">
+          {% csrf_token %}
+          <input type="hidden" name="book_date" value="{{ book_date|date:'Y-m-d' }}">
+
+          <div>
+            <label class="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Nama Aturan</label>
+            <input type="text" name="name" required placeholder="Contoh: Biaya Admin Bank / Transfer PT Simatech"
+                   class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
+          </div>
+
+          <div>
+            <label class="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              Kata Kunci Keterangan
+              <span class="font-normal text-slate-400">(pisahkan dengan koma jika lebih dari 1)</span>
+            </label>
+            <input type="text" name="keywords" required placeholder="Contoh: BIAYA ADM, ADM BULANAN, SIMATECH"
+                   class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
+          </div>
+
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Target Sumber</label>
+              <select name="target" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
+                {% for val, label in target_choices %}
+                <option value="{{ val }}">{{ label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+
+            <div>
+              <label class="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Channel Bank</label>
+              <select name="channel" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
+                <option value="">Semua Channel</option>
+                {% for val, label in channel_choices %}
+                <option value="{{ val }}">{{ label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label class="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Kategori Alasan</label>
+            <select name="category" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
+              {% for val, label in category_choices %}
+              <option value="{{ val }}">{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="pt-1">
+            <label class="inline-flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" name="apply_now" value="1" checked class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500">
+              <span class="text-xs text-slate-700 dark:text-slate-300">Terapkan langsung ke data belum cocok tanggal ini</span>
+            </label>
+          </div>
+
+          <button type="submit" class="btn-primary w-full justify-center py-2 font-semibold">
+            + Simpan Aturan
+          </button>
+        </form>
+      </div>
+
+      <!-- Tabel Daftar Aturan (Right 2 cols) -->
+      <div class="card lg:col-span-2">
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div>
+            <h2 class="font-bold text-slate-900 dark:text-white">Daftar Aturan Deteksi Aktif</h2>
+            <p class="text-xs text-slate-500">Data yang cocok dengan aturan aktif otomatis diarahkan ke tabel non-engine.</p>
+          </div>
+
+          <form method="post" action="{% url 'apply-exclusion-rules' %}">
+            {% csrf_token %}
+            <input type="hidden" name="book_date" value="{{ book_date|date:'Y-m-d' }}">
+            <button type="submit" class="btn-ghost text-xs py-1.5 px-3 font-semibold shadow-2xs flex items-center gap-1.5"
+                    title="Memindai transaksi belum cocok pada tanggal ini dan memindahkan yang cocok dengan aturan">
+              <svg class="h-3.5 w-3.5 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              <span>Terapkan Semua Aturan ke Data Belum Cocok</span>
+            </button>
+          </form>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs">
+            <thead>
+              <tr>
+                <th>Nama Aturan</th>
+                <th>Kata Kunci</th>
+                <th>Target</th>
+                <th>Kategori</th>
+                <th>Status</th>
+                <th class="text-center">Aksi</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for r in rules %}
+              <tr class="{% if not r.active %}opacity-50{% endif %}">
+                <td class="font-semibold text-slate-900 dark:text-white">{{ r.name }}</td>
+                <td>
+                  <div class="flex flex-wrap gap-1">
+                    {% for kw in r.keywords.split %}
+                    <span class="font-mono bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-[11px]">{{ kw }}</span>
+                    {% endfor %}
+                  </div>
+                </td>
+                <td>
+                  <span class="badge-mute text-[10px]">{{ r.get_target_display }}</span>
+                  {% if r.channel %}<span class="badge-info text-[10px]">{{ r.channel }}</span>{% endif %}
+                </td>
+                <td><span class="badge-warn text-[10px]">{{ r.get_category_display }}</span></td>
+                <td>
+                  <form method="post" action="{% url 'toggle-exclusion-rule' r.id %}" class="inline">
+                    {% csrf_token %}
+                    <input type="hidden" name="book_date" value="{{ book_date|date:'Y-m-d' }}">
+                    <button type="submit" class="cursor-pointer text-xs font-semibold {% if r.active %}text-emerald-600 hover:underline{% else %}text-slate-400 hover:underline{% endif %}">
+                      {% if r.active %}● Aktif{% else %}○ Nonaktif{% endif %}
+                    </button>
+                  </form>
+                </td>
+                <td class="text-center whitespace-nowrap">
+                  <form method="post" action="{% url 'delete-exclusion-rule' r.id %}" class="inline"
+                        onsubmit="return confirm('Hapus aturan {{ r.name }}? Data yang sudah terlanjur dipisahkan tidak akan terhapus.');">
+                    {% csrf_token %}
+                    <input type="hidden" name="book_date" value="{{ book_date|date:'Y-m-d' }}">
+                    <button type="submit" class="text-rose-600 hover:text-rose-800 p-1 font-semibold" title="Hapus Aturan">
+                      <svg class="h-4 w-4 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
+                  </form>
+                </td>
+              </tr>
+              {% empty %}
+              <tr>
+                <td colspan="6" class="text-center py-8 text-slate-400">
+                  Belum ada aturan pemisahan dibuat. Gunakan form di sebelah kiri untuk menambahkan aturan baru.
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 2: DATA DIKECUALIKAN -->
+  <div x-show="activeTab === 'data'" style="display: none;" class="space-y-4">
+    <div class="card p-4 bg-amber-50/50 border-amber-200 dark:bg-amber-950/20 dark:border-amber-900 flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <h3 class="font-bold text-amber-900 dark:text-amber-300 text-sm">
+          Data Dikecualikan dari Engine Rekonsiliasi ({{ total_excluded_count }} Transaksi)
+        </h3>
+        <p class="text-xs text-amber-800/80 dark:text-amber-400 mt-0.5">
+          Data ini telah diamankan ke tabel tersendiri dan tidak diikutsertakan ke mesin rekonsiliasi ataupun antrean pending.
+        </p>
+      </div>
+      <div class="text-right">
+        <div class="text-xs text-slate-500">Total Nominal Dikecualikan</div>
+        <div class="text-lg font-bold text-slate-900 dark:text-white font-mono">
+          Rp {{ total_excluded_amount|rupiah }}
+        </div>
+      </div>
+    </div>
+
+    <div class="card p-0 overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs">
+          <thead>
+            <tr>
+              <th>Waktu</th>
+              <th>Channel / Tipe</th>
+              <th>Keterangan Asli</th>
+              <th>Kategori / Alasan</th>
+              <th class="text-right">Nominal</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for t in excluded_txns %}
+            <tr>
+              <td class="font-mono text-slate-500 whitespace-nowrap">
+                {{ t.txn_datetime|date:"d M H:i"|default:t.book_date }}
+              </td>
+              <td>
+                <span class="badge-info text-[10px]">{{ t.channel }}</span>
+                <span class="badge-mute text-[10px]">{{ t.source_type }}</span>
+              </td>
+              <td class="max-w-md break-words font-mono text-slate-800 dark:text-slate-200">
+                {{ t.description_raw }}
+              </td>
+              <td>
+                <span class="badge-warn text-[10px]">{{ t.category }}</span>
+                <div class="text-[11px] text-slate-500 mt-0.5">{{ t.reason }}</div>
+              </td>
+              <td class="text-right font-mono font-semibold {% if t.amount < 0 %}text-rose-600{% else %}text-slate-900 dark:text-white{% endif %}">
+                Rp {{ t.amount|rupiah }}
+              </td>
+            </tr>
+            {% empty %}
+            <tr>
+              <td colspan="5" class="text-center py-10 text-slate-400">
+                Tidak ada data transaksi yang dikecualikan untuk tanggal {{ book_date|date:"d F Y" }}.
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

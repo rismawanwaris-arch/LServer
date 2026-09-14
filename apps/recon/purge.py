@@ -10,12 +10,22 @@ from datetime import date
 from django.db import models, transaction
 
 from apps.core.enums import MatchStatus
-from apps.ingest.models import BankMutation, DebitIgnored, ImportBatch, OtomaxEntry
+from apps.ingest.models import BankMutation, DebitIgnored, ExcludedTransaction, ImportBatch, OtomaxEntry
 
 from .models import Adjustment, Discrepancy, Match, ReconDay
 
 # Urutan hapus: anak dulu (hormati FK PROTECT).
-_TXN_MODELS = (Adjustment, Discrepancy, Match, OtomaxEntry, BankMutation, DebitIgnored, ImportBatch, ReconDay)
+_TXN_MODELS = (
+    Adjustment,
+    Discrepancy,
+    Match,
+    OtomaxEntry,
+    BankMutation,
+    DebitIgnored,
+    ExcludedTransaction,
+    ImportBatch,
+    ReconDay,
+)
 _HISTORY_MODELS = (Adjustment, Discrepancy, Match, ReconDay)
 
 
@@ -29,6 +39,7 @@ def preview_day(book_date: date) -> dict[str, int]:
         "bank_mutation": BankMutation.objects.filter(book_date=book_date).count(),
         "otomax_entry": OtomaxEntry.objects.filter(book_date=book_date).count(),
         "debit_ignored": DebitIgnored.objects.filter(book_date=book_date).count(),
+        "excluded_transaction": ExcludedTransaction.objects.filter(book_date=book_date).count(),
         "match": Match.objects.filter(book_date=book_date).count(),
         "discrepancy": Discrepancy.objects.filter(origin_book_date=book_date).count(),
         "adjustment": Adjustment.objects.filter(book_date=book_date).count(),
@@ -53,6 +64,7 @@ def purge_day(book_date: date, *, include_closed: bool = False) -> dict[str, int
     OtomaxEntry.objects.filter(book_date=book_date).delete()
     BankMutation.objects.filter(book_date=book_date).delete()
     DebitIgnored.objects.filter(book_date=book_date).delete()
+    ExcludedTransaction.objects.filter(book_date=book_date).delete()
     ImportBatch.objects.filter(book_date=book_date).delete()
     ReconDay.objects.filter(book_date=book_date).delete()
     return counts

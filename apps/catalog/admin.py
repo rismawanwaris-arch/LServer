@@ -1,7 +1,14 @@
 from django.contrib import admin
 from simple_history.admin import SimpleHistoryAdmin
 
-from .models import MerchantMap, Reseller, ResellerAlias
+from .models import ExclusionRule, MerchantMap, Reseller, ResellerAlias
+
+
+@admin.register(ExclusionRule)
+class ExclusionRuleAdmin(SimpleHistoryAdmin):
+    list_display = ["name", "keywords", "target", "channel", "category", "active"]
+    list_filter = ["active", "target", "channel", "category"]
+    search_fields = ["name", "keywords", "notes"]
 
 
 class AliasInline(admin.TabularInline):

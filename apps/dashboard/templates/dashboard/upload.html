@@ -132,7 +132,12 @@
               {% else %}
               <td class="font-semibold text-slate-800 dark:text-slate-200">{{ r.outlet|default:r.ref }}</td>
               {% endif %}
-              <td class="max-w-xs truncate" title="{{ r.description }}">{{ r.description }}</td>
+              <td class="max-w-xs truncate" title="{{ r.description }}">
+                {{ r.description }}
+                {% if r.excluded %}
+                <span class="badge-warn text-[10px] ml-1">DIKECUALIKAN: {{ r.rule_name }}</span>
+                {% endif %}
+              </td>
               <td>
                 {% for tk in r.tokens %}
                 <span class="badge-info text-[10px]">{{ tk }}</span>
@@ -169,6 +174,7 @@
               <th>Channel</th>
               <th>Nama File</th>
               <th>Baris</th>
+              <th>Dikecualikan</th>
               <th>Karantina</th>
               <th>Status</th>
               <th>Waktu Upload</th>
@@ -181,6 +187,15 @@
               <td class="font-bold">{{ b.channel }}</td>
               <td class="text-xs text-slate-600 dark:text-slate-300 max-w-xs truncate">{{ b.source_filename }}</td>
               <td class="font-mono text-xs">{{ b.row_count }}</td>
+              <td class="font-mono text-xs">
+                {% if b.excluded_count > 0 %}
+                <a href="{% url 'exclusion-rules' %}?d={{ book_date|date:'Y-m-d' }}" title="Lihat data yang dipisahkan" class="font-bold text-amber-600 hover:underline">
+                  {{ b.excluded_count }}
+                </a>
+                {% else %}
+                <span class="text-slate-400">0</span>
+                {% endif %}
+              </td>
               <td class="font-mono text-xs {% if b.quarantined_count > 0 %}text-amber-600 font-bold{% endif %}">
                 {{ b.quarantined_count }}
               </td>
@@ -208,7 +223,7 @@
             </tr>
             {% empty %}
             <tr>
-              <td colspan="7" class="text-center py-6 text-slate-400">
+              <td colspan="8" class="text-center py-6 text-slate-400">
                 Belum ada file diunggah untuk tanggal ini.
               </td>
             </tr>

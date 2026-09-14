@@ -13,6 +13,7 @@ class ImportBatch(TimeStampedModel):
     file_hash = models.CharField(max_length=64, db_index=True)
     row_count = models.PositiveIntegerField(default=0)
     quarantined_count = models.PositiveIntegerField(default=0)
+    excluded_count = models.PositiveIntegerField(default=0)
     status = models.CharField(max_length=12, choices=ImportStatus.choices, default=ImportStatus.PARSED)
     notes = models.TextField(blank=True)
     uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
@@ -103,3 +104,37 @@ class DebitIgnored(TimeStampedModel):
     description_raw = models.TextField()
     amount = money_field(help_text="Positif; arah keluar tersirat.")
     row_hash = models.CharField(max_length=64, unique=True)
+
+
+class ExcludedTransaction(TimeStampedModel):
+    """Baris mutasi bank atau otomax yang dipisahkan dari mesin rekonsiliasi (non-engine)."""
+
+    import_batch = models.ForeignKey(ImportBatch, on_delete=models.CASCADE, related_name="excluded_transactions")
+    channel = models.CharField(max_length=16, choices=Channel.choices, db_index=True)
+    source_type = models.CharField(max_length=10, choices=[("BANK", "Bank"), ("OTOMAX", "Otomax")], default="BANK")
+    book_date = models.DateField(db_index=True)
+    txn_datetime = models.DateTimeField(null=True, blank=True)
+
+    description_raw = models.TextField()
+    amount = money_field()
+    rule = models.ForeignKey(
+        "catalog.ExclusionRule",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="excluded_transactions",
+    )
+    category = models.CharField(max_length=30, blank=True)
+    reason = models.CharField(max_length=150, blank=True)
+    row_hash = models.CharField(max_length=64, unique=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["book_date", "channel"]),
+            models.Index(fields=["source_type", "book_date"]),
+        ]
+        ordering = ["-txn_datetime", "-id"]
+
+    def __str__(self) -> str:
+        return f"[EXCLUDED] {self.channel} {self.amount} — {self.description_raw[:40]}"
+

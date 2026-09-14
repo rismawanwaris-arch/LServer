@@ -16,11 +16,23 @@ def test_parse_bri_csv():
     assert res.bank_rows[1].amount == Decimal("-2500.00")
 
 
-def test_parse_bri_csv_with_trremk():
+def test_parse_bri_csv_prioritizes_remark_custom():
     bri_csv = (
         '"ID","NOREK","TGL_TRAN","MUTASI_DEBET","MUTASI_KREDIT","GLSIGN","TRREMK","REMARK_CUSTOM"\n'
         '"1","215401000596563","2026-09-12 06:14:36","0.00","200000.00","Cr",'
         '"BFST215401000596563CECEP SUPRIA:SSPIIDJA","Transfer BI-Fast - Cecep"\n'
+    )
+    res = parse_file(Channel.BRI, bri_csv)
+    assert len(res.bank_rows) == 1
+    assert res.bank_rows[0].description_raw == "Transfer BI-Fast - Cecep"
+    assert res.bank_rows[0].amount == Decimal("200000.00")
+
+
+def test_parse_bri_csv_fallback_to_trremk():
+    bri_csv = (
+        '"ID","NOREK","TGL_TRAN","MUTASI_DEBET","MUTASI_KREDIT","GLSIGN","TRREMK","REMARK_CUSTOM"\n'
+        '"1","215401000596563","2026-09-12 06:14:36","0.00","200000.00","Cr",'
+        '"BFST215401000596563CECEP SUPRIA:SSPIIDJA",""\n'
     )
     res = parse_file(Channel.BRI, bri_csv)
     assert len(res.bank_rows) == 1

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from apps.core.normalize import norm_ref
 
-from .models import Reseller, ResellerAlias
+from .models import ExclusionRule, Reseller, ResellerAlias
 
 
 def resolve_reseller(raw_name: str | None) -> Reseller | None:
@@ -20,3 +20,14 @@ def learn_alias(raw_name: str, reseller: Reseller) -> ResellerAlias:
         alias_norm=norm_ref(raw_name),
         defaults={"alias_raw": raw_name.strip(), "reseller": reseller},
     )[0]
+
+
+def find_matching_rule(desc: str, channel: str | None = None, is_bank: bool = True) -> ExclusionRule | None:
+    """Cari aturan pemisahan aktif yang cocok dengan keterangan transaksi."""
+    if not desc:
+        return None
+    for rule in ExclusionRule.objects.filter(active=True):
+        if rule.matches(desc, channel=channel, is_bank=is_bank):
+            return rule
+    return None
+

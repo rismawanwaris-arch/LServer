@@ -22,6 +22,12 @@ urlpatterns = [
     # 6. Riwayat & Laporan
     path("reports/", views.reports_view, name="reports"),
     path("reports/export/", views.reports_export_action, name="reports-export"),
+    # 7. Aturan Filter Pemisahan Non-Engine
+    path("rules/", views.exclusion_rules_view, name="exclusion-rules"),
+    path("rules/add/", views.add_exclusion_rule_action, name="add-exclusion-rule"),
+    path("rules/toggle/<int:pk>/", views.toggle_exclusion_rule_action, name="toggle-exclusion-rule"),
+    path("rules/delete/<int:pk>/", views.delete_exclusion_rule_action, name="delete-exclusion-rule"),
+    path("rules/apply/", views.apply_exclusion_rules_action, name="apply-exclusion-rules"),
     # Recon Engine & Day Control
     path("run/", views.run_engine, name="run-engine"),
     path("close/", views.close_view, name="close-day"),

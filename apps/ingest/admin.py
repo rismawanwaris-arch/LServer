@@ -1,11 +1,19 @@
 from django.contrib import admin
 
-from .models import BankMutation, DebitIgnored, ImportBatch, OtomaxEntry
+from .models import BankMutation, DebitIgnored, ExcludedTransaction, ImportBatch, OtomaxEntry
 
 
 @admin.register(ImportBatch)
 class ImportBatchAdmin(admin.ModelAdmin):
-    list_display = ["channel", "book_date", "status", "row_count", "quarantined_count", "created_at"]
+    list_display = [
+        "channel",
+        "book_date",
+        "status",
+        "row_count",
+        "excluded_count",
+        "quarantined_count",
+        "created_at",
+    ]
     list_filter = ["channel", "status", "book_date"]
     readonly_fields = [f.name for f in ImportBatch._meta.fields]
 
@@ -31,3 +39,12 @@ class DebitIgnoredAdmin(admin.ModelAdmin):
     list_display = ["book_date", "channel", "amount", "description_raw"]
     list_filter = ["channel", "book_date"]
     readonly_fields = [f.name for f in DebitIgnored._meta.fields]
+
+
+@admin.register(ExcludedTransaction)
+class ExcludedTransactionAdmin(admin.ModelAdmin):
+    list_display = ["book_date", "channel", "source_type", "amount", "category", "reason", "description_raw"]
+    list_filter = ["channel", "source_type", "category", "book_date"]
+    search_fields = ["description_raw", "reason"]
+    readonly_fields = [f.name for f in ExcludedTransaction._meta.fields]
+
