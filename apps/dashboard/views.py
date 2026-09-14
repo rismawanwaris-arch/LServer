@@ -79,6 +79,7 @@ def day_view(request):
 
 @login_required
 def upload_view(request):
+    _sync_inconsistent_batches()
     book_date = _parse_date(request.GET.get("d") or request.POST.get("book_date"))
     batches = ImportBatch.objects.filter(book_date=book_date).order_by("-created_at")
 
@@ -692,27 +693,68 @@ def resolve_view(request, pk: int):
     return redirect(f"/?d={request.POST.get('book_date')}")
 
 
-# --- Hapus data --------------------------------------------------------------
+def _sync_inconsistent_batches():
+    """Otomatis selaraskan tanggal batch jika berbeda dengan tanggal transaksi di dalamnya,
+    dan bersihkan batch kosong tanpa transaksi."""
+    for b in ImportBatch.objects.all():
+        mut_dates = list(b.mutations.values_list("book_date", flat=True))
+        oto_dates = list(b.otomax.values_list("book_date", flat=True))
+        all_dates = mut_dates + oto_dates
+        if all_dates:
+            target_date = max(set(all_dates), key=all_dates.count)
+            if b.book_date != target_date:
+                b.book_date = target_date
+                b.save(update_fields=["book_date", "updated_at"])
+        elif (
+            b.mutations.count() == 0
+            and b.otomax.count() == 0
+            and b.debits.count() == 0
+            and b.excluded_transactions.count() == 0
+        ):
+            b.delete()
 
 
 @login_required
 @staff_only
 def data_admin(request):
-    dates = set(ImportBatch.objects.values_list("book_date", flat=True)) | set(
-        ReconDay.objects.values_list("book_date", flat=True)
+    _sync_inconsistent_batches()
+
+    dates = (
+        set(ImportBatch.objects.values_list("book_date", flat=True))
+        | set(ReconDay.objects.values_list("book_date", flat=True))
+        | set(BankMutation.objects.values_list("book_date", flat=True))
+        | set(OtomaxEntry.objects.values_list("book_date", flat=True))
     )
     rows = []
     for bd in sorted(dates, reverse=True):
+        bank_count = BankMutation.objects.filter(book_date=bd).count()
+        otomax_count = OtomaxEntry.objects.filter(book_date=bd).count()
+        match_count = Match.objects.filter(book_date=bd).count()
+        disc_count = Discrepancy.objects.filter(origin_book_date=bd).count()
+        batch_count = ImportBatch.objects.filter(book_date=bd).count()
         day = ReconDay.objects.filter(book_date=bd).first()
+
+        # Lewati tanggal yang benar-benar kosong (0 di semua metrik dan tidak dikunci)
+        if (
+            bank_count == 0
+            and otomax_count == 0
+            and match_count == 0
+            and disc_count == 0
+            and batch_count == 0
+        ):
+            if day and not day.locked:
+                day.delete()
+            continue
+
         rows.append(
             {
                 "book_date": bd,
                 "locked": bool(day and day.locked),
                 "status": day.get_status_display() if day else "belum ada",
-                "bank": BankMutation.objects.filter(book_date=bd).count(),
-                "otomax": OtomaxEntry.objects.filter(book_date=bd).count(),
-                "match": Match.objects.filter(book_date=bd).count(),
-                "discrepancy": Discrepancy.objects.filter(origin_book_date=bd).count(),
+                "bank": bank_count,
+                "otomax": otomax_count,
+                "match": match_count,
+                "discrepancy": disc_count,
             }
         )
     return render(request, "dashboard/data.html", {"rows": rows, "totals": preview_all()})
