@@ -61,7 +61,7 @@ def _otomax(desc, amount, channel=Channel.BRI, reseller=None, book_date=BD):
     )
 
 
-def _otomax_row(desc, amount, reseller_name, book_date=BD, entry_datetime=None):
+def _otomax_row(desc, amount, reseller_name, book_date=BD, entry_datetime=None, match_status=MatchStatus.UNMATCHED):
     """Bangun OtomaxEntry persis seperti pipeline import (classify + strip prefix)."""
     category, hint = classify_otomax(desc)
     embedded = strip_otomax_prefix(desc)
@@ -77,7 +77,8 @@ def _otomax_row(desc, amount, reseller_name, book_date=BD, entry_datetime=None):
         ref_normalized=norm_ref(embedded),
         ref_core=ref_core(embedded),
         extracted_tokens=extract_tokens(embedded),
-        row_hash=_h("o", desc, amount, reseller_name, book_date),
+        match_status=match_status,
+        row_hash=_h("o", desc, amount, reseller_name, book_date, match_status),
     )
 
 
@@ -467,6 +468,48 @@ def test_reversal_netting_matches_via_ref_core_when_original_lacks_tgl_suffix():
 
     m = Match.objects.get(bank_mutation=b)
     assert m.otomax_entry_id == correction.id
+
+
+@pytest.mark.django_db
+def test_reversal_netting_and_matching_also_pick_up_pending_settle_entries():
+    """unpair_match() mengembalikan entri Otomax ke PENDING_SETTLE (bukan UNMATCHED) —
+    netting & pencocokan ulang harus tetap jalan tanpa perlu direset manual dulu."""
+    day1 = date(2026, 9, 12)
+    day2 = date(2026, 9, 13)
+    original_desc = "TARTUN EDC BRI 6013013636952876#192240520005#EDC#TRFLA"
+    rev_desc = "REV TARTUN EDC BRI 6013013636952876#192240520005#EDC#TRFLA TGL 12/SEP/2026"
+    correction_desc = "TARTUN EDC BRI 6013013636952876#192240520005#EDC#TRFLA TGL 12/SEP/2026"
+
+    original = _otomax_row(
+        original_desc, "1150000", "PLC ALFA3 SINJAY1", book_date=day1,
+        entry_datetime=timezone.make_aware(datetime(2026, 9, 12, 21, 44, 50)),
+        match_status=MatchStatus.PENDING_SETTLE,
+    )
+    rev = _otomax_row(
+        rev_desc, "-1150000", "PLC ALFA3 SINJAY1", book_date=day2,
+        entry_datetime=timezone.make_aware(datetime(2026, 9, 13, 9, 31, 45)),
+        match_status=MatchStatus.PENDING_SETTLE,
+    )
+    correction = _otomax_row(
+        correction_desc, "1150000", "PLC SA", book_date=day2,
+        entry_datetime=timezone.make_aware(datetime(2026, 9, 13, 9, 32, 9)),
+        match_status=MatchStatus.PENDING_SETTLE,
+    )
+    b = _bank("6013013636952876#192240520005#EDC#TRFLA", "1150000", channel=Channel.BRI, book_date=day1)
+
+    stats = run_match(day1)
+    assert stats.netted == 1
+    assert stats.matched == 1
+
+    original.refresh_from_db()
+    rev.refresh_from_db()
+    correction.refresh_from_db()
+    b.refresh_from_db()
+
+    assert original.match_status == MatchStatus.IGNORED
+    assert rev.match_status == MatchStatus.IGNORED
+    assert correction.match_status == MatchStatus.MATCHED
+    assert b.match_status == MatchStatus.MATCHED
 
 
 @pytest.mark.django_db

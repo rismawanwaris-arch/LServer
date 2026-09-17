@@ -33,6 +33,9 @@ def carry_forward(book_date: date, user=None) -> int:
     return resolved
 
 
+_OTOMAX_OPEN_STATUSES = [MatchStatus.UNMATCHED, MatchStatus.PENDING_SETTLE]
+
+
 def _find_otomax_for(bank: BankMutation, book_date: date) -> Match | None:
     o = (
         OtomaxEntry.objects.filter(
@@ -40,7 +43,7 @@ def _find_otomax_for(bank: BankMutation, book_date: date) -> Match | None:
             category=OtomaxCategory.TOPUP_TARTUN,
             channel_hint=bank.channel,
             amount=bank.amount,
-            match_status=MatchStatus.UNMATCHED,
+            match_status__in=_OTOMAX_OPEN_STATUSES,
         )
         .filter(ref_core=bank.ref_core)
         .first()
@@ -55,7 +58,7 @@ def _find_otomax_for(bank: BankMutation, book_date: date) -> Match | None:
             channel_hint=bank.channel,
             amount=bank.amount,
             ref_normalized=bank.ref_normalized,
-            match_status=MatchStatus.UNMATCHED,
+            match_status__in=_OTOMAX_OPEN_STATUSES,
         ).first()
     )
     if not o:

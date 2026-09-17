@@ -68,13 +68,16 @@ def _open_bank(book_date, channel):
     return BankMutation.objects.filter(book_date=book_date, channel=channel, match_status=MatchStatus.UNMATCHED)
 
 
+_OPEN_STATUSES = [MatchStatus.UNMATCHED, MatchStatus.PENDING_SETTLE]
+
+
 def _open_otomax(book_date: date, channel: str, tolerance: tuple[int, int] = (-1, 1)):
     start_d = book_date + timedelta(days=tolerance[0])
     end_d = book_date + timedelta(days=tolerance[1])
     return OtomaxEntry.objects.filter(
         book_date__range=(start_d, end_d),
         category=OtomaxCategory.TOPUP_TARTUN,
-        match_status=MatchStatus.UNMATCHED,
+        match_status__in=_OPEN_STATUSES,
     ).filter(models.Q(channel_hint=channel) | models.Q(channel_hint=""))
 
 
@@ -92,11 +95,11 @@ def _net_reversals() -> int:
     (match_status=IGNORED) sebelum pencocokan ref/nominal berjalan.
     """
     netted = 0
-    reversals = OtomaxEntry.objects.filter(category=OtomaxCategory.REVERSAL, match_status=MatchStatus.UNMATCHED)
+    reversals = OtomaxEntry.objects.filter(category=OtomaxCategory.REVERSAL, match_status__in=_OPEN_STATUSES)
     for rev in reversals:
         base = OtomaxEntry.objects.filter(
             category=OtomaxCategory.TOPUP_TARTUN,
-            match_status=MatchStatus.UNMATCHED,
+            match_status__in=_OPEN_STATUSES,
             amount=-rev.amount,
             reseller_name_raw=rev.reseller_name_raw,
         )
