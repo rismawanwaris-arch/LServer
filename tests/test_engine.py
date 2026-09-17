@@ -551,3 +551,55 @@ def test_reversal_netting_same_day_matches_correction_not_original():
     assert m.otomax_entry_id == correction.id
     assert compute_totals(bd)["otomax"] == Decimal("1105000.00")
 
+
+@pytest.mark.django_db
+def test_reversal_netting_handles_multi_step_correction_chain():
+    """Data nyata: 3 kali percobaan koreksi (asli, REV +, REV -, REV REV -) sebelum entri
+    final ke reseller yang benar. Dua REV yang saling berlawanan harus saling ternetralkan,
+    bukan cuma REV vs TOPUP_TARTUN, supaya tidak ada sisa yang nyangkut di Pending Settle."""
+    bd = date(2026, 9, 13)
+    shared = "BFST215401000596563ASEP MUHAMAD:SSPIIDJA"
+    original_desc = f"TARTUN TF BRI {shared}"
+    rev_desc = f"REV TARTUN TF BRI {shared}"
+    rev_rev_desc = f"REV REV TARTUN TF BRI {shared}"
+    final_desc = f"TARTUN TF BRI {shared}"
+
+    original = _otomax_row(
+        original_desc, "550000", "PLC CL 3", book_date=bd,
+        entry_datetime=timezone.make_aware(datetime(2026, 9, 13, 11, 16, 4)),
+    )
+    rev_plus = _otomax_row(
+        rev_desc, "550000", "PLC CL 3", book_date=bd,
+        entry_datetime=timezone.make_aware(datetime(2026, 9, 13, 14, 25, 16)),
+    )
+    rev_minus = _otomax_row(
+        rev_desc, "-550000", "PLC CL 3", book_date=bd,
+        entry_datetime=timezone.make_aware(datetime(2026, 9, 13, 14, 25, 32)),
+    )
+    rev_rev_minus = _otomax_row(
+        rev_rev_desc, "-550000", "PLC CL 3", book_date=bd,
+        entry_datetime=timezone.make_aware(datetime(2026, 9, 13, 14, 25, 40)),
+    )
+    final = _otomax_row(
+        final_desc, "550000", "PLC PC4 OJEG", book_date=bd,
+        entry_datetime=timezone.make_aware(datetime(2026, 9, 13, 14, 25, 59)),
+    )
+    b = _bank(shared, "550000", channel=Channel.BRI, book_date=bd)
+
+    stats = run_match(bd)
+    assert stats.netted == 2
+    assert stats.matched == 1
+
+    for row in (original, rev_plus, rev_minus, rev_rev_minus):
+        row.refresh_from_db()
+        assert row.match_status == MatchStatus.IGNORED, row.description_raw
+
+    final.refresh_from_db()
+    b.refresh_from_db()
+    assert final.match_status == MatchStatus.MATCHED
+    assert b.match_status == MatchStatus.MATCHED
+
+    m = Match.objects.get(bank_mutation=b)
+    assert m.otomax_entry_id == final.id
+    assert compute_totals(bd)["otomax"] == Decimal("550000.00")
+

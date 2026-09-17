@@ -85,24 +85,28 @@ def _open_otomax(book_date: date, channel: str, tolerance: tuple[int, int] = (-1
 
 
 def _net_reversals() -> int:
-    """Netkan baris REVERSAL dgn TOPUP_TARTUN yang dibatalkannya.
+    """Netkan baris REVERSAL dgn entri lawan (TOPUP_TARTUN atau REVERSAL lain) yang dibatalkannya.
 
     OTOMAX kadang mencatat topup ke reseller yang salah, membalikkannya lewat baris
     "REV ..." (ref & nominal sama, tanda berlawanan, nama reseller sama persis dengan
     yang dibatalkan), lalu mengentri ulang nominal yang sama ke reseller yang benar.
-    Pasangan asli+REV itu bernilai nol dan tidak boleh ikut bersaing memperebutkan satu
-    mutasi bank dengan entri revisiannya — jadi dikeluarkan dari kandidat pencocokan
+    Kadang koreksinya berlapis (REV dibalas REV lagi sebelum entri final) — dua REV yang
+    saling berlawanan itu juga perlu dinetralkan satu sama lain, bukan cuma REV vs
+    TOPUP_TARTUN. Pasangan yang bernilai nol itu tidak boleh ikut bersaing memperebutkan
+    satu mutasi bank dengan entri revisiannya — jadi dikeluarkan dari kandidat pencocokan
     (match_status=IGNORED) sebelum pencocokan ref/nominal berjalan.
     """
     netted = 0
-    reversals = OtomaxEntry.objects.filter(category=OtomaxCategory.REVERSAL, match_status__in=_OPEN_STATUSES)
+    reversals = OtomaxEntry.objects.filter(category=OtomaxCategory.REVERSAL, match_status__in=_OPEN_STATUSES).order_by(
+        "entry_datetime"
+    )
     for rev in reversals:
         base = OtomaxEntry.objects.filter(
-            category=OtomaxCategory.TOPUP_TARTUN,
+            category__in=[OtomaxCategory.TOPUP_TARTUN, OtomaxCategory.REVERSAL],
             match_status__in=_OPEN_STATUSES,
             amount=-rev.amount,
             reseller_name_raw=rev.reseller_name_raw,
-        )
+        ).exclude(pk=rev.pk)
         if rev.entry_datetime:
             base = base.filter(models.Q(entry_datetime__lte=rev.entry_datetime) | models.Q(entry_datetime__isnull=True))
 
