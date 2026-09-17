@@ -86,6 +86,15 @@ class OtomaxEntry(TimeStampedModel):
     match_status = models.CharField(
         max_length=16, choices=MatchStatus.choices, default=MatchStatus.UNMATCHED, db_index=True
     )
+    net_pair = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+        help_text="Entri TOPUP_TARTUN/REVERSAL lawan yang saling menetralkan (ref & nominal berlawanan).",
+    )
+    note = models.TextField(blank=True, default="")
 
     class Meta:
         indexes = [models.Index(fields=["book_date", "category", "match_status"])]

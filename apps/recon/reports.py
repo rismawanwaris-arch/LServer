@@ -22,7 +22,9 @@ ZERO = Decimal("0.00")
 def get_daily_summary(book_date: date) -> dict:
     """Ringkasan rekonsiliasi harian."""
     bank_qs = BankMutation.objects.filter(book_date=book_date)
-    otomax_qs = OtomaxEntry.objects.filter(book_date=book_date, category=OtomaxCategory.TOPUP_TARTUN)
+    otomax_qs = OtomaxEntry.objects.filter(book_date=book_date, category=OtomaxCategory.TOPUP_TARTUN).exclude(
+        match_status=MatchStatus.IGNORED
+    )
 
     total_bank = bank_qs.filter(amount__gt=0).aggregate(s=Sum("amount"))["s"] or ZERO
     total_otomax = otomax_qs.aggregate(s=Sum("amount"))["s"] or ZERO
@@ -76,7 +78,7 @@ def get_range_summary(start_date: date, end_date: date) -> dict:
     otomax_qs = OtomaxEntry.objects.filter(
         book_date__range=(start_date, end_date),
         category=OtomaxCategory.TOPUP_TARTUN,
-    )
+    ).exclude(match_status=MatchStatus.IGNORED)
 
     total_bank = bank_qs.filter(amount__gt=0).aggregate(s=Sum("amount"))["s"] or ZERO
     total_otomax = otomax_qs.aggregate(s=Sum("amount"))["s"] or ZERO

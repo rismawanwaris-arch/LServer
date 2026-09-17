@@ -646,9 +646,11 @@ def run_engine(request):
     book_date = _parse_date(request.POST.get("book_date"))
     stats = run_match(book_date)
     resolved = carry_forward(book_date, user=request.user)
+    netted_msg = f" · revisi di-net: {stats.netted}" if stats.netted else ""
     messages.success(
         request,
-        f"Cocok: {stats.matched} · discrepancy baru: {stats.discrepancies} · " f"selisih lama ditutup: {resolved}.",
+        f"Cocok: {stats.matched} · discrepancy baru: {stats.discrepancies} · "
+        f"selisih lama ditutup: {resolved}{netted_msg}.",
     )
     return redirect(f"/?d={book_date}")
 

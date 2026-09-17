@@ -39,9 +39,9 @@ def compute_totals(book_date: date) -> dict:
     }
     totals["bank"] = sum(totals.values(), ZERO)
     totals["otomax"] = (
-        OtomaxEntry.objects.filter(book_date=book_date, category=OtomaxCategory.TOPUP_TARTUN).aggregate(
-            s=Sum("amount")
-        )["s"]
+        OtomaxEntry.objects.filter(book_date=book_date, category=OtomaxCategory.TOPUP_TARTUN)
+        .exclude(match_status=MatchStatus.IGNORED)
+        .aggregate(s=Sum("amount"))["s"]
         or ZERO
     )
     totals["selisih"] = totals["bank"] - totals["otomax"]
@@ -52,6 +52,7 @@ def build_snapshot(book_date: date) -> dict:
     totals = compute_totals(book_date)
     per_reseller = list(
         OtomaxEntry.objects.filter(book_date=book_date, category=OtomaxCategory.TOPUP_TARTUN)
+        .exclude(match_status=MatchStatus.IGNORED)
         .values("reseller__code")
         .annotate(total=Sum("amount"))
         .order_by("reseller__code")

@@ -40,15 +40,18 @@ BANK_DATE_TOLERANCE = {
 class RunStats:
     matched: int = 0
     discrepancies: int = 0
+    netted: int = 0
 
     def merge(self, other: RunStats):
         self.matched += other.matched
         self.discrepancies += other.discrepancies
+        self.netted += other.netted
 
 
 @transaction.atomic
 def run_match(book_date: date) -> RunStats:
     stats = RunStats()
+    stats.netted = _net_reversals()
     for channel in BANK_CHANNELS:
         if channel == Channel.MERCHANT_BCA:
             stats.merge(_match_qris(book_date))
@@ -73,6 +76,50 @@ def _open_otomax(book_date: date, channel: str, tolerance: tuple[int, int] = (-1
         category=OtomaxCategory.TOPUP_TARTUN,
         match_status=MatchStatus.UNMATCHED,
     ).filter(models.Q(channel_hint=channel) | models.Q(channel_hint=""))
+
+
+# --- reversal netting -------------------------------------------------------
+
+
+def _net_reversals() -> int:
+    """Netkan baris REVERSAL dgn TOPUP_TARTUN yang dibatalkannya.
+
+    OTOMAX kadang mencatat topup ke reseller yang salah, membalikkannya lewat baris
+    "REV ..." (ref & nominal sama, tanda berlawanan, nama reseller sama persis dengan
+    yang dibatalkan), lalu mengentri ulang nominal yang sama ke reseller yang benar.
+    Pasangan asli+REV itu bernilai nol dan tidak boleh ikut bersaing memperebutkan satu
+    mutasi bank dengan entri revisiannya — jadi dikeluarkan dari kandidat pencocokan
+    (match_status=IGNORED) sebelum pencocokan ref/nominal berjalan.
+    """
+    netted = 0
+    reversals = OtomaxEntry.objects.filter(category=OtomaxCategory.REVERSAL, match_status=MatchStatus.UNMATCHED)
+    for rev in reversals:
+        if not rev.ref_normalized:
+            continue
+        qs = OtomaxEntry.objects.filter(
+            category=OtomaxCategory.TOPUP_TARTUN,
+            match_status=MatchStatus.UNMATCHED,
+            ref_normalized=rev.ref_normalized,
+            amount=-rev.amount,
+            reseller_name_raw=rev.reseller_name_raw,
+        )
+        if rev.entry_datetime:
+            qs = qs.filter(models.Q(entry_datetime__lte=rev.entry_datetime) | models.Q(entry_datetime__isnull=True))
+        original = qs.order_by("-entry_datetime").first()
+        if original is None:
+            continue
+
+        rev.match_status = MatchStatus.IGNORED
+        rev.net_pair = original
+        rev.note = f"Menetralkan OtomaxEntry #{original.id} ({original.amount})"
+        rev.save(update_fields=["match_status", "net_pair", "note"])
+
+        original.match_status = MatchStatus.IGNORED
+        original.net_pair = rev
+        original.note = f"Dibatalkan oleh REV OtomaxEntry #{rev.id}"
+        original.save(update_fields=["match_status", "net_pair", "note"])
+        netted += 1
+    return netted
 
 
 def _match_ref(book_date: date, channel: str) -> RunStats:

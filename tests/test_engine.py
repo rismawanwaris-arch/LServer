@@ -1,15 +1,16 @@
 import hashlib
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
+from django.utils import timezone
 
 from apps.catalog.models import MerchantMap, Reseller
 from apps.core.enums import Channel, MatchStatus, OtomaxCategory
-from apps.core.normalize import norm_ref, ref_core
+from apps.core.normalize import classify_otomax, extract_tokens, norm_ref, ref_core, strip_otomax_prefix
 from apps.ingest.models import BankMutation, ImportBatch, OtomaxEntry
 from apps.recon.carry import carry_forward
-from apps.recon.close import close_day
+from apps.recon.close import close_day, compute_totals
 from apps.recon.engine import run_match
 from apps.recon.models import Adjustment, Discrepancy, Match, ReconDay
 
@@ -57,6 +58,26 @@ def _otomax(desc, amount, channel=Channel.BRI, reseller=None, book_date=BD):
         ref_core=ref_core(core),
         extracted_tokens=extract_tokens(core),
         row_hash=_h("o", desc, amount, book_date),
+    )
+
+
+def _otomax_row(desc, amount, reseller_name, book_date=BD, entry_datetime=None):
+    """Bangun OtomaxEntry persis seperti pipeline import (classify + strip prefix)."""
+    category, hint = classify_otomax(desc)
+    embedded = strip_otomax_prefix(desc)
+    return OtomaxEntry.objects.create(
+        import_batch=_batch(Channel.OTOMAX),
+        book_date=book_date,
+        entry_datetime=entry_datetime,
+        reseller_name_raw=reseller_name,
+        amount=Decimal(amount),
+        description_raw=desc,
+        category=category,
+        channel_hint=hint or "",
+        ref_normalized=norm_ref(embedded),
+        ref_core=ref_core(embedded),
+        extracted_tokens=extract_tokens(embedded),
+        row_hash=_h("o", desc, amount, reseller_name, book_date),
     )
 
 
@@ -355,4 +376,90 @@ def test_match_bri_combined_descriptions():
     o2.refresh_from_db()
     assert b2.match_status == MatchStatus.MATCHED
     assert o2.match_status == MatchStatus.MATCHED
+
+
+@pytest.mark.django_db
+def test_reversal_netting_cross_day_matches_correction_not_original():
+    """Revisian beda hari: asli (12/9) dibatalkan REV (13/9), lalu direvisi (13/9) -> yg dicocokkan hanya revisian."""
+    day1 = date(2026, 9, 12)
+    day2 = date(2026, 9, 13)
+    ref_desc = "TARTUN EDC BRI 6013013636952876#192240520005#EDC#TRFLA TGL 12/SEP/2026"
+    rev_desc = "REV TARTUN EDC BRI 6013013636952876#192240520005#EDC#TRFLA TGL 12/SEP/2026"
+
+    original = _otomax_row(
+        ref_desc, "1150000", "PLC ALFA3 SINJAY1", book_date=day1,
+        entry_datetime=timezone.make_aware(datetime(2026, 9, 12, 21, 44, 50)),
+    )
+    rev = _otomax_row(
+        rev_desc, "-1150000", "PLC ALFA3 SINJAY1", book_date=day2,
+        entry_datetime=timezone.make_aware(datetime(2026, 9, 13, 9, 31, 45)),
+    )
+    correction = _otomax_row(
+        ref_desc, "1150000", "PLC SA", book_date=day2,
+        entry_datetime=timezone.make_aware(datetime(2026, 9, 13, 9, 32, 9)),
+    )
+    b = _bank("6013013636952876#192240520005#EDC#TRFLA", "1150000", channel=Channel.BRI, book_date=day2)
+
+    stats = run_match(day2)
+    assert stats.netted == 1
+    assert stats.matched == 1
+
+    original.refresh_from_db()
+    rev.refresh_from_db()
+    correction.refresh_from_db()
+    b.refresh_from_db()
+
+    assert original.match_status == MatchStatus.IGNORED
+    assert rev.match_status == MatchStatus.IGNORED
+    assert original.net_pair_id == rev.id
+    assert rev.net_pair_id == original.id
+    assert correction.match_status == MatchStatus.MATCHED
+    assert b.match_status == MatchStatus.MATCHED
+
+    m = Match.objects.get(bank_mutation=b)
+    assert m.otomax_entry_id == correction.id
+
+    # Total OTOMAX hari asal (12/9) tidak lagi kelebihan hitung akibat entri yang dibatalkan
+    assert compute_totals(day1)["otomax"] == Decimal("0.00")
+    assert compute_totals(day2)["otomax"] == Decimal("1150000.00")
+
+
+@pytest.mark.django_db
+def test_reversal_netting_same_day_matches_correction_not_original():
+    """Revisian sehari: asli, REV, dan revisian semuanya di hari yang sama."""
+    bd = date(2026, 9, 16)
+    ref_desc = "TARTUN TF BRI BFST215401000596563ANGGIAT HISA:SSPIIDJA"
+    rev_desc = "REV TARTUN TF BRI BFST215401000596563ANGGIAT HISA:SSPIIDJA"
+
+    original = _otomax_row(
+        ref_desc, "1105000", "PLC BAKSAR1", book_date=bd,
+        entry_datetime=timezone.make_aware(datetime(2026, 9, 16, 20, 8, 39)),
+    )
+    rev = _otomax_row(
+        rev_desc, "-1105000", "PLC BAKSAR1", book_date=bd,
+        entry_datetime=timezone.make_aware(datetime(2026, 9, 16, 20, 8, 56)),
+    )
+    correction = _otomax_row(
+        ref_desc, "1105000", "PLC JH2", book_date=bd,
+        entry_datetime=timezone.make_aware(datetime(2026, 9, 16, 20, 9, 3)),
+    )
+    b = _bank("BFST215401000596563ANGGIAT HISA:SSPIIDJA", "1105000", channel=Channel.BRI, book_date=bd)
+
+    stats = run_match(bd)
+    assert stats.netted == 1
+    assert stats.matched == 1
+
+    original.refresh_from_db()
+    rev.refresh_from_db()
+    correction.refresh_from_db()
+    b.refresh_from_db()
+
+    assert original.match_status == MatchStatus.IGNORED
+    assert rev.match_status == MatchStatus.IGNORED
+    assert correction.match_status == MatchStatus.MATCHED
+    assert b.match_status == MatchStatus.MATCHED
+
+    m = Match.objects.get(bank_mutation=b)
+    assert m.otomax_entry_id == correction.id
+    assert compute_totals(bd)["otomax"] == Decimal("1105000.00")
 
