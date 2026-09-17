@@ -461,11 +461,16 @@ def _match_qris(book_date: date) -> RunStats:
             grp["used"] = True
             unmatched_banks.remove(b)
 
-    # Pass 3: Nama / MerchantMap cocok tapi ada selisih nominal
+    # Pass 3: Nama / MerchantMap cocok, selisih nominal masih dalam toleransi
+    # (di luar toleransi -> jangan di-match otomatis, biarkan kedua sisi muncul
+    # terpisah di antrean belum cocok supaya ditinjau & dipasangkan manual).
+    amount_tolerance = Decimal(str(settings.MATCH_AMOUNT_TOLERANCE))
     for b in list(unmatched_banks):
         grp, score = _find_best_group(b, list(otomax_groups.values()), mmap)
         if grp:
             diff = b.amount - grp["total"]
+            if abs(diff) > amount_tolerance:
+                continue
             b_name = b.outlet_name or b.external_ref
             note_str = f"QRIS {b_name} selisih nominal: Bank {b.amount:,.2f} vs Otomax {grp['total']:,.2f}"
             _persist_qris_match(

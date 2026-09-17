@@ -109,7 +109,35 @@ def test_bank_only_and_otomax_only_become_discrepancies():
 
 
 @pytest.mark.django_db
-def test_qris_aggregate_and_amount_diff():
+def test_qris_amount_diff_beyond_tolerance_stays_unmatched():
+    """Default MATCH_AMOUNT_TOLERANCE=0: nama outlet cocok tapi nominal beda besar ->
+    JANGAN auto-match. Biarkan kedua sisi muncul terpisah untuk ditinjau manual."""
+    r = Reseller.objects.create(code="ALFA2", name="Alfa 2")
+    MerchantMap.objects.create(merchant_id="004767951", reseller=r)
+    BankMutation.objects.create(
+        import_batch=_batch(Channel.MERCHANT_BCA),
+        channel=Channel.MERCHANT_BCA,
+        book_date=BD,
+        description_raw="QRIS ALFA 2 CELL",
+        ref_normalized="QRIS",
+        amount=Decimal("10760000"),
+        external_ref="004767951",
+        row_hash="qb1",
+    )
+    o = _otomax("TARTUN QR BULK TGL 05-SEP-2026", "10700000", channel=Channel.MERCHANT_BCA, reseller=r)
+    stats = run_match(BD)
+    assert stats.matched == 0
+    assert Discrepancy.objects.filter(kind="AMOUNT_DIFF").count() == 0
+    assert set(Discrepancy.objects.values_list("kind", flat=True)) == {"BANK_ONLY", "OTOMAX_ONLY"}
+    o.refresh_from_db()
+    assert o.match_status == MatchStatus.PENDING_SETTLE
+
+
+@pytest.mark.django_db
+def test_qris_amount_diff_within_tolerance_auto_matches(settings):
+    """Kalau MATCH_AMOUNT_TOLERANCE dinaikkan, selisih kecil di dalam ambang tetap
+    boleh auto-match + ditandai AMOUNT_DIFF."""
+    settings.MATCH_AMOUNT_TOLERANCE = 100000
     r = Reseller.objects.create(code="ALFA2", name="Alfa 2")
     MerchantMap.objects.create(merchant_id="004767951", reseller=r)
     BankMutation.objects.create(
