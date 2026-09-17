@@ -90,7 +90,7 @@
             {% endif %}
           </td>
           <td class="font-mono text-xs max-w-xs truncate text-slate-700 dark:text-slate-300">
-            {{ m.bank_mutation.ref_normalized|default:m.bank_mutation.description_raw|default:"—" }}
+            {% firstof m.bank_mutation.ref_normalized m.bank_mutation.description_raw "—" %}
           </td>
           <td class="money text-right font-semibold text-slate-900 dark:text-white">
             Rp {{ m.amount_bank|rupiah }}
