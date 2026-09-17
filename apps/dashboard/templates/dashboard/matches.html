@@ -65,11 +65,11 @@
           <th class="text-right">Selisih</th>
         </tr>
       </thead>
-      <tbody>
+      <tbody x-data="{ open: null }">
         {% for m in matches %}
-        <tr x-data="{ open: false }" class="cursor-pointer group" @click="open = !open">
+        <tr class="cursor-pointer group" @click="open = (open === {{ m.id }} ? null : {{ m.id }})">
           <td class="text-center text-slate-400 group-hover:text-indigo-600">
-            <svg class="h-4 w-4 transform transition-transform" :class="{ 'rotate-90': open }" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg class="h-4 w-4 transform transition-transform" :class="{ 'rotate-90': open === {{ m.id }} }" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
             </svg>
           </td>
@@ -107,7 +107,7 @@
         </tr>
 
         <!-- Expanded Drawer Details (PRD Section 9.3) -->
-        <tr x-show="open" style="display: none;" class="bg-indigo-50/30 border-b border-indigo-100 dark:bg-slate-800/50 dark:border-slate-700">
+        <tr x-show="open === {{ m.id }}" style="display: none;" class="bg-indigo-50/30 border-b border-indigo-100 dark:bg-slate-800/50 dark:border-slate-700">
           <td colspan="8" class="p-4">
             <div class="grid gap-4 md:grid-cols-2 rounded-xl bg-white p-4 border border-slate-200 shadow-xs dark:bg-slate-800 dark:border-slate-700 text-xs">
               <!-- Sisi Bank -->
