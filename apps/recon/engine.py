@@ -94,18 +94,23 @@ def _net_reversals() -> int:
     netted = 0
     reversals = OtomaxEntry.objects.filter(category=OtomaxCategory.REVERSAL, match_status=MatchStatus.UNMATCHED)
     for rev in reversals:
-        if not rev.ref_normalized:
-            continue
-        qs = OtomaxEntry.objects.filter(
+        base = OtomaxEntry.objects.filter(
             category=OtomaxCategory.TOPUP_TARTUN,
             match_status=MatchStatus.UNMATCHED,
-            ref_normalized=rev.ref_normalized,
             amount=-rev.amount,
             reseller_name_raw=rev.reseller_name_raw,
         )
         if rev.entry_datetime:
-            qs = qs.filter(models.Q(entry_datetime__lte=rev.entry_datetime) | models.Q(entry_datetime__isnull=True))
-        original = qs.order_by("-entry_datetime").first()
+            base = base.filter(models.Q(entry_datetime__lte=rev.entry_datetime) | models.Q(entry_datetime__isnull=True))
+
+        # ref_core (token angka inti) lebih tahan terhadap variasi teks — mis. OTOMAX
+        # kadang menambah akhiran "TGL dd/bln/yyyy" hanya pada baris REV/revisian,
+        # tidak pada entri aslinya, sehingga ref_normalized-nya jadi tidak identik.
+        original = None
+        if rev.ref_core:
+            original = base.filter(ref_core=rev.ref_core).order_by("-entry_datetime").first()
+        if original is None and rev.ref_normalized:
+            original = base.filter(ref_normalized=rev.ref_normalized).order_by("-entry_datetime").first()
         if original is None:
             continue
 

@@ -425,6 +425,51 @@ def test_reversal_netting_cross_day_matches_correction_not_original():
 
 
 @pytest.mark.django_db
+def test_reversal_netting_matches_via_ref_core_when_original_lacks_tgl_suffix():
+    """Data nyata: entri asli tidak punya akhiran "TGL ...", REV & revisian punya —
+    ref_normalized jadi beda persis, jadi netting harus jatuh ke ref_core."""
+    day1 = date(2026, 9, 12)
+    day2 = date(2026, 9, 13)
+    original_desc = "TARTUN EDC BRI 6013013636952876#192240520005#EDC#TRFLA"
+    rev_desc = "REV TARTUN EDC BRI 6013013636952876#192240520005#EDC#TRFLA TGL 12/SEP/2026"
+    correction_desc = "TARTUN EDC BRI 6013013636952876#192240520005#EDC#TRFLA TGL 12/SEP/2026"
+
+    original = _otomax_row(
+        original_desc, "1150000", "PLC ALFA3 SINJAY1", book_date=day1,
+        entry_datetime=timezone.make_aware(datetime(2026, 9, 12, 21, 44, 50)),
+    )
+    rev = _otomax_row(
+        rev_desc, "-1150000", "PLC ALFA3 SINJAY1", book_date=day2,
+        entry_datetime=timezone.make_aware(datetime(2026, 9, 13, 9, 31, 45)),
+    )
+    correction = _otomax_row(
+        correction_desc, "1150000", "PLC SA", book_date=day2,
+        entry_datetime=timezone.make_aware(datetime(2026, 9, 13, 9, 32, 9)),
+    )
+    assert original.ref_normalized != rev.ref_normalized  # persis skenario yang gagal di produksi
+    assert original.ref_core == rev.ref_core == correction.ref_core
+
+    b = _bank("6013013636952876#192240520005#EDC#TRFLA", "1150000", channel=Channel.BRI, book_date=day1)
+
+    stats = run_match(day1)
+    assert stats.netted == 1
+    assert stats.matched == 1
+
+    original.refresh_from_db()
+    rev.refresh_from_db()
+    correction.refresh_from_db()
+    b.refresh_from_db()
+
+    assert original.match_status == MatchStatus.IGNORED
+    assert rev.match_status == MatchStatus.IGNORED
+    assert correction.match_status == MatchStatus.MATCHED
+    assert b.match_status == MatchStatus.MATCHED
+
+    m = Match.objects.get(bank_mutation=b)
+    assert m.otomax_entry_id == correction.id
+
+
+@pytest.mark.django_db
 def test_reversal_netting_same_day_matches_correction_not_original():
     """Revisian sehari: asli, REV, dan revisian semuanya di hari yang sama."""
     bd = date(2026, 9, 16)
