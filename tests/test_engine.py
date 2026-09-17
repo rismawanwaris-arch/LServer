@@ -631,3 +631,63 @@ def test_reversal_netting_handles_multi_step_correction_chain():
     assert m.otomax_entry_id == final.id
     assert compute_totals(bd)["otomax"] == Decimal("550000.00")
 
+
+@pytest.mark.django_db
+def test_unpair_aggregate_match_frees_all_group_members():
+    """unpair_match() pada match AGGREGATE (QRIS multi-baris) harus melepas SEMUA
+    baris Otomax dalam grup, bukan cuma otomax_entry utama yang tersimpan di Match."""
+    from apps.recon.resolve import unpair_match
+
+    r = Reseller.objects.create(code="ALFA9", name="Alfa 9")
+    b = BankMutation.objects.create(
+        import_batch=_batch(Channel.MERCHANT_BCA),
+        channel=Channel.MERCHANT_BCA,
+        book_date=BD,
+        description_raw="QRIS ALFA 9 CELL",
+        ref_normalized="QRIS",
+        amount=Decimal("1500000"),
+        external_ref="009999999",
+        row_hash="qb_agg1",
+    )
+    o1 = OtomaxEntry.objects.create(
+        import_batch=_batch(Channel.OTOMAX),
+        book_date=BD,
+        reseller_name_raw="PLC ALFA9",
+        reseller=r,
+        amount=Decimal("1000000"),
+        description_raw="TARTUN QR BULK TGL 05-SEP-2026",
+        category=OtomaxCategory.TOPUP_TARTUN,
+        channel_hint=Channel.MERCHANT_BCA,
+        ref_normalized="TARTUN",
+        row_hash="oto_agg1",
+    )
+    o2 = OtomaxEntry.objects.create(
+        import_batch=_batch(Channel.OTOMAX),
+        book_date=BD,
+        reseller_name_raw="PLC ALFA9",
+        reseller=r,
+        amount=Decimal("500000"),
+        description_raw="TARTUN QR BULK TGL 05-SEP-2026",
+        category=OtomaxCategory.TOPUP_TARTUN,
+        channel_hint=Channel.MERCHANT_BCA,
+        ref_normalized="TARTUN",
+        row_hash="oto_agg2",
+    )
+    stats = run_match(BD)
+    assert stats.matched == 1
+
+    m = Match.objects.get(bank_mutation=b, voided_at__isnull=True)
+    assert m.match_type == "AGGREGATE"
+    assert set(m.otomax_entries.values_list("id", flat=True)) == {o1.id, o2.id}
+
+    unpair_match(m)
+
+    b.refresh_from_db()
+    o1.refresh_from_db()
+    o2.refresh_from_db()
+    assert b.match_status == MatchStatus.UNMATCHED
+    assert o1.match_status == MatchStatus.PENDING_SETTLE
+    assert o2.match_status == MatchStatus.PENDING_SETTLE
+    m.refresh_from_db()
+    assert m.voided_at is not None
+

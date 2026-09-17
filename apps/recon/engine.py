@@ -366,6 +366,7 @@ def _persist_qris_match(
         confidence=100 if mtype == MatchType.AUTO_EXACT else 90,
         note=note,
     )
+    m.otomax_entries.set(otomax_rows)
     _mark(bank, MatchStatus.MATCHED)
     for o in otomax_rows:
         _mark(o, MatchStatus.MATCHED)

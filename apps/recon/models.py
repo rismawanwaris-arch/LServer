@@ -30,6 +30,13 @@ class Match(TimeStampedModel):
     otomax_entry = models.ForeignKey(
         OtomaxEntry, null=True, blank=True, on_delete=models.PROTECT, related_name="matches"
     )
+    otomax_entries = models.ManyToManyField(
+        OtomaxEntry,
+        blank=True,
+        related_name="aggregate_matches",
+        help_text="Semua baris Otomax dalam grup untuk match AGGREGATE (QRIS multi-baris). "
+        "otomax_entry di atas tetap menunjuk baris utama untuk tampilan.",
+    )
     match_type = models.CharField(max_length=12, choices=MatchType.choices)
     amount_bank = money_field(default=ZERO)
     amount_otomax = money_field(default=ZERO)

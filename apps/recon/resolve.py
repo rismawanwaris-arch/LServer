@@ -4,6 +4,7 @@ from datetime import date
 from decimal import Decimal
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.core.enums import Channel, MatchStatus, MatchType
@@ -221,10 +222,16 @@ def manual_pair_transactions(
 
 @transaction.atomic
 def unpair_match(match: Match, user=None) -> None:
-    """Batalkan pencocokan manual atau void match."""
+    """Batalkan pencocokan manual/otomatis — termasuk match AGGREGATE (QRIS multi-baris)."""
     m = Match.objects.select_for_update().get(pk=match.pk)
     if m.voided_at:
         return
+
+    # Kumpulkan semua id Otomax yang terlibat SEBELUM di-void, supaya "masih ada match aktif
+    # lain?" di bawah tidak ikut menghitung match ini sendiri.
+    otomax_ids = set(m.otomax_entries.values_list("id", flat=True))
+    if m.otomax_entry_id:
+        otomax_ids.add(m.otomax_entry_id)
 
     m.voided_at = timezone.now()
     m.voided_by = user
@@ -238,9 +245,11 @@ def unpair_match(match: Match, user=None) -> None:
             bm.manual_note = ""
             bm.save(update_fields=["match_status", "tag_manual", "manual_note", "updated_at"])
 
-    if m.otomax_entry:
-        o = OtomaxEntry.objects.select_for_update().get(pk=m.otomax_entry_id)
-        if not Match.objects.filter(otomax_entry=o, voided_at__isnull=True).exists():
+    for o in OtomaxEntry.objects.select_for_update().filter(pk__in=otomax_ids):
+        still_active = Match.objects.filter(
+            Q(otomax_entry=o) | Q(otomax_entries=o), voided_at__isnull=True
+        ).exists()
+        if not still_active:
             o.match_status = MatchStatus.PENDING_SETTLE
             o.save(update_fields=["match_status", "updated_at"])
 

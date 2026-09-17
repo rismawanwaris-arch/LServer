@@ -177,18 +177,12 @@
               <div class="text-slate-500">
                 {% if m.note %}<b>Catatan:</b> {{ m.note }}{% endif %}
               </div>
-              {% if m.match_type == 'AGGREGATE' %}
-              <span class="text-slate-400" title="Pasangan agregat QRIS melibatkan beberapa baris Otomax sekaligus — batalkan lewat halaman Pending Settle / Admin.">
-                Agregat QRIS tidak bisa dibatalkan dari sini.
-              </span>
-              {% else %}
-              <form method="post" action="{% url 'unpair-match' m.id %}" onsubmit="return confirm('Batalkan pencocokan ini? Kedua transaksi akan kembali ke antrean belum cocok.');">
+              <form method="post" action="{% url 'unpair-match' m.id %}" onsubmit="return confirm('Batalkan pencocokan ini? {% if m.match_type == "AGGREGATE" %}Semua baris Otomax dalam grup ini {% else %}Kedua transaksi {% endif %}akan kembali ke antrean belum cocok.');">
                 {% csrf_token %}
                 <button type="submit" class="btn-danger py-1 px-3 text-xs font-semibold">
-                  Batalkan Pencocokan
+                  Batalkan Pencocokan{% if m.match_type == 'AGGREGATE' %} (Grup){% endif %}
                 </button>
               </form>
-              {% endif %}
             </div>
           </td>
         </tr>
