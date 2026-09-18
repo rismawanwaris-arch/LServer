@@ -18,6 +18,7 @@ from decimal import Decimal
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
+from django.db.models import Q
 
 from apps.core.enums import Channel, MatchStatus, MatchType, OtomaxCategory
 from apps.ingest.models import OtomaxEntry
@@ -125,11 +126,28 @@ class Command(BaseCommand):
         if primary is None:
             return None
 
+        # Persis filter yang dipakai _match_qris() waktu grup ini pertama kali dibentuk
+        # (engine.py _match_qris): channel QRIS/BULK + jendela tanggal H-1..H+2 ATAU teks
+        # "TGL dd-Mon-yyyy" di keterangan. Tanpa filter channel ini, reseller yang juga
+        # bertransaksi lewat BRI/BCA ikut kesedot dan jumlahnya tidak akan pernah pas.
         window = (m.book_date - timedelta(days=1), m.book_date + timedelta(days=2))
-        candidates_qs = OtomaxEntry.objects.filter(
-            category=OtomaxCategory.TOPUP_TARTUN,
-            match_status=MatchStatus.MATCHED,
-            book_date__range=window,
+        d_str = m.book_date.strftime("%d-%b-%Y").upper()
+        d_str_short = m.book_date.strftime("%d-%b").upper()
+        candidates_qs = (
+            OtomaxEntry.objects.filter(
+                category=OtomaxCategory.TOPUP_TARTUN,
+                match_status=MatchStatus.MATCHED,
+            )
+            .filter(
+                Q(channel_hint=Channel.MERCHANT_BCA)
+                | Q(description_raw__icontains="BULK")
+                | Q(description_raw__icontains="TARTUN QR")
+            )
+            .filter(
+                Q(book_date__range=window)
+                | Q(description_raw__icontains=d_str)
+                | Q(description_raw__icontains=d_str_short)
+            )
         )
         if primary.reseller_id:
             candidates_qs = candidates_qs.filter(reseller_id=primary.reseller_id)

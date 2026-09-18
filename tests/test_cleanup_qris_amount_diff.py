@@ -117,6 +117,22 @@ def test_apply_unpairs_out_of_tolerance_and_reconstructs_legacy_group():
         row_hash="oto2",
         match_status=MatchStatus.MATCHED,
     )
+    # Pengecoh: reseller yang sama juga punya TOPUP_TARTUN via channel BRI (mis. transfer
+    # individual). Ini TIDAK boleh ikut kesedot rekonstruksi grup QRIS — kalau ikut,
+    # jumlahnya akan meleset dari amount_otomax dan seharusnya bikin rekonstruksi gagal.
+    OtomaxEntry.objects.create(
+        import_batch=_batch(Channel.OTOMAX),
+        book_date=BD,
+        reseller_name_raw="PLC ALFA9",
+        reseller=r,
+        amount=Decimal("300000"),
+        description_raw="TARTUN TF BRI DANA20260905034895588601SOMEONE",
+        category=OtomaxCategory.TOPUP_TARTUN,
+        channel_hint=Channel.BRI,
+        ref_normalized="DANA20260905034895588601SOMEONE",
+        row_hash="oto_decoy_bri",
+        match_status=MatchStatus.MATCHED,
+    )
     # otomax_entries SENGAJA tidak diisi -> mensimulasikan Match yang dibuat sebelum
     # field M2M ini ada, sehingga command harus merekonstruksinya dari amount_otomax.
     m = Match.objects.create(
