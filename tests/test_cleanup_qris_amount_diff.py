@@ -248,3 +248,121 @@ def test_within_tolerance_match_is_not_touched(settings):
 
     m.refresh_from_db()
     assert m.voided_at is None
+
+
+@pytest.mark.django_db
+def test_reconstruction_does_not_leak_across_adjacent_days_same_reseller():
+    """Reseller yang sama punya grup QRIS di dua hari berdekatan (hal biasa untuk
+    reseller aktif harian). Rekonstruksi utk Match hari pertama TIDAK BOLEH ikut
+    menyedot baris milik grup hari kedua walau keduanya masuk jendela H-1..H+2."""
+    day1 = BD
+    day2 = date(2026, 9, 6)
+    r = Reseller.objects.create(code="ALFA9", name="Alfa 9")
+
+    b1 = BankMutation.objects.create(
+        import_batch=_batch(Channel.MERCHANT_BCA),
+        channel=Channel.MERCHANT_BCA,
+        book_date=day1,
+        description_raw="QRIS ALFA 9 CELL",
+        ref_normalized="QRIS",
+        amount=Decimal("5100000"),
+        external_ref="004767951",
+        row_hash="qb_day1",
+    )
+    o1 = OtomaxEntry.objects.create(
+        import_batch=_batch(Channel.OTOMAX),
+        book_date=day1,
+        reseller_name_raw="PLC ALFA9",
+        reseller=r,
+        amount=Decimal("5000000"),
+        description_raw="TARTUN QR BULK TGL 05-SEP-2026",
+        category=OtomaxCategory.TOPUP_TARTUN,
+        channel_hint=Channel.MERCHANT_BCA,
+        ref_normalized="TARTUN",
+        row_hash="oto_day1",
+        match_status=MatchStatus.MATCHED,
+    )
+    m1 = Match.objects.create(
+        book_date=day1,
+        channel=Channel.MERCHANT_BCA,
+        bank_mutation=b1,
+        otomax_entry=o1,
+        match_type=MatchType.AGGREGATE,
+        amount_bank=b1.amount,
+        amount_otomax=o1.amount,
+        note="hari 1",
+    )
+    b1.match_status = MatchStatus.MATCHED
+    b1.save(update_fields=["match_status"])
+
+    # Grup reseller yang SAMA di hari berikutnya — total 8 juta, beda dari hari 1.
+    o2a = OtomaxEntry.objects.create(
+        import_batch=_batch(Channel.OTOMAX),
+        book_date=day2,
+        reseller_name_raw="PLC ALFA9",
+        reseller=r,
+        amount=Decimal("6000000"),
+        description_raw="TARTUN QR BULK TGL 06-SEP-2026",
+        category=OtomaxCategory.TOPUP_TARTUN,
+        channel_hint=Channel.MERCHANT_BCA,
+        ref_normalized="TARTUN",
+        row_hash="oto_day2a",
+        match_status=MatchStatus.MATCHED,
+    )
+    o2b = OtomaxEntry.objects.create(
+        import_batch=_batch(Channel.OTOMAX),
+        book_date=day2,
+        reseller_name_raw="PLC ALFA9",
+        reseller=r,
+        amount=Decimal("2000000"),
+        description_raw="TARTUN QR BULK TGL 06-SEP-2026",
+        category=OtomaxCategory.TOPUP_TARTUN,
+        channel_hint=Channel.MERCHANT_BCA,
+        ref_normalized="TARTUN",
+        row_hash="oto_day2b",
+        match_status=MatchStatus.MATCHED,
+    )
+    BankMutation.objects.create(
+        import_batch=_batch(Channel.MERCHANT_BCA),
+        channel=Channel.MERCHANT_BCA,
+        book_date=day2,
+        description_raw="QRIS ALFA 9 CELL",
+        ref_normalized="QRIS",
+        amount=Decimal("8100000"),
+        external_ref="004767951",
+        row_hash="qb_day2",
+        match_status=MatchStatus.MATCHED,
+    )
+    m2 = Match.objects.create(
+        book_date=day2,
+        channel=Channel.MERCHANT_BCA,
+        bank_mutation=None,
+        otomax_entry=o2a,
+        match_type=MatchType.AGGREGATE,
+        amount_bank=Decimal("8100000"),
+        amount_otomax=Decimal("8000000"),
+        note="hari 2",
+    )
+
+    output = _run_cleanup("--apply")
+    # m2 (hari 2) JUGA di luar toleransi (selisih 100rb) -> ikut dibersihkan di run yang
+    # sama. Yang penting dibuktikan bukan "m2 tidak tersentuh", tapi grupnya tidak tercampur.
+    assert output.count("grup direkonstruksi ulang") == 2
+
+    m1.refresh_from_db()
+    o1.refresh_from_db()
+    b1.refresh_from_db()
+    assert m1.voided_at is not None
+    assert set(m1.otomax_entries.values_list("id", flat=True)) == {o1.id}
+    assert o1.match_status == MatchStatus.PENDING_SETTLE
+    assert b1.match_status == MatchStatus.UNMATCHED
+
+    # Grup hari 2 harus direkonstruksi PERSIS ke {o2a, o2b} -> tidak ikut kebawa o1,
+    # dan sebaliknya grup hari 1 di atas tidak ikut kebawa o2a/o2b.
+    m2.refresh_from_db()
+    o2a.refresh_from_db()
+    o2b.refresh_from_db()
+    assert m2.voided_at is not None
+    assert set(m2.otomax_entries.values_list("id", flat=True)) == {o2a.id, o2b.id}
+    assert o2a.match_status == MatchStatus.PENDING_SETTLE
+    assert o2b.match_status == MatchStatus.PENDING_SETTLE
