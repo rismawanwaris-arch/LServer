@@ -75,8 +75,9 @@ class Command(BaseCommand):
         for m in candidates:
             group = list(m.otomax_entries.all())
             reconstructed = False
+            debug = ""
             if not group:
-                group = self._reconstruct_group(m)
+                group, debug = self._reconstruct_group(m)
                 reconstructed = group is not None
 
             bank_desc = (m.bank_mutation.description_raw[:50] if m.bank_mutation else "-")
@@ -89,8 +90,12 @@ class Command(BaseCommand):
 
             if group is None:
                 self.stdout.write(
-                    self.style.WARNING(f"  LEWATI (grup Otomax tak bisa direkonstruksi ulang): {label} — {bank_desc}")
+                    self.style.WARNING(
+                        f"  LEWATI (grup Otomax tak bisa direkonstruksi ulang): {label} — {bank_desc}"
+                    )
                 )
+                if debug:
+                    self.stdout.write(f"      debug: {debug}")
                 skipped += 1
                 continue
 
@@ -118,46 +123,56 @@ class Command(BaseCommand):
                 )
             )
 
-    def _reconstruct_group(self, m: Match) -> list[OtomaxEntry] | None:
+    def _reconstruct_group(self, m: Match) -> tuple[list[OtomaxEntry] | None, str]:
         """Rekonstruksi grup Otomax untuk Match AGGREGATE lama yang dibuat sebelum
         otomax_entries (M2M) ada. Cuma dipakai kalau jumlahnya PERSIS sama dengan
-        amount_otomax yang tercatat di Match — kalau ambigu, dilewati (return None)."""
+        amount_otomax yang tercatat di Match — kalau ambigu, dilewati (None).
+
+        Untuk QRIS, entri Otomax-nya sering baru "ditembak" (dientri) H+1 dari tanggal
+        transaksi bank aslinya — jadi tanggal buku Otomax & tanggal buku mutasi bank BISA
+        beda satu hari secara konsisten, bukan cuma variasi acak. Coba tanggal TUNGGAL
+        (bukan gabungan rentang) satu per satu — sama persis, lalu H+1, lalu H-1 — supaya
+        tidak pernah mencampur total dua hari berbeda untuk reseller yang sama. Jendela
+        lebar H-1..H+2 cuma jadi upaya terakhir kalau semua tanggal tunggal di atas gagal."""
         primary = m.otomax_entry
         if primary is None:
-            return None
+            return None, "otomax_entry utama kosong, tidak ada jangkar untuk rekonstruksi"
 
-        # Persis filter yang dipakai _match_qris() waktu grup ini pertama kali dibentuk
-        # (engine.py _match_qris): channel QRIS/BULK + jendela tanggal H-1..H+2 ATAU teks
-        # "TGL dd-Mon-yyyy" di keterangan. Tanpa filter channel ini, reseller yang juga
-        # bertransaksi lewat BRI/BCA ikut kesedot dan jumlahnya tidak akan pernah pas.
-        window = (m.book_date - timedelta(days=1), m.book_date + timedelta(days=2))
-        d_str = m.book_date.strftime("%d-%b-%Y").upper()
-        d_str_short = m.book_date.strftime("%d-%b").upper()
-        candidates_qs = (
-            OtomaxEntry.objects.filter(
-                category=OtomaxCategory.TOPUP_TARTUN,
-                match_status=MatchStatus.MATCHED,
-            )
-            .filter(
-                Q(channel_hint=Channel.MERCHANT_BCA)
-                | Q(description_raw__icontains="BULK")
-                | Q(description_raw__icontains="TARTUN QR")
-            )
-            .filter(
-                Q(book_date__range=window)
-                | Q(description_raw__icontains=d_str)
-                | Q(description_raw__icontains=d_str_short)
-            )
+        base_filters = Q(category=OtomaxCategory.TOPUP_TARTUN, match_status=MatchStatus.MATCHED) & (
+            Q(channel_hint=Channel.MERCHANT_BCA)
+            | Q(description_raw__icontains="BULK")
+            | Q(description_raw__icontains="TARTUN QR")
         )
         if primary.reseller_id:
-            candidates_qs = candidates_qs.filter(reseller_id=primary.reseller_id)
+            base_filters &= Q(reseller_id=primary.reseller_id)
         else:
-            candidates_qs = candidates_qs.filter(reseller_id__isnull=True, reseller_name_raw=primary.reseller_name_raw)
+            base_filters &= Q(reseller_id__isnull=True, reseller_name_raw=primary.reseller_name_raw)
 
-        candidates = list(candidates_qs)
-        if primary.id not in {c.id for c in candidates}:
-            return None
+        d_str = m.book_date.strftime("%d-%b-%Y").upper()
+        d_str_short = m.book_date.strftime("%d-%b").upper()
+        tgl_filter = Q(description_raw__icontains=d_str) | Q(description_raw__icontains=d_str_short)
+
+        debug_parts = []
+
+        single_day_attempts = [
+            ("tanggal sama dgn bank", m.book_date),
+            ("otomax H+1 dari bank (lazim utk QRIS)", m.book_date + timedelta(days=1)),
+            ("otomax H-1 dari bank", m.book_date - timedelta(days=1)),
+        ]
+        for label, target_date in single_day_attempts:
+            candidates = list(OtomaxEntry.objects.filter(base_filters & (Q(book_date=target_date) | tgl_filter)))
+            total = sum((c.amount for c in candidates), Decimal("0.00"))
+            debug_parts.append(f"{label} ({target_date}): {len(candidates)} baris, total Rp{total:,.0f}")
+            if primary.id in {c.id for c in candidates} and total == m.amount_otomax:
+                return candidates, ""
+
+        window = (m.book_date - timedelta(days=1), m.book_date + timedelta(days=2))
+        window_filter = Q(book_date__range=window) | tgl_filter
+        candidates = list(OtomaxEntry.objects.filter(base_filters & window_filter))
         total = sum((c.amount for c in candidates), Decimal("0.00"))
-        if total != m.amount_otomax:
-            return None
-        return candidates
+        debug_parts.append(f"jendela H-1..H+2: {len(candidates)} baris, total Rp{total:,.0f}")
+        if primary.id in {c.id for c in candidates} and total == m.amount_otomax:
+            return candidates, ""
+
+        debug_parts.append(f"target Rp{m.amount_otomax:,.0f}")
+        return None, "; ".join(debug_parts)
