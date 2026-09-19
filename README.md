@@ -7,6 +7,14 @@ penyesuaian bertanggal — hari yang sudah ditutup tidak pernah diedit.
 
 Desain: lihat artifact **Rekonsiliasi Harian BRI–OTOMAX** & **Cetak Biru Rekonsiliasi**.
 
+## Struktur Kode
+
+Penjelasan lengkap struktur apps, alur pipeline rekonsiliasi, dan aturan bisnis yang
+tidak jelas dari nama fungsi (mis. kenapa netting REV pakai `ref_core`, apa itu
+`PENDING_SETTLE`) ada di **[ARCHITECTURE.md](ARCHITECTURE.md)**. Konvensi menulis
+kode & cara menambah fitur (parser bank baru, halaman dashboard baru, dll) ada di
+**[CONTRIBUTING.md](CONTRIBUTING.md)**.
+
 ## Stack
 
 Django 5 · Postgres 16 (pg_trgm) · HTMX + Alpine + Tailwind (CLI standalone, tanpa Node)
