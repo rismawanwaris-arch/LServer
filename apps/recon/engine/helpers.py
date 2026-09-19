@@ -1,0 +1,71 @@
+"""Helper bersama mesin pencocokan: statistik hasil run, status "masih terbuka",
+penanda status, dan pembuatan Discrepancy. Tidak bergantung pada submodule lain."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from decimal import Decimal
+
+from apps.core.enums import MatchStatus, MatchType
+
+from ..models import Discrepancy, Match
+
+ZERO = Decimal("0.00")
+
+# Status yang dianggap "masih terbuka" untuk keperluan pencocokan/netting/carry-forward.
+# PENDING_SETTLE diperlakukan sama seperti UNMATCHED karena keduanya berarti "belum ada
+# pasangan aktif" — beda dari MATCHED/MANUAL/IGNORED yang statusnya sudah final.
+_OPEN_STATUSES = [MatchStatus.UNMATCHED, MatchStatus.PENDING_SETTLE]
+
+
+@dataclass
+class RunStats:
+    matched: int = 0
+    discrepancies: int = 0
+    netted: int = 0
+
+    def merge(self, other: RunStats):
+        self.matched += other.matched
+        self.discrepancies += other.discrepancies
+        self.netted += other.netted
+
+
+def _mark(obj, status=MatchStatus.MATCHED):
+    obj.match_status = status
+    obj.save(update_fields=["match_status"])
+
+
+def _persist_match(book_date, channel, bank, otomax, mtype, note=""):
+    Match.objects.create(
+        book_date=book_date,
+        channel=channel,
+        bank_mutation=bank,
+        otomax_entry=otomax,
+        match_type=mtype,
+        amount_bank=bank.amount,
+        amount_otomax=otomax.amount,
+        confidence=getattr(otomax, "_fuzzy_score", None),
+        note=note,
+    )
+    if mtype != MatchType.AGGREGATE:
+        _mark(bank)
+        _mark(otomax)
+
+
+def _next_code(book_date) -> str:
+    prefix = f"SLS-{book_date:%Y%m%d}-"
+    n = Discrepancy.objects.filter(code__startswith=prefix).count() + 1
+    return f"{prefix}{n:03d}"
+
+
+def _make_discrepancy(book_date, channel, kind, *, amount, bank=None, otomax=None, note=""):
+    return Discrepancy.objects.create(
+        code=_next_code(book_date),
+        origin_book_date=book_date,
+        channel=channel,
+        kind=kind,
+        amount=amount,
+        bank_mutation=bank,
+        otomax_entry=otomax,
+        note=note,
+    )
