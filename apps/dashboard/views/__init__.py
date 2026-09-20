@@ -5,6 +5,7 @@ apps/dashboard/urls.py tidak perlu berubah sama sekali."""
 
 from __future__ import annotations
 
+from .app_settings import app_settings_view, update_app_settings_action
 from .data_admin import data_admin, purge_all_view, purge_day_view
 from .day import day_view
 from .engine_control import close_view, reopen_view, resolve_view, run_engine
@@ -29,6 +30,7 @@ from .upload import delete_batch_action, upload, upload_view
 
 __all__ = [
     "add_exclusion_rule_action",
+    "app_settings_view",
     "apply_exclusion_rules_action",
     "bulk_manual_match_action",
     "close_view",
@@ -52,6 +54,7 @@ __all__ = [
     "run_engine",
     "toggle_exclusion_rule_action",
     "unpair_match_action",
+    "update_app_settings_action",
     "upload",
     "upload_view",
 ]

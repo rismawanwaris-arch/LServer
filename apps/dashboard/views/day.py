@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import render
 
 from apps.core.enums import Channel
+from apps.core.models import AppSettings
 from apps.core.period import business_month_range
 from apps.recon.models import Adjustment, Discrepancy
 from apps.recon.reports import get_daily_summary
@@ -27,7 +27,7 @@ def day_view(request):
     ctx["summary"] = get_daily_summary(book_date)
     ctx["alarms"] = alarm_discrepancies(today=book_date)
     ctx["alarms_this_period"] = alarm_discrepancies_this_period(today=book_date)
-    ctx["business_month_range"] = business_month_range(book_date, settings.BUSINESS_MONTH_START_DAY)
+    ctx["business_month_range"] = business_month_range(book_date, AppSettings.load().business_month_start_day)
     ctx["cumulative_open"] = cumulative_open_total()
     ctx["channels"] = Channel.choices
     day = ctx["day"]

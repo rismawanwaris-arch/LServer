@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Pengaturan Aplikasi — RekonMutasi{% endblock %}
+{% block content %}
+<div class="mb-6">
+  <h1 class="font-serif text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Pengaturan Aplikasi</h1>
+  <p class="text-sm text-slate-500 mt-1">Konfigurasi yang bisa diubah langsung dari sini, tanpa perlu redeploy.</p>
+</div>
+
+<div class="card max-w-lg p-6">
+  <h2 class="mb-1 text-base font-semibold text-slate-900 dark:text-white">Siklus Bulan Bisnis</h2>
+  <p class="mb-4 text-sm text-slate-500 dark:text-slate-400">
+    Dipakai tombol <b>"1 Bulan Berjalan"</b> di kotak Alarm SLA Dashboard. Bukan cuma kalender
+    tanggal 1–31 — bisa disesuaikan dengan siklus tagihan reseller Anda.
+  </p>
+
+  <form method="post" action="{% url 'update-app-settings' %}" class="space-y-4">
+    {% csrf_token %}
+    <label class="block text-sm">
+      <span class="mb-1.5 block font-medium text-slate-700 dark:text-slate-300">Tanggal mulai siklus (1–31)</span>
+      <input type="number" name="business_month_start_day" min="1" max="31" required
+             value="{{ settings.business_month_start_day }}"
+             class="w-32 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm shadow-xs focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-900 dark:text-white">
+    </label>
+    <p class="text-xs text-slate-500 dark:text-slate-400">
+      Contoh: isi <b>29</b> supaya siklus berjalan dari tanggal 29 sampai tanggal 28 bulan berikutnya.
+      Isi <b>1</b> untuk kembali ke kalender biasa.
+    </p>
+
+    <div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
+      Dengan pengaturan saat ini, siklus bulan berjalan hari ini:
+      <b>{{ preview_range.0|date:"d M Y" }} – {{ preview_range.1|date:"d M Y" }}</b>
+    </div>
+
+    <button type="submit" class="btn-primary">Simpan Pengaturan</button>
+  </form>
+</div>
+{% endblock %}

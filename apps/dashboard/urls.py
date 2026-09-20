@@ -38,6 +38,9 @@ urlpatterns = [
     path("data/", views.data_admin, name="data-admin"),
     path("data/purge-day/", views.purge_day_view, name="purge-day"),
     path("data/purge-all/", views.purge_all_view, name="purge-all"),
+    # Pengaturan Aplikasi
+    path("pengaturan/", views.app_settings_view, name="app-settings"),
+    path("pengaturan/simpan/", views.update_app_settings_action, name="update-app-settings"),
     # Auth
     path("login/", auth_views.LoginView.as_view(template_name="dashboard/login.html"), name="login"),
     path("logout/", auth_views.LogoutView.as_view(next_page="login"), name="logout"),
