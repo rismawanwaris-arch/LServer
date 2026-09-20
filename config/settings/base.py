@@ -94,3 +94,6 @@ MATCH_AMOUNT_TOLERANCE = 0
 MATCH_FUZZY_THRESHOLD = 82
 # Umur (hari) sebuah discrepancy OPEN sebelum jadi alarm merah.
 DISCREPANCY_ALARM_DAYS = 2
+# Tanggal mulai siklus "bulan bisnis" (1-31). 1 = kalender biasa. Contoh: 29 -> siklus
+# tgl 29 bulan lalu s/d 28 bulan ini. Dipakai utk expand alarm SLA per periode berjalan.
+BUSINESS_MONTH_START_DAY = env.int("BUSINESS_MONTH_START_DAY", 1)

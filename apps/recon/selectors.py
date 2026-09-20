@@ -7,6 +7,7 @@ from django.db.models import Sum
 from django.utils import timezone
 
 from apps.core.enums import DiscrepancyStatus
+from apps.core.period import business_month_range
 
 from .close import compute_totals
 from .models import Discrepancy, Match, ReconDay
@@ -53,6 +54,19 @@ def alarm_discrepancies(today: date | None = None):
     return Discrepancy.objects.filter(status=DiscrepancyStatus.OPEN, origin_book_date__lte=cutoff).order_by(
         "origin_book_date"
     )
+
+
+def alarm_discrepancies_this_period(today: date | None = None):
+    """Sama seperti alarm_discrepancies(), dibatasi ke siklus bulan bisnis berjalan
+    (settings.BUSINESS_MONTH_START_DAY) — dipakai saat expand "Lihat 1 bulan"."""
+    today = today or timezone.localdate()
+    cutoff = today - timedelta(days=settings.DISCREPANCY_ALARM_DAYS)
+    period_start, _period_end = business_month_range(today, settings.BUSINESS_MONTH_START_DAY)
+    return Discrepancy.objects.filter(
+        status=DiscrepancyStatus.OPEN,
+        origin_book_date__lte=cutoff,
+        origin_book_date__gte=period_start,
+    ).order_by("origin_book_date")
 
 
 def cumulative_open_total():

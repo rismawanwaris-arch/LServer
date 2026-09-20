@@ -57,17 +57,39 @@
     </div>
   </div>
 
-  <details class="mt-3 border-t border-rose-200 pt-2 dark:border-rose-900/40">
+  <details class="mt-3 border-t border-rose-200 pt-2 dark:border-rose-900/40" x-data="{ viewMode: 'top10' }">
     <summary class="cursor-pointer text-xs font-medium text-rose-700 dark:text-rose-300 hover:underline">
-      Lihat Rincian Selisih Melewati Batas Waktu (Maks 10 Teratas)
+      Lihat Rincian Selisih Melewati Batas Waktu
     </summary>
-    <ul class="mt-2 text-xs text-rose-800 dark:text-rose-300 space-y-1 pl-2">
+
+    <div class="mt-2 flex flex-wrap items-center gap-2">
+      <button type="button" @click="viewMode = 'top10'"
+              :class="viewMode === 'top10' ? 'bg-rose-600 text-white' : 'bg-white text-rose-700 border border-rose-300 dark:bg-slate-800 dark:border-rose-800 dark:text-rose-300'"
+              class="rounded-lg px-2.5 py-1 text-xs font-semibold transition">
+        10 Terlama
+      </button>
+      <button type="button" @click="viewMode = 'period'"
+              :class="viewMode === 'period' ? 'bg-rose-600 text-white' : 'bg-white text-rose-700 border border-rose-300 dark:bg-slate-800 dark:border-rose-800 dark:text-rose-300'"
+              class="rounded-lg px-2.5 py-1 text-xs font-semibold transition">
+        1 Bulan Berjalan ({{ business_month_range.0|date:"d M" }}–{{ business_month_range.1|date:"d M Y" }}) · {{ alarms_this_period|length }}
+      </button>
+    </div>
+
+    <ul x-show="viewMode === 'top10'" class="mt-2 text-xs text-rose-800 dark:text-rose-300 space-y-1 pl-2">
       {% for a in alarms|slice:":10" %}
       <li>• <span class="font-mono font-semibold">{{ a.code }}</span> ({{ a.origin_book_date|date:"d M Y" }}) {{ a.channel }} — <b>Rp {{ a.amount|rupiah }}</b></li>
       {% endfor %}
       {% if alarms|length > 10 %}
-      <li class="italic text-slate-500 dark:text-slate-400">... dan {{ alarms|length|add:"-10" }} selisih lainnya. Buka halaman Review Manual untuk memproses.</li>
+      <li class="italic text-slate-500 dark:text-slate-400">... dan {{ alarms|length|add:"-10" }} selisih lainnya di luar 10 terlama. Buka halaman Review Manual untuk memproses.</li>
       {% endif %}
+    </ul>
+
+    <ul x-show="viewMode === 'period'" style="display: none;" class="mt-2 max-h-80 overflow-y-auto text-xs text-rose-800 dark:text-rose-300 space-y-1 pl-2">
+      {% for a in alarms_this_period %}
+      <li>• <span class="font-mono font-semibold">{{ a.code }}</span> ({{ a.origin_book_date|date:"d M Y" }}) {{ a.channel }} — <b>Rp {{ a.amount|rupiah }}</b></li>
+      {% empty %}
+      <li class="italic text-slate-500 dark:text-slate-400">Tidak ada selisih melewati batas waktu dalam siklus bulan berjalan ini.</li>
+      {% endfor %}
     </ul>
   </details>
 </div>

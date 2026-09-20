@@ -5,9 +5,9 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.test import Client
 
-from apps.core.enums import Channel, ManualTag, MatchStatus
+from apps.core.enums import Channel, DiscrepancyKind, ManualTag, MatchStatus
 from apps.ingest.models import BankMutation, ImportBatch, OtomaxEntry
-from apps.recon.models import Match, ReconDay
+from apps.recon.models import Discrepancy, Match, ReconDay
 
 User = get_user_model()
 
@@ -25,6 +25,43 @@ def test_dashboard_day_view(auth_client):
     res = auth_client.get("/")
     assert res.status_code == 200
     assert "Rekonsiliasi" in res.content.decode()
+
+
+@pytest.mark.django_db
+def test_dashboard_day_view_alarm_expand_scoped_to_business_month(auth_client, settings):
+    """Kotak Alarm SLA: "10 Terlama" tetap lihat semua selisih basi, tapi expand
+    "1 Bulan Berjalan" cuma yang origin_book_date-nya masuk siklus bulan bisnis
+    berjalan (BUSINESS_MONTH_START_DAY)."""
+    settings.BUSINESS_MONTH_START_DAY = 29
+    today = date(2026, 9, 20)  # siklus berjalan: 29 Agu - 28 Sep
+
+    in_period = Discrepancy.objects.create(
+        code="SLS-IN-PERIOD",
+        origin_book_date=date(2026, 9, 1),
+        channel=Channel.BRI,
+        kind=DiscrepancyKind.BANK_ONLY,
+        amount=Decimal("100000"),
+    )
+    out_of_period = Discrepancy.objects.create(
+        code="SLS-OUT-PERIOD",
+        origin_book_date=date(2026, 7, 1),
+        channel=Channel.BRI,
+        kind=DiscrepancyKind.BANK_ONLY,
+        amount=Decimal("200000"),
+    )
+
+    res = auth_client.get(f"/?d={today.isoformat()}")
+    assert res.status_code == 200
+    content = res.content.decode()
+
+    # Keduanya basi (jauh lebih dari DISCREPANCY_ALARM_DAYS) -> muncul di "10 Terlama".
+    assert in_period.code in content
+    assert out_of_period.code in content
+
+    # Cuma yang di dalam siklus 29 Agu-28 Sep yang ada di alarms_this_period.
+    assert res.context["alarms_this_period"].filter(pk=in_period.pk).exists()
+    assert not res.context["alarms_this_period"].filter(pk=out_of_period.pk).exists()
+    assert res.context["business_month_range"] == (date(2026, 8, 29), date(2026, 9, 28))
 
 
 @pytest.mark.django_db
