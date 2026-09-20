@@ -691,3 +691,44 @@ def test_unpair_aggregate_match_frees_all_group_members():
     m.refresh_from_db()
     assert m.voided_at is not None
 
+
+@pytest.mark.django_db
+def test_qris_matches_otomax_entry_left_pending_settle_by_earlier_cleanup():
+    """Entri Otomax QRIS yang statusnya PENDING_SETTLE (mis. sisa dari unpair_match
+    atau leftover harian) harus tetap terlihat oleh _match_qris, bukan cuma UNMATCHED —
+    sama seperti sudah dibenarkan untuk BRI/BCA/Mandiri & netting REV."""
+    r = Reseller.objects.create(code="ASBER2", name="Asber 2")
+    b = BankMutation.objects.create(
+        import_batch=_batch(Channel.MERCHANT_BCA),
+        channel=Channel.MERCHANT_BCA,
+        book_date=BD,
+        description_raw="QRIS ASBER 2 CELL 004767942",
+        ref_normalized="QRIS",
+        outlet_name="ASBER 2 CELL",
+        amount=Decimal("3000000"),
+        external_ref="004767942",
+        row_hash="qb_asber2",
+    )
+    o = OtomaxEntry.objects.create(
+        import_batch=_batch(Channel.OTOMAX),
+        book_date=BD,
+        reseller_name_raw="PLC ASBER2",
+        reseller=r,
+        amount=Decimal("3000000"),
+        description_raw="TARTUN QR BULK TGL 05-SEP-2026",
+        category=OtomaxCategory.TOPUP_TARTUN,
+        channel_hint=Channel.MERCHANT_BCA,
+        ref_normalized="TARTUN",
+        row_hash="oto_asber2",
+        match_status=MatchStatus.PENDING_SETTLE,
+    )
+    stats = run_match(BD)
+    assert stats.matched == 1
+
+    b.refresh_from_db()
+    o.refresh_from_db()
+    assert b.match_status == MatchStatus.MATCHED
+    assert o.match_status == MatchStatus.MATCHED
+    m = Match.objects.get(bank_mutation=b, voided_at__isnull=True)
+    assert m.otomax_entry_id == o.id
+

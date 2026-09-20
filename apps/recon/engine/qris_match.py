@@ -17,7 +17,7 @@ from apps.core.enums import Channel, DiscrepancyKind, MatchStatus, MatchType, Ot
 from apps.ingest.models import BankMutation, OtomaxEntry
 
 from ..models import Match
-from .helpers import ZERO, RunStats, _make_discrepancy, _mark
+from .helpers import _OPEN_STATUSES, ZERO, RunStats, _make_discrepancy, _mark
 from .ref_match import _open_bank
 
 _ALIASES = {
@@ -136,7 +136,7 @@ def _match_qris(book_date: date) -> RunStats:
     d_str_short = book_date.strftime("%d-%b").upper()
 
     oto_candidates = list(
-        OtomaxEntry.objects.filter(match_status=MatchStatus.UNMATCHED)
+        OtomaxEntry.objects.filter(match_status__in=_OPEN_STATUSES)
         .exclude(category=OtomaxCategory.ADMIN)
         .filter(
             models.Q(channel_hint=Channel.MERCHANT_BCA)
