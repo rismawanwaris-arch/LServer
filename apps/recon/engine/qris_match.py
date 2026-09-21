@@ -236,8 +236,14 @@ def _match_qris(book_date: date) -> RunStats:
             grp["used"] = True
             unmatched_banks.remove(b)
 
-    # Pass 4: Bank yang belum cocok tetap UNMATCHED (bukan IGNORED) + catat diskrepansi BANK_ONLY
+    # Pass 4: Bank yang belum cocok tetap UNMATCHED (bukan IGNORED) + catat diskrepansi BANK_ONLY.
+    # Jaga idempoten: kalau "Jalankan Matching Engine" diklik ulang untuk book_date yang sama dan
+    # baris ini MASIH belum ketemu pasangan, jangan buat Discrepancy kedua untuk bank_mutation yang
+    # sama (dulu tidak dijaga -> menumpuk jadi 2+ Discrepancy OPEN untuk 1 mutasi bank, lalu meledak
+    # jadi IntegrityError di carry_forward hari berikutnya karena keduanya coba dipasangkan lagi).
     for b in unmatched_banks:
+        if b.discrepancies.exists():
+            continue
         _make_discrepancy(
             book_date,
             Channel.MERCHANT_BCA,
@@ -248,12 +254,15 @@ def _match_qris(book_date: date) -> RunStats:
         )
         stats.discrepancies += 1
 
-    # Otomax tartun bulk yang belum cocok untuk book_date ini -> PENDING_SETTLE
+    # Otomax tartun bulk yang belum cocok untuk book_date ini -> PENDING_SETTLE (guard idempoten
+    # yang sama seperti Pass 4 di atas, untuk sisi Otomax-nya).
     for grp in otomax_groups.values():
         if not grp["used"]:
             for o in grp["rows"]:
                 if o.book_date == book_date or d_str in (o.description_raw or "").upper():
                     _mark(o, MatchStatus.PENDING_SETTLE)
+                    if o.discrepancies.exists():
+                        continue
                     _make_discrepancy(
                         book_date,
                         Channel.MERCHANT_BCA,

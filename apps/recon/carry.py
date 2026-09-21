@@ -37,6 +37,13 @@ _OTOMAX_OPEN_STATUSES = [MatchStatus.UNMATCHED, MatchStatus.PENDING_SETTLE]
 
 
 def _find_otomax_for(bank: BankMutation, book_date: date) -> Match | None:
+    # Cek status terbaru langsung dari DB, bukan percaya field di objek Python `bank` yang
+    # mungkin sudah basi (mis. kalau ada dua Discrepancy duplikat menunjuk bank_mutation yang
+    # sama - baris ini bisa saja SUDAH dipasangkan oleh iterasi lain dalam loop carry_forward
+    # yang sama). Tanpa cek ini, Match.objects.create() di bawah bisa bentrok dengan constraint
+    # uniq_active_bank_match dan bikin seluruh "Jalankan Matching Engine" gagal 500.
+    if not BankMutation.objects.filter(pk=bank.pk, match_status=MatchStatus.UNMATCHED).exists():
+        return None
     o = (
         OtomaxEntry.objects.filter(
             book_date=book_date,
@@ -67,6 +74,9 @@ def _find_otomax_for(bank: BankMutation, book_date: date) -> Match | None:
 
 
 def _find_bank_for(otomax: OtomaxEntry, book_date: date) -> Match | None:
+    # Lihat catatan di _find_otomax_for soal kenapa ini harus dicek fresh dari DB.
+    if not OtomaxEntry.objects.filter(pk=otomax.pk, match_status__in=_OTOMAX_OPEN_STATUSES).exists():
+        return None
     channel = otomax.channel_hint or Channel.BRI
     b = (
         BankMutation.objects.filter(

@@ -182,6 +182,99 @@ def test_carry_forward_resolves_and_posts_adjustment():
 
 
 @pytest.mark.django_db
+def test_rerunning_qris_match_does_not_duplicate_discrepancy_for_same_bank_row():
+    """Reproduksi bug: klik 'Jalankan Matching Engine' berkali-kali untuk book_date yang
+    sama, padahal mutasi QRIS-nya tetap tidak ketemu pasangan -> Pass 4 dulu bikin
+    Discrepancy BANK_ONLY baru SETIAP kali dijalankan (tanpa cek sudah ada atau belum),
+    sehingga satu bank_mutation bisa punya 2+ Discrepancy OPEN. carry_forward di hari
+    berikutnya lalu coba pasangkan keduanya -> Match kedua bentrok dengan unique
+    constraint uniq_active_bank_match -> 500."""
+    BankMutation.objects.create(
+        import_batch=_batch(Channel.MERCHANT_BCA),
+        channel=Channel.MERCHANT_BCA,
+        book_date=BD,
+        description_raw="QRIS TIDAK ADA PASANGAN SAMA SEKALI",
+        ref_normalized="QRIS",
+        amount=Decimal("777000"),
+        external_ref="000000000",
+        row_hash="qris-no-pair",
+    )
+    run_match(BD)
+    run_match(BD)  # klik "Jalankan Matching Engine" lagi
+    assert Discrepancy.objects.filter(kind="BANK_ONLY").count() == 1
+
+
+@pytest.mark.django_db
+def test_rerunning_qris_match_does_not_duplicate_discrepancy_for_same_otomax_row():
+    r = Reseller.objects.create(code="NOPAIR", name="Tanpa Pasangan")
+    _otomax(
+        "TARTUN QR BULK TGL 05-SEP-2026",
+        "555000",
+        channel=Channel.MERCHANT_BCA,
+        reseller=r,
+    )
+    run_match(BD)
+    run_match(BD)
+    assert Discrepancy.objects.filter(kind="OTOMAX_ONLY").count() == 1
+
+
+@pytest.mark.django_db
+def test_carry_forward_skips_duplicate_discrepancy_instead_of_crashing():
+    """Kalau data lama SUDAH kadung punya 2 Discrepancy OPEN yang menunjuk bank_mutation
+    yang sama (dari bug di atas, sebelum diperbaiki), carry_forward tidak boleh crash
+    IntegrityError -- cukup pasangkan salah satu, biarkan duplikatnya tetap OPEN untuk
+    ditinjau/dihapusbukukan manual."""
+    bank = _bank("DANA20260905034895588601ASEPKURNIAWA", "1600000")
+    disc1 = Discrepancy.objects.create(
+        code="SLS-DUP-001",
+        origin_book_date=BD,
+        channel=Channel.BRI,
+        kind="BANK_ONLY",
+        bank_mutation=bank,
+        amount=bank.amount,
+    )
+    disc2 = Discrepancy.objects.create(
+        code="SLS-DUP-002",
+        origin_book_date=BD,
+        channel=Channel.BRI,
+        kind="BANK_ONLY",
+        bank_mutation=bank,
+        amount=bank.amount,
+    )
+
+    bd6 = date(2026, 9, 6)
+    o1 = _otomax("TARTUN TF BRI DANA20260905034895588601ASEPKURNIAWA", "1600000", book_date=bd6)
+    # Kandidat KEDUA dengan ref & nominal identik ke o1, supaya disc2 tetap punya kandidat
+    # untuk ditemukan meski disc1 sudah lebih dulu memakai o1 -- ini yang benar-benar
+    # memicu bentrok constraint kalau _find_otomax_for tidak dijaga.
+    o2 = OtomaxEntry.objects.create(
+        import_batch=o1.import_batch,
+        book_date=bd6,
+        reseller_name_raw="X",
+        amount=Decimal("1600000"),
+        description_raw=o1.description_raw,
+        category=OtomaxCategory.TOPUP_TARTUN,
+        channel_hint=Channel.BRI,
+        ref_normalized=o1.ref_normalized,
+        ref_core=o1.ref_core,
+        row_hash=_h("o2", "dup-candidate"),
+    )
+
+    resolved = carry_forward(bd6)
+
+    assert resolved == 1
+    o1.refresh_from_db()
+    o2.refresh_from_db()
+    matched_otomax = {o1.match_status, o2.match_status}
+    assert MatchStatus.MATCHED in matched_otomax
+    disc1.refresh_from_db()
+    disc2.refresh_from_db()
+    statuses = {disc1.status, disc2.status}
+    assert statuses == {"OPEN", "RESOLVED"}
+    assert Match.objects.filter(bank_mutation=bank, voided_at__isnull=True).count() == 1
+
+
+@pytest.mark.django_db
 def test_reopen_day_when_no_downstream():
     from apps.recon.close import reopen_day
 
