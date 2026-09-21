@@ -224,7 +224,8 @@
         <thead>
           <tr>
             <th>Channel Bank</th>
-            <th class="text-right">Total Masuk</th>
+            <th class="text-right">Total Masuk (Bank)</th>
+            <th class="text-right">Total Otomax</th>
             <th class="text-right">Matched Auto</th>
             <th class="text-right">Tag Manual</th>
             <th class="text-right">Selisih Belum Di-tag</th>
@@ -235,6 +236,12 @@
           <tr>
             <td class="font-semibold text-slate-800 dark:text-slate-200">{{ ch }}</td>
             <td class="money text-right">Rp {{ d.total|rupiah }}</td>
+            <td class="money text-right text-purple-600 dark:text-purple-400 font-medium">
+              Rp {{ d.otomax_total|rupiah }}
+              {% if d.otomax_count > 0 %}
+              <span class="text-[11px] font-normal text-slate-400">({{ d.otomax_count }})</span>
+              {% endif %}
+            </td>
             <td class="money text-right text-emerald-600 font-medium">Rp {{ d.matched_auto|rupiah }}</td>
             <td class="money text-right text-slate-600">Rp {{ d.matched_manual|rupiah }}</td>
             <td class="money text-right font-semibold {% if d.unmatched > 0 %}text-amber-600{% else %}text-slate-400{% endif %}">
@@ -245,9 +252,27 @@
             </td>
           </tr>
           {% endfor %}
+          {% if summary.otomax_lain_lain.otomax_count > 0 %}
+          <tr class="bg-slate-50/60 dark:bg-slate-800/40">
+            <td class="font-semibold text-slate-500 dark:text-slate-400 italic">Lain-lain (Tanpa Channel)</td>
+            <td class="money text-right text-slate-400">—</td>
+            <td class="money text-right text-purple-600 dark:text-purple-400 font-medium">
+              Rp {{ summary.otomax_lain_lain.otomax_total|rupiah }}
+              <span class="text-[11px] font-normal text-slate-400">({{ summary.otomax_lain_lain.otomax_count }})</span>
+            </td>
+            <td class="text-right text-slate-400">—</td>
+            <td class="text-right text-slate-400">—</td>
+            <td class="text-right text-slate-400">—</td>
+          </tr>
+          {% endif %}
         </tbody>
       </table>
     </div>
+    {% if summary.otomax_lain_lain.otomax_count > 0 %}
+    <p class="text-[11px] text-slate-400 mt-2">
+      "Lain-lain" = entri Otomax tanpa keterangan channel bank yang jelas (mis. biaya admin, setor/ambil setoran) — tidak masuk kategori BRI/BCA/Mandiri/Merchant BCA manapun.
+    </p>
+    {% endif %}
   </div>
 </div>
 

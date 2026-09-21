@@ -19,12 +19,40 @@ from .models import Match, ReconDay
 ZERO = Decimal("0.00")
 
 
+def _per_bank_breakdown(bank_qs, otomax_all_qs) -> tuple[dict, dict]:
+    """Rekapitulasi per channel bank, DITAMBAH sisi Otomax (semua kategori, bukan cuma
+    TOPUP_TARTUN) yang channel_hint-nya cocok dengan channel bank itu. Entri Otomax tanpa
+    channel_hint (mis. ADMIN, STOR_IN/STOR_OUT) tidak masuk channel manapun — supaya tidak
+    "hilang" dari rekap, dikumpulkan terpisah sebagai bucket lain_lain."""
+    per_bank = {}
+    for ch in BANK_CHANNELS:
+        ch_mut = bank_qs.filter(channel=ch)
+        ch_otomax = otomax_all_qs.filter(channel_hint=ch)
+        per_bank[ch] = {
+            "total": ch_mut.aggregate(s=Sum("amount"))["s"] or ZERO,
+            "matched_auto": ch_mut.filter(match_status=MatchStatus.MATCHED).aggregate(s=Sum("amount"))["s"] or ZERO,
+            "matched_manual": ch_mut.filter(match_status=MatchStatus.MANUAL).aggregate(s=Sum("amount"))["s"] or ZERO,
+            "unmatched": ch_mut.filter(match_status=MatchStatus.UNMATCHED).aggregate(s=Sum("amount"))["s"] or ZERO,
+            "unmatched_count": ch_mut.filter(match_status=MatchStatus.UNMATCHED).count(),
+            "otomax_total": ch_otomax.aggregate(s=Sum("amount"))["s"] or ZERO,
+            "otomax_count": ch_otomax.count(),
+        }
+
+    otomax_lain_lain = otomax_all_qs.exclude(channel_hint__in=BANK_CHANNELS)
+    lain_lain = {
+        "otomax_total": otomax_lain_lain.aggregate(s=Sum("amount"))["s"] or ZERO,
+        "otomax_count": otomax_lain_lain.count(),
+    }
+    return per_bank, lain_lain
+
+
 def get_daily_summary(book_date: date) -> dict:
     """Ringkasan rekonsiliasi harian."""
     bank_qs = BankMutation.objects.filter(book_date=book_date)
     otomax_qs = OtomaxEntry.objects.filter(book_date=book_date, category=OtomaxCategory.TOPUP_TARTUN).exclude(
         match_status=MatchStatus.IGNORED
     )
+    otomax_all_qs = OtomaxEntry.objects.filter(book_date=book_date).exclude(match_status=MatchStatus.IGNORED)
 
     total_bank = bank_qs.filter(amount__gt=0).aggregate(s=Sum("amount"))["s"] or ZERO
     total_otomax = otomax_qs.aggregate(s=Sum("amount"))["s"] or ZERO
@@ -47,16 +75,7 @@ def get_daily_summary(book_date: date) -> dict:
 
     day = ReconDay.objects.filter(book_date=book_date).first()
 
-    per_bank = {}
-    for ch in BANK_CHANNELS:
-        ch_mut = bank_qs.filter(channel=ch)
-        per_bank[ch] = {
-            "total": ch_mut.aggregate(s=Sum("amount"))["s"] or ZERO,
-            "matched_auto": ch_mut.filter(match_status=MatchStatus.MATCHED).aggregate(s=Sum("amount"))["s"] or ZERO,
-            "matched_manual": ch_mut.filter(match_status=MatchStatus.MANUAL).aggregate(s=Sum("amount"))["s"] or ZERO,
-            "unmatched": ch_mut.filter(match_status=MatchStatus.UNMATCHED).aggregate(s=Sum("amount"))["s"] or ZERO,
-            "unmatched_count": ch_mut.filter(match_status=MatchStatus.UNMATCHED).count(),
-        }
+    per_bank, otomax_lain_lain = _per_bank_breakdown(bank_qs, otomax_all_qs)
 
     return {
         "book_date": book_date,
@@ -74,6 +93,7 @@ def get_daily_summary(book_date: date) -> dict:
         "pending_settle_count": pending_settle.count(),
         "pending_settle_amount": pending_settle_amount,
         "per_bank": per_bank,
+        "otomax_lain_lain": otomax_lain_lain,
     }
 
 
@@ -84,6 +104,9 @@ def get_range_summary(start_date: date, end_date: date) -> dict:
         book_date__range=(start_date, end_date),
         category=OtomaxCategory.TOPUP_TARTUN,
     ).exclude(match_status=MatchStatus.IGNORED)
+    otomax_all_qs = OtomaxEntry.objects.filter(book_date__range=(start_date, end_date)).exclude(
+        match_status=MatchStatus.IGNORED
+    )
 
     total_bank = bank_qs.filter(amount__gt=0).aggregate(s=Sum("amount"))["s"] or ZERO
     total_otomax = otomax_qs.aggregate(s=Sum("amount"))["s"] or ZERO
@@ -102,16 +125,7 @@ def get_range_summary(start_date: date, end_date: date) -> dict:
     # Lihat catatan yang sama di get_daily_summary soal kenapa selisih riil bukan total_bank - total_otomax.
     selisih = unmatched_bank_amount - pending_settle_amount
 
-    per_bank = {}
-    for ch in BANK_CHANNELS:
-        ch_mut = bank_qs.filter(channel=ch)
-        per_bank[ch] = {
-            "total": ch_mut.aggregate(s=Sum("amount"))["s"] or ZERO,
-            "matched_auto": ch_mut.filter(match_status=MatchStatus.MATCHED).aggregate(s=Sum("amount"))["s"] or ZERO,
-            "matched_manual": ch_mut.filter(match_status=MatchStatus.MANUAL).aggregate(s=Sum("amount"))["s"] or ZERO,
-            "unmatched": ch_mut.filter(match_status=MatchStatus.UNMATCHED).aggregate(s=Sum("amount"))["s"] or ZERO,
-            "unmatched_count": ch_mut.filter(match_status=MatchStatus.UNMATCHED).count(),
-        }
+    per_bank, otomax_lain_lain = _per_bank_breakdown(bank_qs, otomax_all_qs)
 
     return {
         "start_date": start_date,
@@ -128,6 +142,7 @@ def get_range_summary(start_date: date, end_date: date) -> dict:
         "pending_settle_count": pending_settle.count(),
         "pending_settle_amount": pending_settle_amount,
         "per_bank": per_bank,
+        "otomax_lain_lain": otomax_lain_lain,
     }
 
 
@@ -203,6 +218,7 @@ def generate_excel_report(start_date: date, end_date: date) -> bytes:
     bank_headers = [
         "Bank / Channel",
         "Total Masuk (Rp)",
+        "Total Otomax (Rp)",
         "Matched Auto (Rp)",
         "Matched Manual (Rp)",
         "Selisih Unmatched (Rp)",
@@ -218,11 +234,23 @@ def generate_excel_report(start_date: date, end_date: date) -> bytes:
     for ch, data in summary["per_bank"].items():
         ws_summary.cell(row=curr_r, column=1, value=ch).font = bold_font
         ws_summary.cell(row=curr_r, column=2, value=float(data["total"])).number_format = money_format
-        ws_summary.cell(row=curr_r, column=3, value=float(data["matched_auto"])).number_format = money_format
-        ws_summary.cell(row=curr_r, column=4, value=float(data["matched_manual"])).number_format = money_format
-        ws_summary.cell(row=curr_r, column=5, value=float(data["unmatched"])).number_format = money_format
-        ws_summary.cell(row=curr_r, column=6, value=data["unmatched_count"]).alignment = Alignment(horizontal="center")
-        for c in range(1, 7):
+        ws_summary.cell(row=curr_r, column=3, value=float(data["otomax_total"])).number_format = money_format
+        ws_summary.cell(row=curr_r, column=4, value=float(data["matched_auto"])).number_format = money_format
+        ws_summary.cell(row=curr_r, column=5, value=float(data["matched_manual"])).number_format = money_format
+        ws_summary.cell(row=curr_r, column=6, value=float(data["unmatched"])).number_format = money_format
+        ws_summary.cell(row=curr_r, column=7, value=data["unmatched_count"]).alignment = Alignment(horizontal="center")
+        for c in range(1, 8):
+            ws_summary.cell(row=curr_r, column=c).border = thin_border
+        curr_r += 1
+
+    lain_lain = summary["otomax_lain_lain"]
+    if lain_lain["otomax_count"] > 0:
+        ws_summary.cell(row=curr_r, column=1, value="Lain-lain (Tanpa Channel)").font = bold_font
+        ws_summary.cell(row=curr_r, column=3, value=float(lain_lain["otomax_total"])).number_format = money_format
+        ws_summary.cell(row=curr_r, column=7, value=lain_lain["otomax_count"]).alignment = Alignment(
+            horizontal="center"
+        )
+        for c in range(1, 8):
             ws_summary.cell(row=curr_r, column=c).border = thin_border
         curr_r += 1
 
