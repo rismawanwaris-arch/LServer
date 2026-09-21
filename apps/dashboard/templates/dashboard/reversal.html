@@ -265,6 +265,7 @@
     <table class="w-full text-sm">
       <thead>
         <tr>
+          <th class="w-8"></th>
           <th>Waktu Entri</th>
           <th>Reseller</th>
           <th>Keterangan REV</th>
@@ -273,9 +274,15 @@
           <th>Catatan</th>
         </tr>
       </thead>
-      <tbody>
+      <tbody x-data="{ open: null }">
         {% for rev in items %}
-        <tr class="hover:bg-slate-50/60 dark:hover:bg-slate-800/60 transition">
+        <tr class="cursor-pointer group hover:bg-slate-50/60 dark:hover:bg-slate-800/60 transition"
+            @click="open = (open === {{ rev.id }} ? null : {{ rev.id }})">
+          <td class="text-center text-slate-400 group-hover:text-indigo-600">
+            <svg class="h-4 w-4 transform transition-transform" :class="{ 'rotate-90': open === {{ rev.id }} }" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+          </td>
           <td class="font-mono text-xs text-slate-500 whitespace-nowrap">{{ rev.entry_datetime|date:"d M H:i"|default:rev.book_date }}</td>
           <td class="font-bold text-xs text-slate-900 dark:text-white">{{ rev.reseller_name_raw }}</td>
           <td class="font-mono text-xs text-slate-700 dark:text-slate-300 max-w-xs truncate" title="{{ rev.description_raw }}">
@@ -293,9 +300,71 @@
           </td>
           <td class="text-xs text-slate-600 dark:text-slate-300 max-w-xs truncate" title="{{ rev.note }}">{{ rev.note|default:"—" }}</td>
         </tr>
+
+        <!-- Detail lengkap, expand di klik (sama seperti Hasil Cocok) -->
+        <tr x-show="open === {{ rev.id }}" style="display: none;" class="bg-indigo-50/30 border-b border-indigo-100 dark:bg-slate-800/50 dark:border-slate-700">
+          <td colspan="7" class="p-4">
+            <div class="grid gap-4 md:grid-cols-2 rounded-xl bg-white p-4 border border-slate-200 shadow-xs dark:bg-slate-800 dark:border-slate-700 text-xs">
+              <!-- Sisi REV -->
+              <div class="space-y-2 border-r border-slate-100 dark:border-slate-700 pr-4">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                    <span class="h-2 w-2 rounded-full bg-rose-500"></span> REV (Pembatal)
+                  </span>
+                  <span class="font-mono font-bold text-slate-700 dark:text-slate-300">#{{ rev.id }}</span>
+                </div>
+                <div>
+                  <span class="text-slate-400">Keterangan Lengkap:</span>
+                  <div class="font-mono mt-0.5 p-2 rounded bg-slate-50 border border-slate-100 text-slate-800 dark:bg-slate-900 dark:border-slate-750 dark:text-slate-200 whitespace-pre-wrap break-words">
+                    {{ rev.description_raw|default:"-" }}
+                  </div>
+                </div>
+                <div class="grid grid-cols-2 gap-2 text-[11px]">
+                  <div><span class="text-slate-400">Reseller:</span> <b class="text-slate-700 dark:text-slate-300">{{ rev.reseller_name_raw }}</b></div>
+                  <div><span class="text-slate-400">Nominal:</span> <b class="money text-rose-600 dark:text-rose-400">Rp {{ rev.amount|rupiah }}</b></div>
+                  <div><span class="text-slate-400">Waktu Entri:</span> <b class="text-slate-700 dark:text-slate-300">{{ rev.entry_datetime|date:"d M Y H:i"|default:"-" }}</b></div>
+                  <div><span class="text-slate-400">Tanggal Buku:</span> <b class="text-slate-700 dark:text-slate-300">{{ rev.book_date|date:"d M Y" }}</b></div>
+                  <div class="col-span-2"><span class="text-slate-400">Ref Core:</span> <b class="font-mono text-slate-700 dark:text-slate-300">{{ rev.ref_core|default:"-" }}</b></div>
+                </div>
+              </div>
+
+              <!-- Sisi Dinetralkan Dengan -->
+              <div class="space-y-2 pl-2">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                    <span class="h-2 w-2 rounded-full bg-emerald-500"></span> Dinetralkan Dengan
+                  </span>
+                  <span class="font-mono font-bold text-slate-700 dark:text-slate-300">#{{ rev.net_pair.id|default:"-" }}</span>
+                </div>
+                {% if rev.net_pair %}
+                <div>
+                  <span class="text-slate-400">Keterangan Lengkap:</span>
+                  <div class="font-mono mt-0.5 p-2 rounded bg-slate-50 border border-slate-100 text-slate-800 dark:bg-slate-900 dark:border-slate-750 dark:text-slate-200 whitespace-pre-wrap break-words">
+                    {{ rev.net_pair.description_raw|default:"-" }}
+                  </div>
+                </div>
+                <div class="grid grid-cols-2 gap-2 text-[11px]">
+                  <div><span class="text-slate-400">Reseller:</span> <b class="text-slate-700 dark:text-slate-300">{{ rev.net_pair.reseller_name_raw }}</b></div>
+                  <div><span class="text-slate-400">Nominal:</span> <b class="money text-emerald-600 dark:text-emerald-400">Rp {{ rev.net_pair.amount|rupiah }}</b></div>
+                  <div><span class="text-slate-400">Kategori:</span> <span class="badge-mute">{{ rev.net_pair.category }}</span></div>
+                  <div><span class="text-slate-400">Tanggal Buku:</span> <b class="text-slate-700 dark:text-slate-300">{{ rev.net_pair.book_date|date:"d M Y" }}</b></div>
+                </div>
+                {% else %}
+                <p class="text-slate-400 italic">Tidak ada data pasangan (net_pair kosong).</p>
+                {% endif %}
+              </div>
+            </div>
+
+            {% if rev.note %}
+            <div class="mt-3 pt-2 text-slate-500">
+              <b>Catatan Lengkap:</b> {{ rev.note }}
+            </div>
+            {% endif %}
+          </td>
+        </tr>
         {% empty %}
         <tr>
-          <td colspan="6" class="text-center py-12 text-slate-400">
+          <td colspan="7" class="text-center py-12 text-slate-400">
             Belum ada REVERSAL yang netted{% if book_date %} untuk tanggal ini{% endif %}.
           </td>
         </tr>
