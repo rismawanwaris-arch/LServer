@@ -163,15 +163,10 @@
 <div class="mb-6">
   <!-- Action Panel -->
   <div class="card max-w-md">
-    <div class="flex items-center justify-between mb-4">
-      <h2 class="font-bold text-slate-900 dark:text-white flex items-center gap-2">
-        <svg class="h-5 w-5 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-        Aksi Rekonsiliasi
-      </h2>
-      <a href="{% url 'reports' %}?start_date={{ book_date|date:'Y-m-d' }}&end_date={{ book_date|date:'Y-m-d' }}" class="text-xs text-indigo-600 hover:underline whitespace-nowrap">
-        Rekapitulasi Per Bank &rarr;
-      </a>
-    </div>
+    <h2 class="font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
+      <svg class="h-5 w-5 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+      Aksi Rekonsiliasi
+    </h2>
 
     <div class="space-y-3">
       <form method="post" action="{% url 'run-engine' %}">
@@ -214,6 +209,71 @@
     </div>
     {% endif %}
   </div>
+</div>
+
+<!-- Rekap Per Bank Table: baris sendiri, TIDAK sejajar dengan Aksi Rekonsiliasi -->
+<div class="card mb-6">
+  <div class="flex items-center justify-between mb-4">
+    <h2 class="font-bold text-slate-900 dark:text-white">Rekapitulasi Per Bank</h2>
+    <a href="{% url 'reports' %}?start_date={{ book_date|date:'Y-m-d' }}&end_date={{ book_date|date:'Y-m-d' }}" class="text-xs text-indigo-600 hover:underline">
+      Laporan Lengkap &rarr;
+    </a>
+  </div>
+
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead>
+        <tr>
+          <th class="whitespace-nowrap">Channel Bank</th>
+          <th class="text-right whitespace-nowrap">Masuk Bank</th>
+          <th class="text-right whitespace-nowrap">Total Otomax</th>
+          <th class="text-right whitespace-nowrap">Matched Auto</th>
+          <th class="text-right whitespace-nowrap">Tag Manual</th>
+          <th class="text-right whitespace-nowrap">Selisih Belum Di-Tag</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ch, d in summary.per_bank.items %}
+        <tr>
+          <td class="font-semibold text-slate-800 dark:text-slate-200 whitespace-nowrap">{{ ch }}</td>
+          <td class="money text-right whitespace-nowrap">Rp {{ d.total|rupiah }}</td>
+          <td class="money text-right text-purple-600 dark:text-purple-400 font-medium whitespace-nowrap">
+            Rp {{ d.otomax_total|rupiah }}
+            {% if d.otomax_count > 0 %}
+            <span class="text-[11px] font-normal text-slate-400">({{ d.otomax_count }})</span>
+            {% endif %}
+          </td>
+          <td class="money text-right text-emerald-600 font-medium whitespace-nowrap">Rp {{ d.matched_auto|rupiah }}</td>
+          <td class="money text-right text-slate-600 whitespace-nowrap">Rp {{ d.matched_manual|rupiah }}</td>
+          <td class="money text-right font-semibold whitespace-nowrap {% if d.unmatched > 0 %}text-amber-600{% else %}text-slate-400{% endif %}">
+            Rp {{ d.unmatched|rupiah }}
+            {% if d.unmatched_count > 0 %}
+            <span class="text-[11px] font-normal text-slate-400">({{ d.unmatched_count }})</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        {% if summary.otomax_lain_lain.otomax_count > 0 %}
+        <tr class="bg-slate-50/60 dark:bg-slate-800/40">
+          <td class="font-semibold text-slate-500 dark:text-slate-400 italic whitespace-nowrap">Lain-lain (Tanpa Channel)</td>
+          <td class="money text-right text-slate-400">—</td>
+          <td class="money text-right text-purple-600 dark:text-purple-400 font-medium whitespace-nowrap">
+            Rp {{ summary.otomax_lain_lain.otomax_total|rupiah }}
+            <span class="text-[11px] font-normal text-slate-400">({{ summary.otomax_lain_lain.otomax_count }})</span>
+          </td>
+          <td class="text-right text-slate-400">—</td>
+          <td class="text-right text-slate-400">—</td>
+          <td class="text-right text-slate-400">—</td>
+        </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+  {% if summary.otomax_lain_lain.otomax_count > 0 %}
+  <p class="text-[11px] text-slate-400 mt-2">
+    "Lain-lain" = entri Otomax tanpa keterangan channel bank yang jelas (mis. biaya admin, setor/ambil setoran) — tidak masuk kategori BRI/BCA/Mandiri/Merchant BCA manapun.
+  </p>
+  {% endif %}
 </div>
 
 <!-- Selisih Discrepancies Partial -->
