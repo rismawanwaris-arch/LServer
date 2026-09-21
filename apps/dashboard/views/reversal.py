@@ -3,6 +3,7 @@ entri topup yang dibatalkannya, dan status pencocokannya (otomatis atau perlu di
 
 from __future__ import annotations
 
+from datetime import timedelta
 from decimal import Decimal
 
 from django.contrib import messages
@@ -12,7 +13,8 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
 from apps.core.enums import MatchStatus, OtomaxCategory
-from apps.ingest.models import OtomaxEntry
+from apps.ingest.models import BankMutation, OtomaxEntry
+from apps.recon.models import Match
 from apps.recon.resolve import manual_net_reversal
 
 from ._shared import _parse_date
@@ -20,13 +22,25 @@ from ._shared import _parse_date
 _OPEN_STATUSES = [MatchStatus.UNMATCHED, MatchStatus.PENDING_SETTLE]
 _MAX_CANDIDATES = 5
 _MAX_NETTED_ROWS = 300
+_BANK_CANDIDATE_WINDOW = (-2, 1)  # hari, sama seperti jendela di Pending Settle/Review Manual
 
 
-def _candidates_for_reversal(rev: OtomaxEntry) -> list[OtomaxEntry]:
+def _active_match_for(otomax_entry: OtomaxEntry) -> Match | None:
+    return (
+        Match.objects.filter(
+            models.Q(otomax_entry=otomax_entry) | models.Q(otomax_entries=otomax_entry), voided_at__isnull=True
+        )
+        .select_related("bank_mutation")
+        .first()
+    )
+
+
+def _candidates_for_reversal(rev: OtomaxEntry) -> list[tuple[OtomaxEntry, Match | None]]:
     """Kandidat entri asli yang mungkin dibatalkan REV ini. Sengaja TIDAK dibatasi ke
-    status terbuka saja — entri yang sudah MATCHED juga ditampilkan (ditandai di
-    template) supaya kelihatan kenapa auto-netting gagal (mis. originalnya sudah lanjut
-    dicocokkan ke bank duluan sebelum REV-nya diproses)."""
+    status terbuka saja — entri yang sudah MATCHED juga ditampilkan (lengkap dengan Match
+    aktifnya) supaya kelihatan kenapa auto-netting gagal (mis. originalnya sudah lanjut
+    dicocokkan ke bank duluan sebelum REV-nya diproses), dan bisa dibatalkan langsung dari
+    halaman ini kalau memang pencocokannya keliru."""
     qs = (
         OtomaxEntry.objects.filter(
             category__in=[OtomaxCategory.TOPUP_TARTUN, OtomaxCategory.REVERSAL],
@@ -45,8 +59,22 @@ def _candidates_for_reversal(rev: OtomaxEntry) -> list[OtomaxEntry]:
             return 1
         return 0
 
-    scored = sorted(qs, key=lambda o: (-score(o), o.id))
-    return scored[:_MAX_CANDIDATES]
+    scored = sorted(qs, key=lambda o: (-score(o), o.id))[:_MAX_CANDIDATES]
+    matched_statuses = (MatchStatus.MATCHED, MatchStatus.MANUAL)
+    return [(o, _active_match_for(o) if o.match_status in matched_statuses else None) for o in scored]
+
+
+def _unmatched_banks_for(rev: OtomaxEntry) -> list[BankMutation]:
+    """Mutasi bank UNMATCHED di sekitar tanggal REV ini, buat opsi 'Pencocokan Manual ke
+    Bank' kalau REV-nya ternyata bukan koreksi internal murni tapi memang ada uang bank
+    yang perlu dipasangkan langsung (mis. refund nyata dari bank)."""
+    start_d = rev.book_date + timedelta(days=_BANK_CANDIDATE_WINDOW[0])
+    end_d = rev.book_date + timedelta(days=_BANK_CANDIDATE_WINDOW[1])
+    return list(
+        BankMutation.objects.filter(
+            book_date__range=(start_d, end_d), match_status=MatchStatus.UNMATCHED
+        ).order_by("-amount")
+    )
 
 
 @login_required
@@ -72,7 +100,10 @@ def reversal_view(request):
     if tab == "netted":
         items = list(netted_qs.order_by("-updated_at")[:_MAX_NETTED_ROWS])
     else:
-        items = [(rev, _candidates_for_reversal(rev)) for rev in belum_qs.order_by("-entry_datetime")]
+        items = [
+            (rev, _candidates_for_reversal(rev), _unmatched_banks_for(rev))
+            for rev in belum_qs.order_by("-entry_datetime")
+        ]
 
     return render(
         request,

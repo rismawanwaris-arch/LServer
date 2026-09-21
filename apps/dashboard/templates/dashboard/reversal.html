@@ -62,8 +62,8 @@
 {% if tab != 'netted' %}
 <!-- Tab 1: Belum Netted, lengkap dengan kandidat pasangan -->
 <div class="space-y-4">
-  {% for rev, candidates in items %}
-  <div class="card p-0 overflow-hidden">
+  {% for rev, candidates, unmatched_banks in items %}
+  <div class="card p-0 overflow-hidden" x-data="{ openMatch: null, manualBankOpen: false }">
     <div class="flex flex-wrap items-center justify-between gap-3 p-4 bg-amber-50/60 dark:bg-amber-950/20 border-b border-amber-200 dark:border-amber-900/50">
       <div>
         <div class="flex items-center gap-2 mb-1">
@@ -83,54 +83,124 @@
     <div class="p-4">
       {% if candidates %}
       <div class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
-        Kandidat Pasangan (nominal berlawanan Rp {{ candidates.0.amount|rupiah }})
+        Kandidat Pasangan (nominal berlawanan Rp {{ candidates.0.0.amount|rupiah }})
       </div>
       <div class="space-y-2">
-        {% for c in candidates %}
-        <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 dark:border-slate-700 p-3">
-          <div class="min-w-0">
-            <div class="flex items-center gap-2 flex-wrap">
-              <span class="font-bold text-xs text-slate-900 dark:text-white">{{ c.reseller_name_raw }}</span>
-              {% if c.reseller_name_raw == rev.reseller_name_raw %}
-              <span class="badge-good text-[10px] font-bold">★ Reseller Sama</span>
-              {% else %}
-              <span class="badge-mute text-[10px]">Reseller Beda</span>
-              {% endif %}
-              {% if c.ref_core and c.ref_core == rev.ref_core %}
-              <span class="badge-good text-[10px] font-bold">★ Ref Sama ({{ c.ref_core }})</span>
-              {% endif %}
-              {% if c.match_status == 'MATCHED' %}
-              <span class="badge bg-rose-100 text-rose-800 text-[10px] font-bold">Sudah MATCHED ke Bank</span>
-              {% elif c.match_status == 'MANUAL' %}
-              <span class="badge bg-rose-100 text-rose-800 text-[10px] font-bold">Sudah Di-tag Manual</span>
-              {% else %}
-              <span class="badge-mute text-[10px]">{{ c.get_match_status_display }}</span>
-              {% endif %}
+        {% for c, active_match in candidates %}
+        <div class="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+          <div class="flex flex-wrap items-center justify-between gap-3 p-3">
+            <div class="min-w-0">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="font-bold text-xs text-slate-900 dark:text-white">{{ c.reseller_name_raw }}</span>
+                {% if c.reseller_name_raw == rev.reseller_name_raw %}
+                <span class="badge-good text-[10px] font-bold">★ Reseller Sama</span>
+                {% else %}
+                <span class="badge-mute text-[10px]">Reseller Beda</span>
+                {% endif %}
+                {% if c.ref_core and c.ref_core == rev.ref_core %}
+                <span class="badge-good text-[10px] font-bold">★ Ref Sama ({{ c.ref_core }})</span>
+                {% endif %}
+                {% if c.match_status == 'MATCHED' %}
+                <span class="badge bg-rose-100 text-rose-800 text-[10px] font-bold">Sudah MATCHED ke Bank</span>
+                {% elif c.match_status == 'MANUAL' %}
+                <span class="badge bg-rose-100 text-rose-800 text-[10px] font-bold">Sudah Di-tag Manual</span>
+                {% else %}
+                <span class="badge-mute text-[10px]">{{ c.get_match_status_display }}</span>
+                {% endif %}
+              </div>
+              <div class="font-mono text-[11px] text-slate-500 truncate mt-0.5">{{ c.description_raw }}</div>
+              <div class="text-[10px] text-slate-400 mt-0.5">
+                #{{ c.id }} &middot; {{ c.entry_datetime|date:"d M Y H:i"|default:c.book_date }}
+              </div>
             </div>
-            <div class="font-mono text-[11px] text-slate-500 truncate mt-0.5">{{ c.description_raw }}</div>
-            <div class="text-[10px] text-slate-400 mt-0.5">
-              #{{ c.id }} &middot; {{ c.entry_datetime|date:"d M Y H:i"|default:c.book_date }}
-            </div>
-          </div>
-          <div class="flex items-center gap-3 shrink-0">
-            <span class="money font-black text-sm text-emerald-600 dark:text-emerald-400">Rp {{ c.amount|rupiah }}</span>
-            {% if c.match_status == 'UNMATCHED' or c.match_status == 'PENDING_SETTLE' %}
-            <form method="post" action="{% url 'manual-net-reversal' %}">
-              {% csrf_token %}
-              <input type="hidden" name="rev_id" value="{{ rev.id }}">
-              <input type="hidden" name="original_id" value="{{ c.id }}">
-              <input type="hidden" name="book_date" value="{{ book_date }}">
-              <input type="hidden" name="next_url" value="{{ request.get_full_path }}">
-              <button type="submit"
-                      onclick="return confirm('Netralkan REV #{{ rev.id }} dengan entri #{{ c.id }}? Keduanya akan ditandai selesai (IGNORED), tanpa membuat pencocokan ke mutasi bank.');"
-                      class="btn-secondary text-xs font-bold py-1.5 px-3">
-                Netkan Manual &rarr;
+            <div class="flex items-center gap-3 shrink-0">
+              <span class="money font-black text-sm text-emerald-600 dark:text-emerald-400">Rp {{ c.amount|rupiah }}</span>
+              {% if c.match_status == 'UNMATCHED' or c.match_status == 'PENDING_SETTLE' %}
+              <form method="post" action="{% url 'manual-net-reversal' %}">
+                {% csrf_token %}
+                <input type="hidden" name="rev_id" value="{{ rev.id }}">
+                <input type="hidden" name="original_id" value="{{ c.id }}">
+                <input type="hidden" name="book_date" value="{{ book_date }}">
+                <input type="hidden" name="next_url" value="{{ request.get_full_path }}">
+                <button type="submit"
+                        onclick="return confirm('Netralkan REV #{{ rev.id }} dengan entri #{{ c.id }}? Keduanya akan ditandai selesai (IGNORED), tanpa membuat pencocokan ke mutasi bank.');"
+                        class="btn-secondary text-xs font-bold py-1.5 px-3">
+                  Netkan Manual &rarr;
+                </button>
+              </form>
+              {% elif active_match %}
+              <button type="button" @click="openMatch = (openMatch === {{ c.id }} ? null : {{ c.id }})"
+                      class="btn-ghost text-xs font-semibold py-1.5 px-3 text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 dark:hover:bg-indigo-950/40">
+                <span x-text="openMatch === {{ c.id }} ? 'Tutup Detail' : 'Lihat Pencocokan →'"></span>
               </button>
-            </form>
-            {% else %}
-            <span class="text-[11px] text-slate-400 max-w-[10rem] text-right">Batalkan pencocokan/tag-nya dulu di halaman asal sebelum bisa dinetralkan di sini.</span>
-            {% endif %}
+              {% else %}
+              <span class="text-[11px] text-slate-400 max-w-[10rem] text-right">Sudah di-tag manual tanpa pencocokan bank. Batalkan tag-nya dulu di halaman asal.</span>
+              {% endif %}
+            </div>
           </div>
+
+          {% if active_match %}
+          <!-- Detail pencocokan yang bikin kandidat ini tidak bisa langsung dinetralkan,
+               dengan opsi Batalkan Pencocokan langsung dari sini (sama seperti di Hasil Cocok). -->
+          <div x-show="openMatch === {{ c.id }}" x-cloak style="display: none;"
+               class="border-t border-slate-200 dark:border-slate-700 bg-indigo-50/30 dark:bg-slate-800/50 p-4">
+            <div class="grid gap-4 md:grid-cols-2 rounded-xl bg-white p-4 border border-slate-200 shadow-xs dark:bg-slate-800 dark:border-slate-700 text-xs">
+              <div class="space-y-2 border-r border-slate-100 dark:border-slate-700 pr-4">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                    <span class="h-2 w-2 rounded-full bg-blue-500"></span> Sisi Bank {% if active_match.channel %}({{ active_match.channel }}){% endif %}
+                  </span>
+                  <span class="font-mono font-bold text-slate-700 dark:text-slate-300">#{{ active_match.bank_mutation.id|default:"-" }}</span>
+                </div>
+                {% if active_match.bank_mutation %}
+                <div>
+                  <span class="text-slate-400">Keterangan Asli:</span>
+                  <div class="font-mono mt-0.5 p-2 rounded bg-slate-50 border border-slate-100 text-slate-800 dark:bg-slate-900 dark:border-slate-750 dark:text-slate-200">
+                    {{ active_match.bank_mutation.description_raw|default:"-" }}
+                  </div>
+                </div>
+                <div class="grid grid-cols-2 gap-2 text-[11px]">
+                  <div><span class="text-slate-400">Waktu:</span> <b class="text-slate-700 dark:text-slate-300">{{ active_match.bank_mutation.txn_datetime|date:"d M Y H:i"|default:"-" }}</b></div>
+                  <div><span class="text-slate-400">Nominal:</span> <b class="money text-slate-800 dark:text-slate-200">Rp {{ active_match.bank_mutation.amount|rupiah }}</b></div>
+                </div>
+                {% else %}
+                <p class="text-slate-400 italic">Tidak ada mutasi bank (di-tag manual tanpa pasangan bank).</p>
+                {% endif %}
+              </div>
+
+              <div class="space-y-2 pl-2">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                    <span class="h-2 w-2 rounded-full bg-purple-500"></span> Sisi Otomax
+                  </span>
+                  <span class="font-mono font-bold text-slate-700 dark:text-slate-300">#{{ c.id }}</span>
+                </div>
+                <div>
+                  <span class="text-slate-400">Keterangan Asli:</span>
+                  <div class="font-mono mt-0.5 p-2 rounded bg-slate-50 border border-slate-100 text-slate-800 dark:bg-slate-900 dark:border-slate-750 dark:text-slate-200">
+                    {{ c.description_raw|default:"-" }}
+                  </div>
+                </div>
+                <div class="grid grid-cols-2 gap-2 text-[11px]">
+                  <div><span class="text-slate-400">Reseller:</span> <b class="text-slate-800 dark:text-slate-200">{{ c.reseller_name_raw }}</b></div>
+                  <div><span class="text-slate-400">Nominal:</span> <b class="money text-slate-800 dark:text-slate-200">Rp {{ c.amount|rupiah }}</b></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-3 pt-2 flex flex-wrap items-center justify-between gap-2">
+              <div class="text-slate-500">{% if active_match.note %}<b>Catatan:</b> {{ active_match.note }}{% endif %}</div>
+              <form method="post" action="{% url 'unpair-match' active_match.id %}"
+                    onsubmit="return confirm('Batalkan pencocokan ini? Entri #{{ c.id }} akan kembali terbuka, baru bisa dinetralkan dengan REV #{{ rev.id }}.');">
+                {% csrf_token %}
+                <input type="hidden" name="next_url" value="{{ request.get_full_path }}">
+                <button type="submit" class="btn-danger py-1 px-3 text-xs font-semibold">
+                  Batalkan Pencocokan
+                </button>
+              </form>
+            </div>
+          </div>
+          {% endif %}
         </div>
         {% endfor %}
       </div>
@@ -140,6 +210,45 @@
         Kemungkinan entri aslinya belum ter-import, atau cek manual lewat Django Admin.
       </p>
       {% endif %}
+
+      <!-- Koreksi manual: kalau REV ini ternyata BUKAN koreksi internal murni (mis. memang
+           ada refund nyata dari bank), pasangkan langsung ke mutasi bank di sini. -->
+      <div class="mt-3 pt-3 border-t border-slate-100 dark:border-slate-700">
+        <button type="button" @click="manualBankOpen = !manualBankOpen"
+                class="text-xs font-semibold text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 flex items-center gap-1">
+          <svg class="h-3.5 w-3.5 transform transition-transform" :class="{ 'rotate-90': manualBankOpen }" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          REV ini salah dianggap koreksi internal? Pencocokan Manual ke Mutasi Bank
+        </button>
+        <div x-show="manualBankOpen" x-cloak style="display: none;" class="mt-2">
+          <form method="post" action="{% url 'manual-match' %}" class="flex flex-wrap items-end gap-2">
+            {% csrf_token %}
+            <input type="hidden" name="book_date" value="{{ rev.book_date|date:'Y-m-d' }}">
+            <input type="hidden" name="otomax_id" value="{{ rev.id }}">
+            <input type="hidden" name="next_url" value="{{ request.get_full_path }}">
+            <div class="flex-1 min-w-[220px]">
+              <label class="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-0.5">Pilih Mutasi Bank Lawan:</label>
+              <select name="bank_id" required class="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
+                <option value="">-- Pilih Mutasi Bank --</option>
+                {% for b in unmatched_banks %}
+                <option value="{{ b.id }}">
+                  {% if b.amount|add:rev.amount == 0 %}★ [NOMINAL BERLAWANAN PERSIS]{% endif %}
+                  [{{ b.channel }} Rp {{ b.amount|rupiah }}] {{ b.description_raw|truncatechars:40 }}
+                </option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="flex-1 min-w-[160px]">
+              <label class="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-0.5">Catatan (opsional)</label>
+              <input type="text" name="note" placeholder="Misal: refund nyata dari bank, bukan koreksi internal..."
+                     class="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
+            </div>
+            <button type="submit" class="btn-primary text-xs font-bold py-1.5 px-3">Pasangkan ke Bank &rarr;</button>
+          </form>
+          {% if not unmatched_banks %}
+          <p class="text-[11px] text-slate-400 italic mt-1">Tidak ada mutasi bank UNMATCHED di sekitar tanggal {{ rev.book_date|date:"d M Y" }}.</p>
+          {% endif %}
+        </div>
+      </div>
     </div>
   </div>
   {% empty %}

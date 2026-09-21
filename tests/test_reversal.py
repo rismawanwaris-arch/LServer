@@ -7,7 +7,7 @@ from django.contrib.auth import get_user_model
 from django.test import Client
 
 from apps.core.enums import Channel, MatchStatus, OtomaxCategory
-from apps.ingest.models import ImportBatch, OtomaxEntry
+from apps.ingest.models import BankMutation, ImportBatch, OtomaxEntry
 from apps.recon.resolve import manual_net_reversal
 
 User = get_user_model()
@@ -18,8 +18,23 @@ def _h(*parts) -> str:
     return hashlib.sha256("|".join(str(p) for p in parts).encode()).hexdigest()
 
 
-def _batch():
-    return ImportBatch.objects.create(channel=Channel.OTOMAX, book_date=BD, source_filename="t", file_hash=_h(BD))
+def _batch(channel=Channel.OTOMAX):
+    return ImportBatch.objects.create(channel=channel, book_date=BD, source_filename="t", file_hash=_h(BD, channel))
+
+
+def _bank(desc, amount, channel=Channel.BRI, book_date=BD, status=MatchStatus.UNMATCHED):
+    return BankMutation.objects.create(
+        import_batch=_batch(channel),
+        channel=channel,
+        book_date=book_date,
+        description_raw=desc,
+        ref_normalized=desc,
+        ref_core="",
+        extracted_tokens=[],
+        amount=Decimal(amount),
+        match_status=status,
+        row_hash=_h("b", desc, amount, book_date),
+    )
 
 
 def _otomax_entry(
@@ -115,3 +130,65 @@ def test_manual_net_reversal_action_nets_via_post(user_client):
     rev.refresh_from_db()
     assert original.match_status == MatchStatus.IGNORED
     assert rev.match_status == MatchStatus.IGNORED
+
+
+@pytest.mark.django_db
+def test_reversal_view_shows_batalkan_pencocokan_for_already_matched_candidate(user_client):
+    """Kandidat yang sudah MATCHED ke bank harus bisa dibatalkan langsung dari halaman
+    Reversal (bukan disuruh pindah halaman) agar operator bisa koreksi kalau pencocokan
+    itu keliru."""
+    from apps.recon.resolve import manual_pair_transactions
+
+    bank = _bank("TRF MASUK", "100000")
+    original = _otomax_entry("TARTUN PLC112 SALAH RESELLER", "100000", "PLC112 SALAH", ref_core="PLC112")
+    manual_pair_transactions(bank_mutation=bank, otomax_entry=original, note="test")
+    rev = _otomax_entry(
+        "REV Transfer dari PLC112", "-100000", "Naufal Cell", category=OtomaxCategory.REVERSAL, ref_core="PLC112"
+    )
+
+    res = user_client.get("/reversal/")
+    body = res.content.decode()
+    assert "Lihat Pencocokan" in body
+    assert "Batalkan Pencocokan" in body
+    assert "TRF MASUK" in body  # detail sisi bank ikut ditampilkan
+
+    match = bank.matches.get()
+    res2 = user_client.post(
+        f"/matches/unpair/{match.id}/", {"next_url": "/reversal/"}
+    )
+    assert res2.status_code == 302
+
+    original.refresh_from_db()
+    rev.refresh_from_db()
+    # unpair_match selalu mengembalikan entri Otomax ke PENDING_SETTLE (bukan UNMATCHED) —
+    # keduanya tetap dianggap "terbuka" (_OPEN_STATUSES) jadi tetap bisa dinetralkan manual.
+    assert original.match_status == MatchStatus.PENDING_SETTLE
+
+    # Setelah dibatalkan, sekarang bisa dinetralkan manual dengan REV-nya.
+    manual_net_reversal(rev, original, user="operator")
+    original.refresh_from_db()
+    assert original.match_status == MatchStatus.IGNORED
+
+
+@pytest.mark.django_db
+def test_reversal_manual_match_to_bank_pairs_reversal_directly(user_client):
+    """Kalau sebuah REV ternyata BUKAN koreksi internal murni (ada uang bank yang memang
+    bergerak), operator harus bisa memasangkannya langsung ke mutasi bank dari halaman
+    Reversal, memakai endpoint manual-match yang sama seperti halaman lain."""
+    bank = _bank("REFUND DARI BANK", "100000", book_date=BD)
+    rev = _otomax_entry("REV Refund Nyata", "-100000", "Naufal Cell", category=OtomaxCategory.REVERSAL)
+
+    res = user_client.get("/reversal/")
+    assert "Pencocokan Manual ke Mutasi Bank" in res.content.decode()
+
+    res2 = user_client.post(
+        "/manual-match/",
+        {"book_date": str(BD), "otomax_id": rev.id, "bank_id": bank.id, "next_url": "/reversal/"},
+    )
+    assert res2.status_code == 302
+
+    rev.refresh_from_db()
+    assert rev.match_status == MatchStatus.MANUAL
+
+    res3 = user_client.get("/reversal/")
+    assert res3.context["belum_count"] == 0
