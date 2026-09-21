@@ -28,7 +28,6 @@ def get_daily_summary(book_date: date) -> dict:
 
     total_bank = bank_qs.filter(amount__gt=0).aggregate(s=Sum("amount"))["s"] or ZERO
     total_otomax = otomax_qs.aggregate(s=Sum("amount"))["s"] or ZERO
-    selisih = total_bank - total_otomax
 
     matches = Match.objects.filter(book_date=book_date, voided_at__isnull=True)
     matched_auto = matches.exclude(match_type=MatchType.MANUAL)
@@ -39,6 +38,12 @@ def get_daily_summary(book_date: date) -> dict:
         category=OtomaxCategory.TOPUP_TARTUN,
         match_status__in=[MatchStatus.PENDING_SETTLE, MatchStatus.UNMATCHED],
     )
+    unmatched_bank_amount = unmatched_bank.aggregate(s=Sum("amount"))["s"] or ZERO
+    pending_settle_amount = pending_settle.aggregate(s=Sum("amount"))["s"] or ZERO
+    # Selisih riil = sisa PR rekonsiliasi (bank tanpa pasangan - otomax tanpa pasangan),
+    # BUKAN total_bank - total_otomax: itu naive per book_date yang sama, jadi salah besar
+    # kalau Otomax-nya dicatat lintas tanggal (mis. QRIS diinput H+1) padahal sudah matched.
+    selisih = unmatched_bank_amount - pending_settle_amount
 
     day = ReconDay.objects.filter(book_date=book_date).first()
 
@@ -65,9 +70,9 @@ def get_daily_summary(book_date: date) -> dict:
         "matched_manual_count": matched_manual.count(),
         "matched_manual_amount": matched_manual.aggregate(s=Sum("amount"))["s"] or ZERO,
         "unmatched_bank_count": unmatched_bank.count(),
-        "unmatched_bank_amount": unmatched_bank.aggregate(s=Sum("amount"))["s"] or ZERO,
+        "unmatched_bank_amount": unmatched_bank_amount,
         "pending_settle_count": pending_settle.count(),
-        "pending_settle_amount": pending_settle.aggregate(s=Sum("amount"))["s"] or ZERO,
+        "pending_settle_amount": pending_settle_amount,
         "per_bank": per_bank,
     }
 
@@ -82,7 +87,6 @@ def get_range_summary(start_date: date, end_date: date) -> dict:
 
     total_bank = bank_qs.filter(amount__gt=0).aggregate(s=Sum("amount"))["s"] or ZERO
     total_otomax = otomax_qs.aggregate(s=Sum("amount"))["s"] or ZERO
-    selisih = total_bank - total_otomax
 
     matches = Match.objects.filter(book_date__range=(start_date, end_date), voided_at__isnull=True)
     matched_auto = matches.exclude(match_type=MatchType.MANUAL)
@@ -93,6 +97,10 @@ def get_range_summary(start_date: date, end_date: date) -> dict:
         category=OtomaxCategory.TOPUP_TARTUN,
         match_status__in=[MatchStatus.PENDING_SETTLE, MatchStatus.UNMATCHED],
     )
+    unmatched_bank_amount = unmatched_bank.aggregate(s=Sum("amount"))["s"] or ZERO
+    pending_settle_amount = pending_settle.aggregate(s=Sum("amount"))["s"] or ZERO
+    # Lihat catatan yang sama di get_daily_summary soal kenapa selisih riil bukan total_bank - total_otomax.
+    selisih = unmatched_bank_amount - pending_settle_amount
 
     per_bank = {}
     for ch in BANK_CHANNELS:
@@ -116,9 +124,9 @@ def get_range_summary(start_date: date, end_date: date) -> dict:
         "matched_manual_count": matched_manual.count(),
         "matched_manual_amount": matched_manual.aggregate(s=Sum("amount"))["s"] or ZERO,
         "unmatched_bank_count": unmatched_bank.count(),
-        "unmatched_bank_amount": unmatched_bank.aggregate(s=Sum("amount"))["s"] or ZERO,
+        "unmatched_bank_amount": unmatched_bank_amount,
         "pending_settle_count": pending_settle.count(),
-        "pending_settle_amount": pending_settle.aggregate(s=Sum("amount"))["s"] or ZERO,
+        "pending_settle_amount": pending_settle_amount,
         "per_bank": per_bank,
     }
 
