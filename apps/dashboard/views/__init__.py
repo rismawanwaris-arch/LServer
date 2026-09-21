@@ -26,6 +26,7 @@ from .manual_review import (
 from .matches import matches_view
 from .pending_settle import manual_tag_otomax_action, pending_settle_view
 from .reports import reports_export_action, reports_view
+from .reversal import manual_net_reversal_action, reversal_view
 from .upload import delete_batch_action, upload, upload_view
 
 __all__ = [
@@ -41,6 +42,7 @@ __all__ = [
     "exclusion_rules_view",
     "manual_match_action",
     "manual_review_view",
+    "manual_net_reversal_action",
     "manual_tag_action",
     "manual_tag_otomax_action",
     "matches_view",
@@ -51,6 +53,7 @@ __all__ = [
     "reports_export_action",
     "reports_view",
     "resolve_view",
+    "reversal_view",
     "run_engine",
     "toggle_exclusion_rule_action",
     "unpair_match_action",

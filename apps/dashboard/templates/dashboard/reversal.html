@@ -1,0 +1,199 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Monitor Reversal Otomax — RekonMutasi{% endblock %}
+
+{% block content %}
+<div class="mb-6 flex flex-wrap items-center justify-between gap-4">
+  <div>
+    <h1 class="font-serif text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Monitor Reversal Otomax</h1>
+    <p class="text-sm text-slate-500 mt-1">
+      Baris "REV ..." yang membatalkan sebuah topup harus saling menetralkan dengan entri aslinya.
+      Murni koreksi internal Otomax — tidak ada uang bank yang bergerak.
+    </p>
+  </div>
+
+  <form method="get" class="flex items-center gap-2">
+    <input type="hidden" name="tab" value="{{ tab }}">
+    <input type="date" name="d" value="{{ book_date }}"
+           class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium shadow-xs dark:border-slate-600 dark:bg-slate-800">
+    <button class="btn-ghost">Filter Tanggal</button>
+    {% if book_date %}
+    <a href="?tab={{ tab }}" class="btn-ghost text-xs">Semua Tanggal</a>
+    {% endif %}
+  </form>
+</div>
+
+<!-- KPI Summary Cards -->
+<div class="grid gap-4 sm:grid-cols-2 mb-6">
+  <div class="card border-l-4 border-l-amber-500 p-4">
+    <div class="flex items-center justify-between">
+      <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Belum Netted</div>
+      <span class="badge bg-amber-100 text-amber-800 text-[10px] font-bold">Perlu Cek Manual</span>
+    </div>
+    <div class="flex items-baseline justify-between mt-1">
+      <div class="money text-2xl font-bold text-amber-600">{{ belum_count }} transaksi</div>
+      <div class="money font-semibold text-sm text-slate-600 dark:text-slate-300">Rp {{ belum_total|rupiah }}</div>
+    </div>
+  </div>
+  <div class="card border-l-4 border-l-emerald-500 p-4">
+    <div class="flex items-center justify-between">
+      <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Sudah Netted (Otomatis/Manual)</div>
+      <span class="badge bg-emerald-100 text-emerald-800 text-[10px] font-bold">Sinkron Selesai</span>
+    </div>
+    <div class="flex items-baseline justify-between mt-1">
+      <div class="money text-2xl font-bold text-emerald-600">{{ netted_count }} transaksi</div>
+      <div class="money font-semibold text-sm text-slate-600 dark:text-slate-300">Rp {{ netted_total|rupiah }}</div>
+    </div>
+  </div>
+</div>
+
+<!-- Tab Navigation -->
+<div class="flex items-center gap-2 mb-5 pb-2 border-b border-slate-200 dark:border-slate-700">
+  <a href="?{% if book_date %}d={{ book_date }}&{% endif %}tab=belum"
+     class="btn {% if tab != 'netted' %}btn-primary{% else %}btn-ghost{% endif %} text-xs font-bold py-1.5 px-3.5">
+    Belum Netted ({{ belum_count }})
+  </a>
+  <a href="?{% if book_date %}d={{ book_date }}&{% endif %}tab=netted"
+     class="btn {% if tab == 'netted' %}btn-primary{% else %}btn-ghost{% endif %} text-xs font-bold py-1.5 px-3.5">
+    Sudah Netted ({{ netted_count }})
+  </a>
+</div>
+
+{% if tab != 'netted' %}
+<!-- Tab 1: Belum Netted, lengkap dengan kandidat pasangan -->
+<div class="space-y-4">
+  {% for rev, candidates in items %}
+  <div class="card p-0 overflow-hidden">
+    <div class="flex flex-wrap items-center justify-between gap-3 p-4 bg-amber-50/60 dark:bg-amber-950/20 border-b border-amber-200 dark:border-amber-900/50">
+      <div>
+        <div class="flex items-center gap-2 mb-1">
+          <span class="badge-warn text-[11px]">REVERSAL</span>
+          <span class="font-mono text-xs text-slate-500">{{ rev.entry_datetime|date:"d M Y H:i"|default:rev.book_date }}</span>
+          {% if rev.ref_core %}<span class="badge-info text-[10px]">{{ rev.ref_core }}</span>{% endif %}
+        </div>
+        <div class="font-bold text-slate-900 dark:text-white text-sm">{{ rev.reseller_name_raw }}</div>
+        <div class="font-mono text-xs text-slate-600 dark:text-slate-300 mt-0.5">{{ rev.description_raw }}</div>
+      </div>
+      <div class="text-right">
+        <div class="money text-xl font-black text-rose-600 dark:text-rose-400">Rp {{ rev.amount|rupiah }}</div>
+        <div class="text-[11px] text-slate-400">#{{ rev.id }}</div>
+      </div>
+    </div>
+
+    <div class="p-4">
+      {% if candidates %}
+      <div class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
+        Kandidat Pasangan (nominal berlawanan Rp {{ candidates.0.amount|rupiah }})
+      </div>
+      <div class="space-y-2">
+        {% for c in candidates %}
+        <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 dark:border-slate-700 p-3">
+          <div class="min-w-0">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="font-bold text-xs text-slate-900 dark:text-white">{{ c.reseller_name_raw }}</span>
+              {% if c.reseller_name_raw == rev.reseller_name_raw %}
+              <span class="badge-good text-[10px] font-bold">★ Reseller Sama</span>
+              {% else %}
+              <span class="badge-mute text-[10px]">Reseller Beda</span>
+              {% endif %}
+              {% if c.ref_core and c.ref_core == rev.ref_core %}
+              <span class="badge-good text-[10px] font-bold">★ Ref Sama ({{ c.ref_core }})</span>
+              {% endif %}
+              {% if c.match_status == 'MATCHED' %}
+              <span class="badge bg-rose-100 text-rose-800 text-[10px] font-bold">Sudah MATCHED ke Bank</span>
+              {% elif c.match_status == 'MANUAL' %}
+              <span class="badge bg-rose-100 text-rose-800 text-[10px] font-bold">Sudah Di-tag Manual</span>
+              {% else %}
+              <span class="badge-mute text-[10px]">{{ c.get_match_status_display }}</span>
+              {% endif %}
+            </div>
+            <div class="font-mono text-[11px] text-slate-500 truncate mt-0.5">{{ c.description_raw }}</div>
+            <div class="text-[10px] text-slate-400 mt-0.5">
+              #{{ c.id }} &middot; {{ c.entry_datetime|date:"d M Y H:i"|default:c.book_date }}
+            </div>
+          </div>
+          <div class="flex items-center gap-3 shrink-0">
+            <span class="money font-black text-sm text-emerald-600 dark:text-emerald-400">Rp {{ c.amount|rupiah }}</span>
+            {% if c.match_status == 'UNMATCHED' or c.match_status == 'PENDING_SETTLE' %}
+            <form method="post" action="{% url 'manual-net-reversal' %}">
+              {% csrf_token %}
+              <input type="hidden" name="rev_id" value="{{ rev.id }}">
+              <input type="hidden" name="original_id" value="{{ c.id }}">
+              <input type="hidden" name="book_date" value="{{ book_date }}">
+              <input type="hidden" name="next_url" value="{{ request.get_full_path }}">
+              <button type="submit"
+                      onclick="return confirm('Netralkan REV #{{ rev.id }} dengan entri #{{ c.id }}? Keduanya akan ditandai selesai (IGNORED), tanpa membuat pencocokan ke mutasi bank.');"
+                      class="btn-secondary text-xs font-bold py-1.5 px-3">
+                Netkan Manual &rarr;
+              </button>
+            </form>
+            {% else %}
+            <span class="text-[11px] text-slate-400 max-w-[10rem] text-right">Batalkan pencocokan/tag-nya dulu di halaman asal sebelum bisa dinetralkan di sini.</span>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="text-xs text-slate-400 italic">
+        Tidak ditemukan kandidat entri dengan nominal berlawanan (Rp {{ rev.amount|rupiah }} berbanding terbalik).
+        Kemungkinan entri aslinya belum ter-import, atau cek manual lewat Django Admin.
+      </p>
+      {% endif %}
+    </div>
+  </div>
+  {% empty %}
+  <div class="card text-center py-12 text-slate-400">
+    Tidak ada baris REVERSAL yang menggantung{% if book_date %} untuk tanggal ini{% endif %}. Semua sudah netted.
+  </div>
+  {% endfor %}
+</div>
+
+{% else %}
+<!-- Tab 2: Sudah Netted -->
+<div class="card overflow-hidden p-0">
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead>
+        <tr>
+          <th>Waktu Entri</th>
+          <th>Reseller</th>
+          <th>Keterangan REV</th>
+          <th class="text-right">Nominal REV</th>
+          <th>Dinetralkan Dengan</th>
+          <th>Catatan</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for rev in items %}
+        <tr class="hover:bg-slate-50/60 dark:hover:bg-slate-800/60 transition">
+          <td class="font-mono text-xs text-slate-500 whitespace-nowrap">{{ rev.entry_datetime|date:"d M H:i"|default:rev.book_date }}</td>
+          <td class="font-bold text-xs text-slate-900 dark:text-white">{{ rev.reseller_name_raw }}</td>
+          <td class="font-mono text-xs text-slate-700 dark:text-slate-300 max-w-xs truncate" title="{{ rev.description_raw }}">
+            {{ rev.description_raw }}
+          </td>
+          <td class="money text-right font-bold text-rose-600 dark:text-rose-400 whitespace-nowrap">Rp {{ rev.amount|rupiah }}</td>
+          <td>
+            {% if rev.net_pair %}
+            <span class="badge-good text-[11px] font-bold">
+              #{{ rev.net_pair.id }} {{ rev.net_pair.reseller_name_raw }} (Rp {{ rev.net_pair.amount|rupiah }})
+            </span>
+            {% else %}
+            <span class="text-slate-400 text-xs">—</span>
+            {% endif %}
+          </td>
+          <td class="text-xs text-slate-600 dark:text-slate-300 max-w-xs truncate" title="{{ rev.note }}">{{ rev.note|default:"—" }}</td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="6" class="text-center py-12 text-slate-400">
+            Belum ada REVERSAL yang netted{% if book_date %} untuk tanggal ini{% endif %}.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

@@ -20,6 +20,9 @@ urlpatterns = [
     # 5. Pending Settle
     path("pending-settle/", views.pending_settle_view, name="pending-settle"),
     path("pending-settle/tag/<int:pk>/", views.manual_tag_otomax_action, name="manual-tag-otomax-action"),
+    # 5b. Monitor Reversal Otomax
+    path("reversal/", views.reversal_view, name="reversal"),
+    path("reversal/net/", views.manual_net_reversal_action, name="manual-net-reversal"),
     # 6. Riwayat & Laporan
     path("reports/", views.reports_view, name="reports"),
     path("reports/export/", views.reports_export_action, name="reports-export"),

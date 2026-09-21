@@ -221,6 +221,47 @@ def manual_pair_transactions(
 
 
 @transaction.atomic
+def manual_net_reversal(
+    rev: OtomaxEntry,
+    original: OtomaxEntry,
+    note: str = "",
+    user=None,
+) -> None:
+    """Netralkan manual sepasang entri Otomax (REV vs entri yang dibatalkannya) yang gagal
+    dinetralkan otomatis oleh reversal_netting — mis. nama reseller beda teks persis, atau
+    ref_core/ref_normalized-nya tidak identik. Efeknya sama seperti netting otomatis:
+    keduanya jadi IGNORED dan saling menunjuk net_pair, TANPA membuat Match (tidak ada uang
+    bank yang bergerak, murni koreksi internal Otomax).
+    """
+    r = OtomaxEntry.objects.select_for_update().get(pk=rev.pk)
+    o = OtomaxEntry.objects.select_for_update().get(pk=original.pk)
+
+    if r.pk == o.pk:
+        raise ValueError("Tidak bisa menetralkan entri dengan dirinya sendiri.")
+    if r.amount != -o.amount:
+        raise ValueError("Nominal kedua entri harus persis saling meniadakan (berlawanan tanda, sama besar).")
+    open_statuses = {MatchStatus.UNMATCHED, MatchStatus.PENDING_SETTLE}
+    if r.match_status not in open_statuses or o.match_status not in open_statuses:
+        raise ValueError(
+            "Salah satu entri sudah tidak berstatus terbuka (sudah MATCHED/MANUAL/IGNORED). "
+            "Batalkan pencocokan/tag-nya dulu sebelum menetralkan manual."
+        )
+
+    who = str(user) if user else "sistem"
+    tag_note = f"Netting manual oleh {who}: {note}".strip().rstrip(":") if note else f"Netting manual oleh {who}"
+
+    r.match_status = MatchStatus.IGNORED
+    r.net_pair = o
+    r.note = tag_note
+    r.save(update_fields=["match_status", "net_pair", "note", "updated_at"])
+
+    o.match_status = MatchStatus.IGNORED
+    o.net_pair = r
+    o.note = tag_note
+    o.save(update_fields=["match_status", "net_pair", "note", "updated_at"])
+
+
+@transaction.atomic
 def unpair_match(match: Match, user=None) -> None:
     """Batalkan pencocokan manual/otomatis — termasuk match AGGREGATE (QRIS multi-baris)."""
     m = Match.objects.select_for_update().get(pk=match.pk)
