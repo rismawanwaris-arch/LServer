@@ -68,4 +68,6 @@ def resolve_view(request, pk: int):
         messages.success(request, f"{disc.code} dihapusbukukan.")
     else:
         messages.info(request, "Gunakan tombol Jalankan Pencocokan untuk mencari pasangan otomatis.")
-    return redirect(f"/?d={request.POST.get('book_date')}")
+    fallback_url = f"/?d={request.POST.get('book_date')}"
+    next_url = request.POST.get("next_url") or request.META.get("HTTP_REFERER") or fallback_url
+    return redirect(next_url)

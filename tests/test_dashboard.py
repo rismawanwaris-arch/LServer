@@ -29,40 +29,30 @@ def test_dashboard_day_view(auth_client):
 
 
 @pytest.mark.django_db
-def test_dashboard_day_view_alarm_expand_scoped_to_business_month(auth_client, settings):
-    """Kotak Alarm SLA: "10 Terlama" tetap lihat semua selisih basi, tapi expand
-    "1 Bulan Berjalan" cuma yang origin_book_date-nya masuk siklus bulan bisnis
-    berjalan (BUSINESS_MONTH_START_DAY)."""
-    settings.BUSINESS_MONTH_START_DAY = 29
-    today = date(2026, 9, 20)  # siklus berjalan: 29 Agu - 28 Sep
-
-    in_period = Discrepancy.objects.create(
-        code="SLS-IN-PERIOD",
+def test_dashboard_alarm_banner_links_out_instead_of_dumping_raw_codes(auth_client):
+    """Dashboard harus tetap ringkasan satu layar: banner SLA Alarm cuma menunjukkan
+    jumlah + link ke halaman Daftar Selisih, TIDAK lagi dump kode transaksi mentah
+    langsung di Dashboard (itu dipindahkan ke /selisih/)."""
+    today = date(2026, 9, 20)
+    old_disc = Discrepancy.objects.create(
+        code="SLS-OLD-001",
         origin_book_date=date(2026, 9, 1),
         channel=Channel.BRI,
         kind=DiscrepancyKind.BANK_ONLY,
         amount=Decimal("100000"),
-    )
-    out_of_period = Discrepancy.objects.create(
-        code="SLS-OUT-PERIOD",
-        origin_book_date=date(2026, 7, 1),
-        channel=Channel.BRI,
-        kind=DiscrepancyKind.BANK_ONLY,
-        amount=Decimal("200000"),
     )
 
     res = auth_client.get(f"/?d={today.isoformat()}")
     assert res.status_code == 200
     content = res.content.decode()
 
-    # Keduanya basi (jauh lebih dari DISCREPANCY_ALARM_DAYS) -> muncul di "10 Terlama".
-    assert in_period.code in content
-    assert out_of_period.code in content
+    assert "Transaksi Melewati Batas Waktu SLA Alarm" in content
+    assert old_disc.code not in content
+    assert '/selisih/"' in content
 
-    # Cuma yang di dalam siklus 29 Agu-28 Sep yang ada di alarms_this_period.
-    assert res.context["alarms_this_period"].filter(pk=in_period.pk).exists()
-    assert not res.context["alarms_this_period"].filter(pk=out_of_period.pk).exists()
-    assert res.context["business_month_range"] == (date(2026, 8, 29), date(2026, 9, 28))
+    res_list = auth_client.get("/selisih/")
+    assert res_list.status_code == 200
+    assert old_disc.code in res_list.content.decode()
 
 
 @pytest.mark.django_db
@@ -594,6 +584,65 @@ def test_today_steps_close_day_marks_last_step_done(auth_client):
     steps = res.context["today_steps"]
     assert steps[-1]["title"] == "Tutup Buku Harian"
     assert steps[-1]["done"] is True
+
+
+@pytest.mark.django_db
+def test_discrepancy_list_defaults_to_open_across_all_dates(auth_client):
+    """Beda dari Review Manual/Pending Settle (antrean per-hari), Daftar Selisih default
+    lintas SEMUA tanggal supaya backlog lama (yang lewat SLA) langsung kelihatan tanpa
+    perlu gonta-ganti tanggal."""
+    old_open = Discrepancy.objects.create(
+        code="SLS-LIST-OLD",
+        origin_book_date=date(2026, 1, 1),
+        channel=Channel.BRI,
+        kind=DiscrepancyKind.BANK_ONLY,
+        amount=Decimal("100000"),
+    )
+    recent_resolved = Discrepancy.objects.create(
+        code="SLS-LIST-RESOLVED",
+        origin_book_date=date(2026, 9, 1),
+        channel=Channel.BCA,
+        kind=DiscrepancyKind.OTOMAX_ONLY,
+        amount=Decimal("50000"),
+        status="RESOLVED",
+    )
+
+    res = auth_client.get("/selisih/")
+    assert res.status_code == 200
+    codes = {d.code for d in res.context["items"]}
+    assert old_open.code in codes
+    assert recent_resolved.code not in codes  # default status=OPEN, yang RESOLVED disembunyikan
+    assert res.context["open_count"] == 1
+
+
+@pytest.mark.django_db
+def test_discrepancy_list_status_filter_and_write_off_action(auth_client):
+    disc = Discrepancy.objects.create(
+        code="SLS-LIST-WRITEOFF",
+        origin_book_date=date(2026, 9, 1),
+        channel=Channel.BRI,
+        kind=DiscrepancyKind.BANK_ONLY,
+        amount=Decimal("75000"),
+    )
+
+    res_all = auth_client.get("/selisih/", {"status": "ALL"})
+    assert disc.code in res_all.content.decode()
+
+    res_write_off = auth_client.post(
+        f"/discrepancy/{disc.pk}/resolve/",
+        {"action": "write_off", "book_date": "2026-09-01", "next_url": "/selisih/?status=ALL"},
+    )
+    assert res_write_off.status_code == 302
+    assert res_write_off.url == "/selisih/?status=ALL"
+
+    disc.refresh_from_db()
+    assert disc.status == "WRITTEN_OFF"
+
+    # Default (status=OPEN) sekarang tidak lagi menampilkan yang sudah di-write-off.
+    # (Cek lewat context, bukan raw HTML -- pesan flash "berhasil dihapusbukukan" dari
+    # POST sebelumnya ikut merender kode yang sama di halaman berikutnya.)
+    res_default = auth_client.get("/selisih/")
+    assert disc.code not in {d.code for d in res_default.context["items"]}
 
 
 
