@@ -1,3 +1,4 @@
+import hashlib
 from datetime import date
 from decimal import Decimal
 
@@ -5,7 +6,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.test import Client
 
-from apps.core.enums import Channel, DiscrepancyKind, ManualTag, MatchStatus
+from apps.core.enums import Channel, DiscrepancyKind, ManualTag, MatchStatus, OtomaxCategory
 from apps.ingest.models import BankMutation, ImportBatch, OtomaxEntry
 from apps.recon.models import Discrepancy, Match, ReconDay
 
@@ -496,6 +497,103 @@ def test_bidirectional_sync_between_review_and_pending_settle(auth_client):
 
     res_ps_back = auth_client.get("/pending-settle/", {"d": "2026-09-05", "tab": "pending"})
     assert "BFST590209540026DEBI RIZKI ADITYA" in res_ps_back.content.decode()
+
+
+_STEPS_BD = date(2026, 9, 21)
+
+
+def _h(*parts) -> str:
+    return hashlib.sha256("|".join(str(p) for p in parts).encode()).hexdigest()
+
+
+def _steps_batch(channel):
+    return ImportBatch.objects.create(
+        channel=channel, book_date=_STEPS_BD, source_filename="t", file_hash=_h("steps", channel)
+    )
+
+
+@pytest.mark.django_db
+def test_today_steps_all_pending_when_no_data(auth_client):
+    """Tanggal kosong sama sekali: langkah 1 (Upload Data) yang harus jadi 'Selanjutnya',
+    bukan langkah lain -- operator baru langsung tahu harus mulai dari mana."""
+    res = auth_client.get("/", {"d": _STEPS_BD.isoformat()})
+    steps = res.context["today_steps"]
+    assert [s["done"] for s in steps] == [False, False, False, False, False, False]
+    assert steps[0]["is_next"] is True
+    assert all(not s["is_next"] for s in steps[1:])
+
+
+@pytest.mark.django_db
+def test_today_steps_reflect_real_outstanding_counts(auth_client):
+    """Setelah data diimport & engine dijalankan, langkah 3-5 harus menunjukkan angka
+    riil yang match dengan KPI card di halaman yang sama (bukan hitungan terpisah)."""
+    bank = BankMutation.objects.create(
+        import_batch=_steps_batch(Channel.BRI),
+        channel=Channel.BRI,
+        book_date=_STEPS_BD,
+        description_raw="MUTASI TANPA PASANGAN",
+        ref_normalized="MUTASI TANPA PASANGAN",
+        amount=Decimal("100000"),
+        match_status=MatchStatus.UNMATCHED,
+        row_hash=_h("bank", "unpaired"),
+    )
+    Discrepancy.objects.create(
+        code="SLS-STEPS-001",
+        origin_book_date=_STEPS_BD,
+        channel=Channel.BRI,
+        kind=DiscrepancyKind.BANK_ONLY,
+        bank_mutation=bank,
+        amount=bank.amount,
+    )
+    OtomaxEntry.objects.create(
+        import_batch=_steps_batch(Channel.OTOMAX),
+        book_date=_STEPS_BD,
+        reseller_name_raw="X",
+        amount=Decimal("50000"),
+        description_raw="TARTUN TANPA PASANGAN",
+        category=OtomaxCategory.TOPUP_TARTUN,
+        match_status=MatchStatus.PENDING_SETTLE,
+        row_hash=_h("otomax", "pending"),
+    )
+    OtomaxEntry.objects.create(
+        import_batch=_steps_batch(Channel.OTOMAX),
+        book_date=_STEPS_BD,
+        reseller_name_raw="Y",
+        amount=Decimal("-20000"),
+        description_raw="REV BELUM NETTED",
+        category=OtomaxCategory.REVERSAL,
+        match_status=MatchStatus.UNMATCHED,
+        row_hash=_h("otomax", "rev"),
+    )
+
+    res = auth_client.get("/", {"d": _STEPS_BD.isoformat()})
+    steps = res.context["today_steps"]
+    by_title = {s["title"]: s for s in steps}
+
+    assert by_title["Upload Data"]["done"] is True
+    assert by_title["Jalankan Matching Engine"]["done"] is True
+    assert by_title["Selesaikan Review Manual"]["done"] is False
+    assert "1 mutasi bank" in by_title["Selesaikan Review Manual"]["desc"]
+    assert by_title["Selesaikan Pending Settle"]["done"] is False
+    assert "1 entri Otomax" in by_title["Selesaikan Pending Settle"]["desc"]
+    assert by_title["Cek Reversal Otomax"]["done"] is False
+    assert "1 baris REV" in by_title["Cek Reversal Otomax"]["desc"]
+    assert by_title["Tutup Buku Harian"]["done"] is False
+
+    # "Selanjutnya" harus jatuh ke langkah OUTSTANDING pertama (Review Manual),
+    # bukan ke langkah yang sudah selesai di depannya.
+    assert by_title["Selesaikan Review Manual"]["is_next"] is True
+    assert by_title["Upload Data"]["is_next"] is False
+    assert by_title["Jalankan Matching Engine"]["is_next"] is False
+
+
+@pytest.mark.django_db
+def test_today_steps_close_day_marks_last_step_done(auth_client):
+    ReconDay.objects.create(book_date=_STEPS_BD, locked=True)
+    res = auth_client.get("/", {"d": _STEPS_BD.isoformat()})
+    steps = res.context["today_steps"]
+    assert steps[-1]["title"] == "Tutup Buku Harian"
+    assert steps[-1]["done"] is True
 
 
 
