@@ -7,7 +7,7 @@
 <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
   <div>
     <div class="flex items-center gap-3">
-      <h1 class="font-serif text-2xl md:text-3xl font-bold tracking-tight">Rekonsiliasi {{ book_date|date:"d F Y" }}</h1>
+      <h1 class="text-2xl md:text-3xl font-bold tracking-tight">Rekonsiliasi {{ book_date|date:"d F Y" }}</h1>
       {% if day.locked %}
       <span class="badge-mute">DITUTUP</span>
       {% elif day %}

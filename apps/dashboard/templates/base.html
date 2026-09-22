@@ -17,7 +17,25 @@
             sans: ['"IBM Plex Sans"', 'sans-serif'],
             mono: ['"IBM Plex Mono"', 'monospace'],
             serif: ['"IBM Plex Serif"', 'serif'],
-          }
+          },
+          colors: {
+            // Skala navy korporat yang lebih tenang, dipakai lewat kelas indigo-* yang
+            // sudah tersebar di semua template -- override satu tempat ini otomatis
+            // menata ulang warna aksen di seluruh halaman tanpa menyentuh markup/logic.
+            indigo: {
+              50: '#f4f6fb',
+              100: '#e6eaf5',
+              200: '#ccd5ea',
+              300: '#a6b6d9',
+              400: '#7b90c0',
+              500: '#5972a3',
+              600: '#3f5786',
+              700: '#32456a',
+              800: '#293752',
+              900: '#1f2a3e',
+              950: '#141c2a',
+            },
+          },
         }
       }
     }
@@ -25,7 +43,7 @@
   <style type="text/tailwindcss">
     @layer components {
       .card {
-        @apply rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800;
+        @apply rounded-lg border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-800;
       }
       .btn {
         @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:opacity-50 disabled:pointer-events-none;
