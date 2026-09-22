@@ -506,7 +506,7 @@ def _steps_batch(channel):
 def test_today_steps_all_pending_when_no_data(auth_client):
     """Tanggal kosong sama sekali: langkah 1 (Upload Data) yang harus jadi 'Selanjutnya',
     bukan langkah lain -- operator baru langsung tahu harus mulai dari mana."""
-    res = auth_client.get("/", {"d": _STEPS_BD.isoformat()})
+    res = auth_client.get("/upload/", {"d": _STEPS_BD.isoformat()})
     steps = res.context["today_steps"]
     assert [s["done"] for s in steps] == [False, False, False, False, False, False]
     assert steps[0]["is_next"] is True
@@ -556,7 +556,7 @@ def test_today_steps_reflect_real_outstanding_counts(auth_client):
         row_hash=_h("otomax", "rev"),
     )
 
-    res = auth_client.get("/", {"d": _STEPS_BD.isoformat()})
+    res = auth_client.get("/upload/", {"d": _STEPS_BD.isoformat()})
     steps = res.context["today_steps"]
     by_title = {s["title"]: s for s in steps}
 
@@ -580,7 +580,7 @@ def test_today_steps_reflect_real_outstanding_counts(auth_client):
 @pytest.mark.django_db
 def test_today_steps_close_day_marks_last_step_done(auth_client):
     ReconDay.objects.create(book_date=_STEPS_BD, locked=True)
-    res = auth_client.get("/", {"d": _STEPS_BD.isoformat()})
+    res = auth_client.get("/upload/", {"d": _STEPS_BD.isoformat()})
     steps = res.context["today_steps"]
     assert steps[-1]["title"] == "Tutup Buku Harian"
     assert steps[-1]["done"] is True

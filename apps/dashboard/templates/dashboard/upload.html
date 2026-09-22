@@ -18,6 +18,49 @@
   </form>
 </div>
 
+<!-- Langkah Hari Ini: panduan berurutan supaya operator baru tidak perlu hafal menu.
+     Ditaruh di halaman ini (bukan Dashboard) karena Upload Data adalah pintu masuk
+     alur kerja harian -- Dashboard tetap murni ringkasan/KPI. -->
+<div class="card mb-6">
+  <h2 class="font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
+    <svg class="h-5 w-5 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+    Langkah Hari Ini
+  </h2>
+  <ol class="space-y-2">
+    {% for step in today_steps %}
+    <li>
+      <a href="{{ step.url }}"
+         class="flex items-center gap-3 rounded-lg border p-3 transition
+         {% if step.done %}border-slate-100 bg-slate-50/60 dark:border-slate-700/60 dark:bg-slate-800/40
+         {% elif step.is_next %}border-indigo-300 bg-indigo-50/70 shadow-sm dark:border-indigo-800 dark:bg-indigo-950/30
+         {% else %}border-slate-200 hover:border-slate-300 hover:bg-slate-50/60 dark:border-slate-700 dark:hover:bg-slate-800/40{% endif %}">
+        <span class="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold
+          {% if step.done %}bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300
+          {% elif step.is_next %}bg-indigo-600 text-white
+          {% else %}bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400{% endif %}">
+          {% if step.done %}
+          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+          {% else %}
+          {{ step.number }}
+          {% endif %}
+        </span>
+        <div class="min-w-0 flex-1">
+          <div class="text-sm font-semibold {% if step.done %}text-slate-500 dark:text-slate-400{% else %}text-slate-900 dark:text-white{% endif %}">
+            {{ step.title }}
+          </div>
+          <div class="text-xs text-slate-500 dark:text-slate-400">{{ step.desc }}</div>
+        </div>
+        {% if step.is_next %}
+        <span class="badge bg-indigo-100 text-indigo-800 dark:bg-indigo-900/60 dark:text-indigo-300 flex-shrink-0">Selanjutnya</span>
+        {% elif not step.done %}
+        <span class="text-xs font-medium text-slate-400 flex-shrink-0">Buka &rarr;</span>
+        {% endif %}
+      </a>
+    </li>
+    {% endfor %}
+  </ol>
+</div>
+
 <div class="grid gap-6 lg:grid-cols-3">
   <!-- Form Upload (Left 1 col) -->
   <div class="card lg:col-span-1" x-data="{ selectedChannel: 'OTOMAX' }">

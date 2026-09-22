@@ -12,7 +12,7 @@ from apps.ingest.models import ImportBatch
 from apps.ingest.services import ImportBlocked, import_file, preview_file
 from apps.recon.purge import DayIsClosed, delete_import_batch
 
-from ._shared import _parse_date, _sync_inconsistent_batches
+from ._shared import _parse_date, _sync_inconsistent_batches, build_today_steps
 
 
 @login_required
@@ -77,6 +77,7 @@ def upload_view(request):
             "channels": Channel.choices,
             "batches": batches,
             "preview": preview_data,
+            "today_steps": build_today_steps(book_date),
         },
     )
 
