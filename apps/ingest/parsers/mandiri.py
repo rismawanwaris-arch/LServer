@@ -14,6 +14,21 @@ from ._dates import parse_id_datetime
 from .base import ParsedBankRow, ParseResult, to_text
 
 _DT = re.compile(r"^\d{2}\s+[A-Za-z]{3}\s+\d{4}\s+\d{2}:\d{2}:\d{2}")
+_DDMMYY = re.compile(r"^(\d{2})/(\d{2})/(\d{2})$")
+
+
+def _parse_ddmmyy(text: str) -> datetime | None:
+    """'30/08/26' -> datetime(2026, 8, 30). Dipakai khusus format 'account_statement'
+    (lihat _parse_account_statement_csv) yang tanggalnya cuma DD/MM/YY tanpa jam --
+    beda dari _parse_mandiri_date di atas yang mensyaratkan ada komponen waktu."""
+    m = _DDMMYY.match(text.strip())
+    if not m:
+        return None
+    day, month, yy = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    try:
+        return datetime(2000 + yy, month, day)
+    except ValueError:
+        return None
 
 
 def _parse_mandiri_date(raw: str | None) -> datetime | None:
@@ -112,10 +127,76 @@ def _parse_csv(text: str, result: ParseResult) -> bool:
     return len(result.bank_rows) > 0
 
 
+def _parse_account_statement_csv(text: str, result: ParseResult) -> bool:
+    """Format 'account_statement_<no rek>...csv': header-nya punya DUA kolom
+    'Description' dengan nama identik (mis. kode terminal + nama outlet di kolom
+    pertama, kode referensi tambahan di kolom kedua) plus 'Reference No.' terpisah.
+    _parse_csv di atas (csv.DictReader) SALAH BACA format ini -- dict Python cuma bisa
+    punya satu key 'Description', jadi nilai kolom pertama ketimpa nilai kolom kedua dan
+    hilang. Di sini dibaca positional lewat csv.reader, lalu SEMUA kolom description +
+    reference digabung jadi satu description_raw supaya token yang dibutuhkan buat
+    pencocokan Otomax tidak ada yang hilang."""
+    first_few = text[:2000].upper()
+    if "VAL. DATE" not in first_few or "TRANSACTION CODE" not in first_few:
+        return False
+
+    rows = list(csv.reader(io.StringIO(text)))
+    if not rows:
+        return False
+    header_upper = [h.strip().upper() for h in rows[0]]
+
+    def indices(name: str) -> list[int]:
+        return [i for i, h in enumerate(header_upper) if h == name]
+
+    desc_idx = indices("DESCRIPTION")
+    date_idx = indices("DATE")
+    ref_idx = indices("REFERENCE NO.")
+    debit_idx = indices("DEBIT")
+    credit_idx = indices("CREDIT")
+    if not desc_idx or not debit_idx or not credit_idx:
+        return False
+
+    def cell(row: list[str], i: int) -> str:
+        return row[i].strip() if i < len(row) else ""
+
+    for row in rows[1:]:
+        if not row or not any(c.strip() for c in row):
+            continue
+
+        desc_parts = [cell(row, i) for i in desc_idx if cell(row, i)]
+        if ref_idx and cell(row, ref_idx[0]):
+            desc_parts.append(cell(row, ref_idx[0]))
+        if not desc_parts:
+            continue
+        desc = desc_parts[0]
+        for extra in desc_parts[1:]:
+            desc = f"{desc} [{extra}]"
+
+        credit = _parse_mandiri_num(cell(row, credit_idx[0]))
+        debit = _parse_mandiri_num(cell(row, debit_idx[0]))
+        if credit == 0 and debit == 0:
+            continue
+        amount = credit if credit > 0 else -debit
+
+        dt = None
+        if date_idx:
+            raw_date = cell(row, date_idx[0])
+            dt = _parse_ddmmyy(raw_date) or parse_id_datetime(raw_date)
+
+        result.bank_rows.append(
+            ParsedBankRow(
+                description_raw=desc,
+                amount=amount,
+                txn_datetime=dt,
+            )
+        )
+    return len(result.bank_rows) > 0
+
+
 def parse(content: str | bytes) -> ParseResult:
     text = to_text(content)
     result = ParseResult()
-    if _parse_csv(text, result):
+    if _parse_account_statement_csv(text, result) or _parse_csv(text, result):
         dates = [r.txn_datetime.date() for r in result.bank_rows if r.txn_datetime]
         if dates:
             result.book_date = max(set(dates), key=dates.count)

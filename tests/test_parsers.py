@@ -43,11 +43,11 @@ def test_parse_bri_csv_fallback_to_trremk():
     assert res.bank_rows[0].amount == Decimal("200000.00")
 
 
-def test_parse_bri_account_statement_csv_combines_duplicate_description_columns():
-    """Format 'account_statement_<no rek>...csv' punya DUA kolom 'Description' dengan
-    nama identik di header -- csv.DictReader bakal bikin nilai kolom pertama ketimpa,
-    jadi harus dibaca positional dan digabung supaya tidak ada info yang hilang untuk
-    pencocokan Otomax."""
+def test_parse_mandiri_account_statement_csv_combines_duplicate_description_columns():
+    """Format 'account_statement_<no rek>...csv' (Mandiri) punya DUA kolom 'Description'
+    dengan nama identik di header -- csv.DictReader di _parse_csv salah baca (nilai
+    kolom pertama ketimpa kolom kedua), jadi harus dibaca positional dan digabung
+    supaya tidak ada info yang hilang untuk pencocokan Otomax."""
     csv_text = (
         "Account No,Date,Val. Date,Transaction Code,Description,Description,"
         "Reference No.,Debit,Credit\n"
@@ -56,7 +56,7 @@ def test_parse_bri_account_statement_csv_combines_duplicate_description_columns(
         '1300082121255,30/08/26,30/08/26,8163,"932273FA ALFA 2",'
         '"932273FA/DLLM032273FA30/DL              ",,".00","53,000.00"\n'
     )
-    res = parse_file(Channel.BRI, csv_text)
+    res = parse_file(Channel.MANDIRI, csv_text)
     assert len(res.bank_rows) == 2
     assert (
         res.bank_rows[0].description_raw
@@ -69,14 +69,14 @@ def test_parse_bri_account_statement_csv_combines_duplicate_description_columns(
     assert res.book_date.isoformat() == "2026-08-30"
 
 
-def test_parse_bri_account_statement_csv_includes_reference_no_when_present():
+def test_parse_mandiri_account_statement_csv_includes_reference_no_when_present():
     csv_text = (
         "Account No,Date,Val. Date,Transaction Code,Description,Description,"
         "Reference No.,Debit,Credit\n"
         '1300082121255,30/08/26,30/08/26,8163,"OUTLET A","KODE INTERNAL",'
         '"REF-999","5,000.00",".00"\n'
     )
-    res = parse_file(Channel.BRI, csv_text)
+    res = parse_file(Channel.MANDIRI, csv_text)
     assert len(res.bank_rows) == 1
     assert res.bank_rows[0].description_raw == "OUTLET A [KODE INTERNAL] [REF-999]"
     assert res.bank_rows[0].amount == Decimal("-5000.00")  # Debit -> negatif
