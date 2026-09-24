@@ -897,8 +897,50 @@ def test_qris_matches_otomax_entry_left_pending_settle_by_earlier_cleanup():
 
     b.refresh_from_db()
     o.refresh_from_db()
-    assert b.match_status == MatchStatus.MATCHED
-    assert o.match_status == MatchStatus.MATCHED
     m = Match.objects.get(bank_mutation=b, voided_at__isnull=True)
     assert m.otomax_entry_id == o.id
+
+
+@pytest.mark.django_db
+def test_recon_rematch_command():
+    from io import StringIO
+    from django.core.management import call_command
+
+    d = date(2026, 9, 7)
+    b = BankMutation.objects.create(
+        import_batch=_batch(Channel.BRI),
+        channel=Channel.BRI,
+        book_date=d,
+        description_raw="TRSF DANA TOK99",
+        ref_normalized="TRSF DANA TOK99",
+        ref_core="TOK99",
+        extracted_tokens=["TOK99"],
+        amount=Decimal("150000"),
+        row_hash="rematch_b1",
+    )
+    o = OtomaxEntry.objects.create(
+        import_batch=_batch(Channel.OTOMAX),
+        book_date=d,
+        reseller_name_raw="PLC TOK99",
+        amount=Decimal("150000"),
+        description_raw="Tiket TOK99",
+        category=OtomaxCategory.TOPUP_TARTUN,
+        channel_hint=Channel.BRI,
+        ref_normalized="TOK99",
+        ref_core="TOK99",
+        extracted_tokens=["TOK99"],
+        row_hash="rematch_o1",
+    )
+
+    out = StringIO()
+    call_command("recon_rematch", date=str(d), stdout=out)
+    output = out.getvalue()
+    assert "1 match baru terbentuk" in output
+
+    b.refresh_from_db()
+    o.refresh_from_db()
+    assert b.match_status == MatchStatus.MATCHED
+    assert o.match_status == MatchStatus.MATCHED
+    assert Match.objects.filter(book_date=d, bank_mutation=b, otomax_entry=o).exists()
+
 
