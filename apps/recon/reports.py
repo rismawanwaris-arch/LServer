@@ -11,10 +11,10 @@ from django.db.models import Sum
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from apps.core.enums import BANK_CHANNELS, MatchStatus, MatchType, OtomaxCategory
+from apps.core.enums import BANK_CHANNELS, DiscrepancyKind, DiscrepancyStatus, MatchStatus, MatchType, OtomaxCategory
 from apps.ingest.models import BankMutation, OtomaxEntry
 
-from .models import Match, ReconDay
+from .models import Discrepancy, Match, ReconDay
 
 ZERO = Decimal("0.00")
 
@@ -68,10 +68,21 @@ def get_daily_summary(book_date: date) -> dict:
     )
     unmatched_bank_amount = unmatched_bank.aggregate(s=Sum("amount"))["s"] or ZERO
     pending_settle_amount = pending_settle.aggregate(s=Sum("amount"))["s"] or ZERO
+    # Pasangan yang SUDAH matched tapi nominalnya beda (mis. cocok manual/QRIS toleransi
+    # nominal) tidak lagi masuk unmatched_bank/pending_settle di atas -- selisihnya cuma
+    # kelihatan lewat Discrepancy(AMOUNT_DIFF) yang dibuat khusus untuk pasangan itu
+    # (lihat manual_pair_transactions & qris_match Pass 3), jadi harus ditambahkan manual
+    # supaya tidak hilang dari total selisih.
+    amount_diff_amount = (
+        Discrepancy.objects.filter(
+            origin_book_date=book_date, kind=DiscrepancyKind.AMOUNT_DIFF, status=DiscrepancyStatus.OPEN
+        ).aggregate(s=Sum("amount"))["s"]
+        or ZERO
+    )
     # Selisih riil = sisa PR rekonsiliasi (bank tanpa pasangan - otomax tanpa pasangan),
     # BUKAN total_bank - total_otomax: itu naive per book_date yang sama, jadi salah besar
     # kalau Otomax-nya dicatat lintas tanggal (mis. QRIS diinput H+1) padahal sudah matched.
-    selisih = unmatched_bank_amount - pending_settle_amount
+    selisih = unmatched_bank_amount - pending_settle_amount + amount_diff_amount
 
     day = ReconDay.objects.filter(book_date=book_date).first()
 
@@ -122,8 +133,17 @@ def get_range_summary(start_date: date, end_date: date) -> dict:
     )
     unmatched_bank_amount = unmatched_bank.aggregate(s=Sum("amount"))["s"] or ZERO
     pending_settle_amount = pending_settle.aggregate(s=Sum("amount"))["s"] or ZERO
-    # Lihat catatan yang sama di get_daily_summary soal kenapa selisih riil bukan total_bank - total_otomax.
-    selisih = unmatched_bank_amount - pending_settle_amount
+    # Lihat catatan yang sama di get_daily_summary soal kenapa selisih riil bukan total_bank
+    # - total_otomax, dan soal kenapa Discrepancy(AMOUNT_DIFF) yang OPEN perlu ditambahkan manual.
+    amount_diff_amount = (
+        Discrepancy.objects.filter(
+            origin_book_date__range=(start_date, end_date),
+            kind=DiscrepancyKind.AMOUNT_DIFF,
+            status=DiscrepancyStatus.OPEN,
+        ).aggregate(s=Sum("amount"))["s"]
+        or ZERO
+    )
+    selisih = unmatched_bank_amount - pending_settle_amount + amount_diff_amount
 
     per_bank, otomax_lain_lain = _per_bank_breakdown(bank_qs, otomax_all_qs)
 

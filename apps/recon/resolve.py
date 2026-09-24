@@ -7,10 +7,13 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from apps.core.enums import Channel, MatchStatus, MatchType
+from apps.core.enums import Channel, DiscrepancyKind, DiscrepancyStatus, MatchStatus, MatchType
 from apps.ingest.models import BankMutation, OtomaxEntry
 
+from .engine.helpers import _make_discrepancy
 from .models import Adjustment, Discrepancy, Match, ReconDay
+
+ZERO = Decimal("0.00")
 
 
 class DiscrepancyClosed(Exception):
@@ -194,23 +197,48 @@ def manual_pair_transactions(
         matched_by=user,
     )
 
-    # Selesaikan discrepancy terbuka jika ada
-    for disc in Discrepancy.objects.filter(bank_mutation=bm, status="OPEN"):
-        resolve_discrepancy(
-            disc,
-            match=match,
-            resolution_type="DATA_FIX",
-            reason=f"Cocok manual dengan Otomax #{o.id}: {match_note}",
-            user=user,
-        )
+    diff = match.amount_diff  # = amount_bank - amount_otomax, dihitung otomatis di Match.save()
 
-    for disc in Discrepancy.objects.filter(otomax_entry=o, status="OPEN"):
-        resolve_discrepancy(
-            disc,
-            match=match,
-            resolution_type="DATA_FIX",
-            reason=f"Cocok manual dengan Mutasi Bank #{bm.id}: {match_note}",
-            user=user,
+    if diff == ZERO:
+        # Nominal pas sama -- kedua sisi benar-benar sudah sepenuhnya terjelaskan,
+        # selesaikan discrepancy leftover asal (BANK_ONLY/OTOMAX_ONLY) seperti biasa.
+        for disc in Discrepancy.objects.filter(bank_mutation=bm, status=DiscrepancyStatus.OPEN):
+            resolve_discrepancy(
+                disc,
+                match=match,
+                resolution_type="DATA_FIX",
+                reason=f"Cocok manual dengan Otomax #{o.id}: {match_note}",
+                user=user,
+            )
+        for disc in Discrepancy.objects.filter(otomax_entry=o, status=DiscrepancyStatus.OPEN):
+            resolve_discrepancy(
+                disc,
+                match=match,
+                resolution_type="DATA_FIX",
+                reason=f"Cocok manual dengan Mutasi Bank #{bm.id}: {match_note}",
+                user=user,
+            )
+    else:
+        # Nominal beda -- JANGAN tutup penuh & adjust seakan sudah sepenuhnya
+        # terjelaskan (itu akan menghapus selisih riilnya dari total selisih hari itu,
+        # lihat diskusi soal kasus ini). Discrepancy leftover lama (BANK_ONLY/OTOMAX_ONLY)
+        # sudah usang begitu kedua sisi dapat pasangan -- ganti dengan SATU discrepancy
+        # AMOUNT_DIFF baru senilai sisa selisih riil, tetap OPEN, supaya kelihatan di
+        # Daftar Selisih & Dashboard sampai ada yang menyelesaikan/write-off terpisah.
+        Discrepancy.objects.filter(bank_mutation=bm, status=DiscrepancyStatus.OPEN).delete()
+        Discrepancy.objects.filter(otomax_entry=o, status=DiscrepancyStatus.OPEN).delete()
+        diff_note = (
+            f"Selisih nominal pencocokan manual: Bank Rp {bm.amount:,.2f} vs "
+            f"Otomax Rp {o.amount:,.2f} ({match_note})"
+        )
+        _make_discrepancy(
+            bm.book_date,
+            bm.channel,
+            DiscrepancyKind.AMOUNT_DIFF,
+            amount=diff,
+            bank=bm,
+            otomax=o,
+            note=diff_note,
         )
 
     day, _ = ReconDay.objects.select_for_update().get_or_create(book_date=bm.book_date)
@@ -287,15 +315,22 @@ def unpair_match(match: Match, user=None) -> None:
             bm.save(update_fields=["match_status", "tag_manual", "manual_note", "updated_at"])
 
     for o in OtomaxEntry.objects.select_for_update().filter(pk__in=otomax_ids):
-        still_active = Match.objects.filter(
-            Q(otomax_entry=o) | Q(otomax_entries=o), voided_at__isnull=True
-        ).exists()
+        still_active = Match.objects.filter(Q(otomax_entry=o) | Q(otomax_entries=o), voided_at__isnull=True).exists()
         if not still_active:
             o.match_status = MatchStatus.PENDING_SETTLE
             o.save(update_fields=["match_status", "updated_at"])
 
+    # Discrepancy AMOUNT_DIFF yang dibuat khusus untuk pasangan match ini (lihat
+    # manual_pair_transactions / qris_match Pass 3) jadi usang begitu match dibatalkan --
+    # kalau masih OPEN (belum diselesaikan/write-off manual), hapus supaya tidak nyangkut
+    # dan menghalangi leftovers.py bikin BANK_ONLY/OTOMAX_ONLY baru untuk bm/o ini.
+    if m.bank_mutation_id and m.otomax_entry_id:
+        Discrepancy.objects.filter(
+            bank_mutation_id=m.bank_mutation_id,
+            otomax_entry_id=m.otomax_entry_id,
+            status=DiscrepancyStatus.OPEN,
+        ).delete()
+
     day, _ = ReconDay.objects.select_for_update().get_or_create(book_date=m.book_date)
     day.recompute_selisih()
     day.save(update_fields=["selisih_adjustments", "selisih_current", "updated_at"])
-
-
