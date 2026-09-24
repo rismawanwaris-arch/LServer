@@ -12,7 +12,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from django.contrib.auth.decorators import login_required
-from django.db.models import Sum
+from django.db.models import Q, Sum
 from django.shortcuts import render
 
 from apps.core.enums import Channel, DiscrepancyStatus
@@ -29,14 +29,34 @@ def discrepancy_list_view(request):
     start_date_raw = request.GET.get("start_date")
     end_date_raw = request.GET.get("end_date")
     channel = request.GET.get("channel", "")
+    q = request.GET.get("q", "").strip()
 
-    qs = Discrepancy.objects.select_related("bank_mutation", "otomax_entry")
+    qs = Discrepancy.objects.select_related(
+        "bank_mutation",
+        "otomax_entry",
+        "otomax_entry__reseller",
+    )
     if start_date_raw:
         qs = qs.filter(origin_book_date__gte=_parse_date(start_date_raw))
     if end_date_raw:
         qs = qs.filter(origin_book_date__lte=_parse_date(end_date_raw))
     if channel:
         qs = qs.filter(channel=channel)
+    if q:
+        qs = qs.filter(
+            Q(code__icontains=q)
+            | Q(bank_mutation__outlet_name__icontains=q)
+            | Q(bank_mutation__description_raw__icontains=q)
+            | Q(bank_mutation__ref_normalized__icontains=q)
+            | Q(bank_mutation__ref_core__icontains=q)
+            | Q(bank_mutation__external_ref__icontains=q)
+            | Q(otomax_entry__reseller_name_raw__icontains=q)
+            | Q(otomax_entry__reseller__name__icontains=q)
+            | Q(otomax_entry__reseller__code__icontains=q)
+            | Q(otomax_entry__description_raw__icontains=q)
+            | Q(otomax_entry__ref_normalized__icontains=q)
+            | Q(otomax_entry__ref_core__icontains=q)
+        )
 
     # Ringkasan KPI dihitung dari filter tanggal/channel yang sama TAPI tanpa filter
     # status, supaya kartu di atas selalu menunjukkan gambaran lengkap (Open/Resolved/
@@ -60,6 +80,7 @@ def discrepancy_list_view(request):
             "start_date": start_date_raw or "",
             "end_date": end_date_raw or "",
             "selected_channel": channel,
+            "q": q,
             "channels": Channel.choices,
             "statuses": DiscrepancyStatus.choices,
             "open_count": open_count,

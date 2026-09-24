@@ -645,5 +645,99 @@ def test_discrepancy_list_status_filter_and_write_off_action(auth_client):
     assert disc.code not in {d.code for d in res_default.context["items"]}
 
 
+@pytest.mark.django_db
+def test_discrepancy_list_displays_names_and_search_filter(auth_client):
+    from apps.catalog.models import Reseller
+
+    d = date(2026, 9, 2)
+    batch_bank = ImportBatch.objects.create(
+        channel=Channel.MERCHANT_BCA, book_date=d, source_filename="bca.csv", file_hash="hb_disc"
+    )
+    batch_otomax = ImportBatch.objects.create(
+        channel=Channel.OTOMAX, book_date=d, source_filename="otomax.csv", file_hash="ho_disc"
+    )
+
+    reseller = Reseller.objects.create(code="PLC999", name="Agus Cellular")
+
+    bm = BankMutation.objects.create(
+        import_batch=batch_bank,
+        book_date=d,
+        channel=Channel.MERCHANT_BCA,
+        amount=Decimal("100000"),
+        outlet_name="BANDUNG CIKADUT 2",
+        description_raw="CR QRIS CIKADUT REF 9988",
+        ref_core="9988",
+        extracted_tokens=["TOK9988"],
+        row_hash="bm_disc_1",
+    )
+    oe = OtomaxEntry.objects.create(
+        import_batch=batch_otomax,
+        book_date=d,
+        reseller_name_raw="AGUS CELLULAR",
+        reseller=reseller,
+        amount=Decimal("50000"),
+        description_raw="Deposit Tiket #55123",
+        ref_core="55123",
+        extracted_tokens=["55123"],
+        row_hash="oe_disc_1",
+    )
+
+    disc_bank = Discrepancy.objects.create(
+        code="SLS-BANK-1",
+        origin_book_date=d,
+        channel=Channel.MERCHANT_BCA,
+        kind=DiscrepancyKind.BANK_ONLY,
+        bank_mutation=bm,
+        amount=Decimal("100000"),
+    )
+    disc_otomax = Discrepancy.objects.create(
+        code="SLS-OTOMAX-1",
+        origin_book_date=d,
+        channel=Channel.BCA,
+        kind=DiscrepancyKind.OTOMAX_ONLY,
+        otomax_entry=oe,
+        amount=Decimal("50000"),
+    )
+
+    # 1. Base list view should render names and descriptions
+    res = auth_client.get("/selisih/")
+    assert res.status_code == 200
+    html = res.content.decode()
+    assert "BANDUNG CIKADUT 2" in html
+    assert "AGUS CELLULAR" in html
+    assert "PLC999" in html
+    assert "CR QRIS CIKADUT REF 9988" in html
+    assert "Deposit Tiket #55123" in html
+    assert "TOK9988" in html
+    assert "55123" in html
+
+    # 2. Search by outlet name
+    res_outlet = auth_client.get("/selisih/", {"q": "CIKADUT"})
+    assert res_outlet.status_code == 200
+    outlet_items = {item.code for item in res_outlet.context["items"]}
+    assert disc_bank.code in outlet_items
+    assert disc_otomax.code not in outlet_items
+
+    # 3. Search by reseller name
+    res_rsl = auth_client.get("/selisih/", {"q": "Agus"})
+    assert res_rsl.status_code == 200
+    rsl_items = {item.code for item in res_rsl.context["items"]}
+    assert disc_otomax.code in rsl_items
+    assert disc_bank.code not in rsl_items
+
+    # 4. Search by token
+    res_tok = auth_client.get("/selisih/", {"q": "9988"})
+    assert res_tok.status_code == 200
+    tok_items = {item.code for item in res_tok.context["items"]}
+    assert disc_bank.code in tok_items
+    assert disc_otomax.code not in tok_items
+
+    # 5. Search with no matches
+    res_none = auth_client.get("/selisih/", {"q": "TIDAKADAMATCH"})
+    assert res_none.status_code == 200
+    assert len(res_none.context["items"]) == 0
+
+
+
 
 
