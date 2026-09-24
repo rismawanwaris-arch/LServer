@@ -17,6 +17,7 @@ BD = date(2026, 9, 5)
 
 @pytest.mark.django_db
 def test_purge_day_removes_txn_keeps_catalog():
+    reseller_count_before = Reseller.objects.count()  # 41 baris bawaan dari seed migration
     Reseller.objects.create(code="R1", name="R1")
     _bank("ATMLTRPRM 01884 000001039 21540100059656", "550000")
     _otomax("TARTUN EDC BRI ATMLTRPRM 01884 000001039 21540100059656", "550000")
@@ -26,7 +27,7 @@ def test_purge_day_removes_txn_keeps_catalog():
 
     assert BankMutation.objects.count() == 0
     assert ImportBatch.objects.count() == 0
-    assert Reseller.objects.count() == 1  # katalog aman
+    assert Reseller.objects.count() == reseller_count_before + 1  # katalog aman
 
 
 @pytest.mark.django_db

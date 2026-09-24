@@ -34,6 +34,12 @@ urlpatterns = [
     path("rules/toggle/<int:pk>/", views.toggle_exclusion_rule_action, name="toggle-exclusion-rule"),
     path("rules/delete/<int:pk>/", views.delete_exclusion_rule_action, name="delete-exclusion-rule"),
     path("rules/apply/", views.apply_exclusion_rules_action, name="apply-exclusion-rules"),
+    # 7b. Kode Reseller (kode -> nama reseller, dipakai mesin pencocokan)
+    path("reseller/", views.reseller_view, name="reseller-list"),
+    path("reseller/add/", views.add_reseller_action, name="add-reseller"),
+    path("reseller/edit/<int:pk>/", views.edit_reseller_action, name="edit-reseller"),
+    path("reseller/toggle/<int:pk>/", views.toggle_reseller_action, name="toggle-reseller"),
+    path("reseller/delete/<int:pk>/", views.delete_reseller_action, name="delete-reseller"),
     # Recon Engine & Day Control
     path("run/", views.run_engine, name="run-engine"),
     path("close/", views.close_view, name="close-day"),

@@ -421,17 +421,22 @@ def test_tartun_bulk_exact_nominal_fallback():
 
 @pytest.mark.django_db
 def test_tartun_plc_auto_deposit_nominal_match():
+    """Kode PLC di sini SENGAJA bukan salah satu dari 41 kode bawaan (migrasi
+    catalog/0003_seed_reseller_codes) supaya pass 'Kode Reseller' (2b) tidak ikut
+    campur -- test ini murni menguji fallback nominal pass 4 untuk kode yang BELUM
+    terdaftar di menu Kode Reseller. Skenario kode yang SUDAH terdaftar diuji di
+    test_tartun_plc_matches_via_reseller_code_before_auto_deposit_fallback."""
     # BCA Bank mutation with Tartun PLC
     b = BankMutation.objects.create(
         import_batch=_batch(Channel.BCA),
         channel=Channel.BCA,
         book_date=BD,
-        description_raw="TRSF E-BANKING CR 0309/FTSCY/WS95271 3190000.00  Tartun PLC111 DEDE SUMPENA B.",
-        ref_normalized="TRSF E BANKING CR TARTUN PLC111 DEDE SUMPENA B",
-        ref_core="PLC111",
-        extracted_tokens=["PLC111"],
+        description_raw="TRSF E-BANKING CR 0309/FTSCY/WS95271 3190000.00  Tartun PLC9999 DEDE SUMPENA B.",
+        ref_normalized="TRSF E BANKING CR TARTUN PLC9999 DEDE SUMPENA B",
+        ref_core="PLC9999",
+        extracted_tokens=["PLC9999"],
         amount=Decimal("3190000"),
-        row_hash="bca_plc111",
+        row_hash="bca_plc9999",
     )
     # Otomax entry with Auto Deposit BCA
     o = OtomaxEntry.objects.create(
@@ -458,6 +463,66 @@ def test_tartun_plc_auto_deposit_nominal_match():
     assert m.amount_bank == Decimal("3190000")
     assert m.amount_otomax == Decimal("3190000")
     assert "Auto Deposit" in m.note
+
+
+@pytest.mark.django_db
+def test_tartun_plc_matches_via_reseller_code_before_auto_deposit_fallback():
+    """Reproduksi kasus nyata yang memicu fitur Kode Reseller: mutasi bank Mandiri
+    berisi token 'PLC131' (terdaftar di menu Kode Reseller -> 'PLC CIPADUNG 2'
+    lewat migrasi seed), dan ada BEBERAPA entri Otomax lain dengan nominal SAMA
+    PERSIS dari reseller yang BERBEDA -- tanpa fitur ini, operator harus pilih manual
+    di antara kandidat yang membingungkan. Dengan kode terdaftar, harus langsung
+    auto-match ke reseller yang benar tanpa menyentuh Pass 4 (fallback generik)."""
+    b = BankMutation.objects.create(
+        import_batch=_batch(Channel.MANDIRI),
+        channel=Channel.MANDIRI,
+        book_date=BD,
+        description_raw="MCM InhouseTrf DARI TAMIM MUSLIH Tartun PLC131",
+        ref_normalized="MCM INHOUSETRF DARI TAMIM MUSLIH TARTUN PLC131",
+        ref_core="PLC131",
+        extracted_tokens=["PLC131"],
+        amount=Decimal("1500000"),
+        row_hash="mandiri_plc131",
+    )
+    correct = OtomaxEntry.objects.create(
+        import_batch=_batch(Channel.OTOMAX),
+        book_date=BD,
+        reseller_name_raw="PLC CIPADUNG 2",
+        amount=Decimal("1500000"),
+        description_raw="TARTUN TF MANDIRI MCM InhouseTrf DARI TAMIM MUSLIH",
+        category=OtomaxCategory.TOPUP_TARTUN,
+        channel_hint=Channel.MANDIRI,
+        ref_normalized="TARTUN TF MANDIRI MCM INHOUSETRF DARI TAMIM MUSLIH",
+        row_hash="oto_cipadung2",
+    )
+    # Kandidat pengecoh: reseller LAIN, kebetulan nominal sama persis.
+    decoy = OtomaxEntry.objects.create(
+        import_batch=_batch(Channel.OTOMAX),
+        book_date=BD,
+        reseller_name_raw="PLC BK7 NAGROG2",
+        amount=Decimal("1500000"),
+        description_raw="Auto Deposit BCA 4373433015",
+        category=OtomaxCategory.TOPUP_TARTUN,
+        channel_hint=Channel.MANDIRI,
+        ref_normalized="AUTO DEPOSIT BCA 4373433015",
+        row_hash="oto_decoy",
+    )
+
+    run_match(BD)
+
+    b.refresh_from_db()
+    correct.refresh_from_db()
+    decoy.refresh_from_db()
+    assert b.match_status == MatchStatus.MATCHED
+    assert correct.match_status == MatchStatus.MATCHED
+    # Pengecoh tidak ikut kepasangkan -- jadi leftover PENDING_SETTLE seperti biasa,
+    # bukan MATCHED ke bank mutation yang salah.
+    assert decoy.match_status == MatchStatus.PENDING_SETTLE
+
+    m = Match.objects.filter(bank_mutation=b).first()
+    assert m is not None
+    assert m.otomax_entry_id == correct.id
+    assert "Kode Reseller" in m.note
 
 
 @pytest.mark.django_db

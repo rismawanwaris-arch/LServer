@@ -27,11 +27,19 @@ from .manual_review import (
 from .matches import matches_view
 from .pending_settle import manual_tag_otomax_action, pending_settle_view
 from .reports import reports_export_action, reports_view
+from .resellers import (
+    add_reseller_action,
+    delete_reseller_action,
+    edit_reseller_action,
+    reseller_view,
+    toggle_reseller_action,
+)
 from .reversal import manual_net_reversal_action, reversal_view
 from .upload import delete_batch_action, upload, upload_view
 
 __all__ = [
     "add_exclusion_rule_action",
+    "add_reseller_action",
     "app_settings_view",
     "apply_exclusion_rules_action",
     "bulk_manual_match_action",
@@ -40,7 +48,9 @@ __all__ = [
     "day_view",
     "delete_batch_action",
     "delete_exclusion_rule_action",
+    "delete_reseller_action",
     "discrepancy_list_view",
+    "edit_reseller_action",
     "exclusion_rules_view",
     "manual_match_action",
     "manual_review_view",
@@ -54,10 +64,12 @@ __all__ = [
     "reopen_view",
     "reports_export_action",
     "reports_view",
+    "reseller_view",
     "resolve_view",
     "reversal_view",
     "run_engine",
     "toggle_exclusion_rule_action",
+    "toggle_reseller_action",
     "unpair_match_action",
     "update_app_settings_action",
     "upload",

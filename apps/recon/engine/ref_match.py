@@ -12,7 +12,9 @@ from django.conf import settings
 from django.db import models
 from rapidfuzz import fuzz
 
+from apps.catalog.models import Reseller
 from apps.core.enums import Channel, MatchStatus, MatchType, OtomaxCategory
+from apps.core.normalize import norm_ref
 from apps.ingest.models import BankMutation, OtomaxEntry
 
 from .helpers import _OPEN_STATUSES, RunStats, _persist_match
@@ -44,6 +46,7 @@ def _match_ref(book_date: date, channel: str) -> RunStats:
     stats = RunStats()
     tolerance = BANK_DATE_TOLERANCE.get(channel, (-1, 1))
     otomax = list(_open_otomax(book_date, channel, tolerance))
+    reseller_by_code = {r.code.upper(): r for r in Reseller.objects.filter(active=True)}
 
     by_norm: dict[tuple[str, Decimal], list] = defaultdict(list)
     by_core: dict[tuple[str, Decimal], list] = defaultdict(list)
@@ -99,13 +102,22 @@ def _match_ref(book_date: date, channel: str) -> RunStats:
             if o is not None:
                 mtype = MatchType.AUTO_CORE
 
+        # 2b. Kode Reseller (menu Kode Reseller) -> reseller spesifik + nominal persis.
+        # Ditaruh sebelum fuzzy karena ini identitas eksplisit dari tabel yang dikelola
+        # user, jauh lebih bisa dipercaya daripada tebakan kemiripan teks.
+        match_note = ""
+        if o is None:
+            o = _match_by_reseller_code(b, otomax, used, reseller_by_code)
+            if o is not None:
+                mtype = MatchType.AUTO_EXACT
+                match_note = f"Cocok via Kode Reseller ({o.reseller_name_raw})"
+
         # 3. Fuzzy match fallback (Priority 2)
         if o is None:
             o = _fuzzy_candidate(b, otomax, used)
             mtype = MatchType.AUTO_FUZZY
 
         # 4. Tartun PLC vs Auto Deposit (Pencocokan Nominal Sesuai Instruksi)
-        match_note = ""
         if o is None and _is_tartun_plc(b):
             o = _match_auto_deposit_candidate(b, otomax, used)
             if o is not None:
@@ -119,6 +131,43 @@ def _match_ref(book_date: date, channel: str) -> RunStats:
         _persist_match(book_date, channel, b, o, mtype, note=match_note)
         stats.matched += 1
     return stats
+
+
+def _match_by_reseller_code(
+    bank: BankMutation,
+    otomax: list[OtomaxEntry],
+    used: set[int],
+    reseller_by_code: dict[str, Reseller],
+) -> OtomaxEntry | None:
+    """Terjemahkan kode yang tertangkap di token/ref_core mutasi bank (mis. 'PLC131')
+    lewat tabel Kode Reseller, lalu cari SATU entri Otomax dari reseller itu dengan
+    nominal persis sama. Kalau kandidatnya nol atau lebih dari satu (mis. dua top-up
+    nominal sama ke reseller yang sama di hari yang sama), sengaja TIDAK ditebak --
+    dibiarkan untuk pass lain / review manual, supaya tidak salah pasang diam-diam."""
+    if not reseller_by_code:
+        return None
+
+    candidate_tokens = [bank.ref_core, *(bank.extracted_tokens or [])]
+    reseller = None
+    for tk in candidate_tokens:
+        if tk and tk.upper() in reseller_by_code:
+            reseller = reseller_by_code[tk.upper()]
+            break
+    if reseller is None:
+        return None
+
+    target_name = norm_ref(reseller.name)
+    cands = [
+        o
+        for o in otomax
+        if o.id not in used and o.amount == bank.amount and norm_ref(o.reseller_name_raw) == target_name
+    ]
+    if len(cands) != 1:
+        return None
+
+    chosen = cands[0]
+    used.add(chosen.id)
+    return chosen
 
 
 def _is_tartun_plc(b: BankMutation) -> bool:

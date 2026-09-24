@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Kode Reseller — RekonMutasi{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+  <h1 class="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Kode Reseller</h1>
+  <p class="text-sm text-slate-500 mt-1">
+    Pemetaan kode (mis. <span class="font-mono">PLC131</span>) yang muncul di keterangan mutasi bank ke nama reseller Otomax.
+    Kalau kode di mutasi bank cocok dengan salah satu baris di bawah, dan nominalnya persis cocok dengan satu entri Otomax milik
+    reseller itu, sistem langsung memasangkannya otomatis — tidak lagi menampilkan banyak pilihan reseller yang nominalnya kebetulan sama.
+  </p>
+</div>
+
+<div class="grid gap-6 lg:grid-cols-3">
+  <!-- Form Tambah -->
+  <div class="card lg:col-span-1">
+    <h2 class="font-bold text-slate-900 dark:text-white mb-3">Tambah Kode Baru</h2>
+    <form method="post" action="{% url 'add-reseller' %}" class="space-y-3.5 text-xs">
+      {% csrf_token %}
+      <div>
+        <label class="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Kode</label>
+        <input type="text" name="code" required placeholder="Contoh: PLC131"
+               class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-mono focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
+      </div>
+      <div>
+        <label class="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Nama Reseller</label>
+        <input type="text" name="name" required placeholder="Contoh: PLC CIPADUNG 2"
+               class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
+      </div>
+      <button type="submit" class="btn-primary w-full justify-center py-2 font-semibold">
+        + Simpan Kode
+      </button>
+    </form>
+  </div>
+
+  <!-- Tabel Daftar Kode -->
+  <div class="card lg:col-span-2 p-0 overflow-hidden">
+    <div class="px-5 py-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
+      <h2 class="font-bold text-slate-900 dark:text-white">Daftar Kode Reseller</h2>
+      <span class="badge-mute text-[10px]">{{ resellers|length }} kode</span>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-xs">
+        <thead>
+          <tr>
+            <th>Kode</th>
+            <th>Nama Reseller</th>
+            <th>Status</th>
+            <th class="text-center">Aksi</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in resellers %}
+          <tr class="{% if not r.active %}opacity-50{% endif %}" x-data="{ editing: false }">
+            <td colspan="4" class="p-0">
+              <div x-show="!editing" class="flex items-center gap-3 px-3.5 py-2.5">
+                <div class="font-mono font-semibold text-slate-900 dark:text-white w-24 flex-shrink-0">{{ r.code }}</div>
+                <div class="flex-1 text-slate-700 dark:text-slate-300">{{ r.name }}</div>
+                <div class="w-28 flex-shrink-0">
+                  <form method="post" action="{% url 'toggle-reseller' r.id %}" class="inline">
+                    {% csrf_token %}
+                    <button type="submit" class="cursor-pointer font-semibold {% if r.active %}text-emerald-600 hover:underline{% else %}text-slate-400 hover:underline{% endif %}">
+                      {% if r.active %}● Aktif{% else %}○ Nonaktif{% endif %}
+                    </button>
+                  </form>
+                </div>
+                <div class="flex items-center gap-2 flex-shrink-0">
+                  <button type="button" @click="editing = true" class="text-indigo-600 hover:text-indigo-800 font-semibold">Edit</button>
+                  <form method="post" action="{% url 'delete-reseller' r.id %}" class="inline"
+                        onsubmit="return confirm('Hapus kode {{ r.code }}?');">
+                    {% csrf_token %}
+                    <button type="submit" class="text-rose-600 hover:text-rose-800" title="Hapus">
+                      <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
+                  </form>
+                </div>
+              </div>
+
+              <form x-show="editing" x-cloak style="display: none;" method="post" action="{% url 'edit-reseller' r.id %}"
+                    class="flex items-center gap-2 px-3.5 py-2.5 bg-indigo-50/50 dark:bg-indigo-950/20">
+                {% csrf_token %}
+                <input type="text" name="code" value="{{ r.code }}" required
+                       class="w-24 flex-shrink-0 rounded-lg border border-slate-300 bg-white px-2 py-1.5 font-mono text-xs focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
+                <input type="text" name="name" value="{{ r.name }}" required
+                       class="flex-1 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
+                <button type="submit" class="btn-primary py-1.5 px-3 text-xs font-semibold flex-shrink-0">Simpan</button>
+                <button type="button" @click="editing = false" class="btn-ghost py-1.5 px-3 text-xs flex-shrink-0">Batal</button>
+              </form>
+            </td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="4" class="text-center py-8 text-slate-400">
+              Belum ada kode reseller terdaftar. Gunakan form di sebelah kiri untuk menambahkan.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
