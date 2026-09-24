@@ -9,7 +9,7 @@ from datetime import date
 
 from django.db import models, transaction
 
-from apps.core.enums import MatchStatus
+from apps.core.enums import MatchStatus, OtomaxCategory
 from apps.ingest.models import BankMutation, DebitIgnored, ExcludedTransaction, ImportBatch, OtomaxEntry
 
 from .models import Adjustment, Discrepancy, Match, ReconDay
@@ -99,23 +99,30 @@ def delete_import_batch(batch_id: int, *, include_closed: bool = False) -> dict:
     if day and day.locked and not include_closed:
         raise DayIsClosed(f"Tanggal {batch.book_date} sudah ditutup — penghapusan batch ditolak.")
 
+    batch_date = batch.book_date
+
     # 1. Kumpulkan ID bank mutation dan otomax entry milik batch ini
     bank_ids = list(batch.mutations.values_list("id", flat=True))
     otomax_ids = list(batch.otomax.values_list("id", flat=True))
 
-    # 2. Cari semua pasangan Match yang melibatkan mutasi / entri di batch ini
+    # 2. Cari semua pasangan Match yang melibatkan mutasi / entri di batch ini (termasuk M2M QRIS AGGREGATE)
     matches = Match.objects.filter(
-        models.Q(bank_mutation_id__in=bank_ids) | models.Q(otomax_entry_id__in=otomax_ids)
-    )
+        models.Q(bank_mutation_id__in=bank_ids)
+        | models.Q(otomax_entry_id__in=otomax_ids)
+        | models.Q(otomax_entries__in=otomax_ids)
+    ).distinct()
 
     # Catat ID pasangan dari batch lain yang selamat agar statusnya direset ke UNMATCHED
     surviving_bank_ids = set()
     surviving_otomax_ids = set()
-    for m in matches:
+    for m in matches.prefetch_related("otomax_entries"):
         if m.bank_mutation_id and m.bank_mutation_id not in bank_ids:
             surviving_bank_ids.add(m.bank_mutation_id)
         if m.otomax_entry_id and m.otomax_entry_id not in otomax_ids:
             surviving_otomax_ids.add(m.otomax_entry_id)
+        for o in m.otomax_entries.all():
+            if o.id not in otomax_ids:
+                surviving_otomax_ids.add(o.id)
 
     # 3. Cari selisih (Discrepancy) yang melibatkan mutasi / entri di batch ini
     discrepancies = Discrepancy.objects.filter(
@@ -130,21 +137,51 @@ def delete_import_batch(batch_id: int, *, include_closed: bool = False) -> dict:
     discrepancies.delete()
     matches.delete()
 
-    # 6. Reset status pasangan yang masih ada ke UNMATCHED
-    if surviving_bank_ids:
-        BankMutation.objects.filter(id__in=surviving_bank_ids).update(match_status=MatchStatus.UNMATCHED)
-    if surviving_otomax_ids:
-        OtomaxEntry.objects.filter(id__in=surviving_otomax_ids).update(match_status=MatchStatus.UNMATCHED)
+    # 6. Reset status pasangan yang masih ada ke UNMATCHED jika sudah tidak punya match aktif lain
+    for b_id in surviving_bank_ids:
+        if not Match.objects.filter(bank_mutation_id=b_id, voided_at__isnull=True).exists():
+            BankMutation.objects.filter(id=b_id).update(match_status=MatchStatus.UNMATCHED)
+    for o_id in surviving_otomax_ids:
+        if not Match.objects.filter(
+            models.Q(otomax_entry_id=o_id) | models.Q(otomax_entries__id=o_id),
+            voided_at__isnull=True,
+        ).exists():
+            OtomaxEntry.objects.filter(id=o_id).update(match_status=MatchStatus.UNMATCHED)
 
-    # 7. Hapus batch (cascade ke BankMutation, OtomaxEntry, DebitIgnored)
+    # 7. Hapus batch (cascade ke BankMutation, OtomaxEntry, DebitIgnored, ExcludedTransaction)
     actual_rows = len(bank_ids) + len(otomax_ids) + batch.debits.count()
     res = {
         "channel": batch.channel,
         "filename": batch.source_filename,
-        "book_date": batch.book_date,
+        "book_date": batch_date,
         "row_count": batch.row_count or actual_rows,
         "matches_unlinked": len(surviving_bank_ids) + len(surviving_otomax_ids),
     }
     batch.delete()
+
+    # 8. Hitung ulang ReconDay jika belum dikunci
+    if day and not day.locked:
+        from .close import compute_totals
+
+        totals = compute_totals(batch_date)
+        day.total_in_bri = totals["bri"]
+        day.total_in_bca = totals["bca"]
+        day.total_in_merchant_bca = totals["merchant_bca"]
+        day.total_in_mandiri = totals["mandiri"]
+        day.total_in_bank = totals["bank"]
+        day.total_out_otomax = totals["otomax"]
+        day.selisih_initial = totals["selisih"]
+        day.matched_count = Match.objects.filter(book_date=batch_date, voided_at__isnull=True).count()
+        day.unmatched_count = (
+            BankMutation.objects.filter(book_date=batch_date, match_status=MatchStatus.UNMATCHED).count()
+            + OtomaxEntry.objects.filter(
+                book_date=batch_date,
+                category=OtomaxCategory.TOPUP_TARTUN,
+                match_status__in=[MatchStatus.UNMATCHED, MatchStatus.PENDING_SETTLE],
+            ).count()
+        )
+        day.recompute_selisih()
+        day.save()
+
     return res
 

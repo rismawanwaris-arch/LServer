@@ -93,3 +93,43 @@ def test_delete_import_batch_resets_matched_partner():
     assert o.match_status == MatchStatus.UNMATCHED
     assert OtomaxEntry.objects.filter(id=o.id).exists()
 
+
+@pytest.mark.django_db
+def test_delete_import_batch_resets_aggregate_qris_match():
+    from apps.catalog.models import MerchantMap
+
+    r = Reseller.objects.create(code="QR1", name="Outlet 1")
+    MerchantMap.objects.create(merchant_id="M001", reseller=r)
+    b = BankMutation.objects.create(
+        import_batch=ImportBatch.objects.create(
+            channel=Channel.MERCHANT_BCA, book_date=BD, source_filename="b", file_hash="hb"
+        ),
+        channel=Channel.MERCHANT_BCA,
+        book_date=BD,
+        description_raw="QRIS OUTLET 1",
+        ref_normalized="QRIS OUTLET 1",
+        amount=200000,
+        external_ref="M001",
+        row_hash="q1",
+    )
+    batch_o = ImportBatch.objects.create(channel=Channel.OTOMAX, book_date=BD, source_filename="o", file_hash="ho")
+    o1 = _otomax("TARTUN QR BULK 1", "100000", channel=Channel.MERCHANT_BCA, reseller=r)
+    o2 = _otomax("TARTUN QR BULK 2", "100000", channel=Channel.MERCHANT_BCA, reseller=r)
+    o1.import_batch = batch_o
+    o1.save()
+    o2.import_batch = batch_o
+    o2.save()
+    run_match(BD)
+
+    b.refresh_from_db()
+    assert b.match_status == MatchStatus.MATCHED
+    assert Match.objects.filter(bank_mutation=b).count() == 1
+
+    # Hapus batch otomax
+    delete_import_batch(batch_o.id)
+
+    # Match terhapus dan mutasi bank kembali UNMATCHED
+    assert Match.objects.count() == 0
+    b.refresh_from_db()
+    assert b.match_status == MatchStatus.UNMATCHED
+

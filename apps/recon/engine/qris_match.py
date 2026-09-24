@@ -13,10 +13,10 @@ from django.db import models
 from rapidfuzz import fuzz
 
 from apps.catalog.models import MerchantMap
-from apps.core.enums import Channel, DiscrepancyKind, MatchStatus, MatchType, OtomaxCategory
+from apps.core.enums import Channel, DiscrepancyKind, DiscrepancyStatus, MatchStatus, MatchType, OtomaxCategory
 from apps.ingest.models import BankMutation, OtomaxEntry
 
-from ..models import Match
+from ..models import Discrepancy, Match
 from .helpers import _OPEN_STATUSES, ZERO, RunStats, _make_discrepancy, _mark
 from .ref_match import _open_bank
 
@@ -121,6 +121,21 @@ def _persist_qris_match(
                 "merchant_name": bank.outlet_name or bank.description_raw,
             },
         )
+
+    # Bersihkan discrepancy leftover (BANK_ONLY / OTOMAX_ONLY) lama jika ada
+    if bank:
+        Discrepancy.objects.filter(
+            bank_mutation=bank,
+            status=DiscrepancyStatus.OPEN,
+            kind=DiscrepancyKind.BANK_ONLY,
+        ).delete()
+    if otomax_rows:
+        Discrepancy.objects.filter(
+            otomax_entry__in=otomax_rows,
+            status=DiscrepancyStatus.OPEN,
+            kind=DiscrepancyKind.OTOMAX_ONLY,
+        ).delete()
+
     return m
 
 

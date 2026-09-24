@@ -6,7 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-from apps.core.enums import MatchStatus, MatchType
+from apps.core.enums import DiscrepancyKind, DiscrepancyStatus, MatchStatus, MatchType
 
 from ..models import Discrepancy, Match
 
@@ -36,7 +36,7 @@ def _mark(obj, status=MatchStatus.MATCHED):
 
 
 def _persist_match(book_date, channel, bank, otomax, mtype, note=""):
-    Match.objects.create(
+    m = Match.objects.create(
         book_date=book_date,
         channel=channel,
         bank_mutation=bank,
@@ -50,6 +50,22 @@ def _persist_match(book_date, channel, bank, otomax, mtype, note=""):
     if mtype != MatchType.AGGREGATE:
         _mark(bank)
         _mark(otomax)
+
+    # Bersihkan discrepancy leftover (BANK_ONLY / OTOMAX_ONLY) yang sempat dibuat pada
+    # run sebelumnya untuk transaksi yang sekarang berhasil dicocokkan otomatis.
+    if bank:
+        Discrepancy.objects.filter(
+            bank_mutation=bank,
+            status=DiscrepancyStatus.OPEN,
+            kind=DiscrepancyKind.BANK_ONLY,
+        ).delete()
+    if otomax:
+        Discrepancy.objects.filter(
+            otomax_entry=otomax,
+            status=DiscrepancyStatus.OPEN,
+            kind=DiscrepancyKind.OTOMAX_ONLY,
+        ).delete()
+    return m
 
 
 def _next_code(book_date) -> str:

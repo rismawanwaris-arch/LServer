@@ -165,3 +165,37 @@ def test_exclusion_rules_dashboard_views(auth_client):
     # Delete rule
     auth_client.post(f"/rules/delete/{rule.id}/", {"book_date": "2026-09-12"})
     assert not ExclusionRule.objects.filter(id=rule.id).exists()
+
+
+@pytest.mark.django_db
+def test_apply_exclusion_rules_retroactive_with_discrepancy():
+    """Jika transaksi belum cocok sudah kadung dicatat Discrepancy oleh run_match,
+    apply_exclusion_rules_retroactive harus tetap sukses (menghapus Discrepancy tanpa ProtectedError)."""
+    d = date(2026, 9, 12)
+    batch = ImportBatch.objects.create(channel=Channel.BRI, book_date=d, source_filename="b.csv", file_hash="h_disc")
+    bm = BankMutation.objects.create(
+        import_batch=batch,
+        book_date=d,
+        channel=Channel.BRI,
+        amount=Decimal("15000"),
+        description_raw="BIAYA ADM BULANAN",
+        ref_normalized="BIAYA ADM",
+        row_hash="bm_with_disc",
+        match_status=MatchStatus.UNMATCHED,
+    )
+    run_match(d)
+    assert bm.discrepancies.filter(status="OPEN").exists()
+
+    ExclusionRule.objects.create(
+        name="Biaya Admin",
+        keywords="BIAYA ADM",
+        target=ExclusionTarget.BANK,
+        category=ExclusionCategory.BIAYA_ADMIN,
+        active=True,
+    )
+
+    res = apply_exclusion_rules_retroactive(book_date=d)
+    assert res["bank_moved"] == 1
+    assert not BankMutation.objects.filter(id=bm.id).exists()
+    assert ExcludedTransaction.objects.filter(row_hash="bm_with_disc").exists()
+

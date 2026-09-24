@@ -12,8 +12,11 @@ BD = date(2026, 9, 5)
 
 
 @pytest.fixture
-def client():
-    return Client()
+def client(settings):
+    settings.API_KEY = "test-key"
+    c = Client()
+    c.defaults["HTTP_X_API_KEY"] = "test-key"
+    return c
 
 
 @pytest.fixture
@@ -118,3 +121,54 @@ def test_api_reports_export(client, sample_data):
     assert res.status_code == 200
     assert "spreadsheetml" in res["Content-Type"]
     assert len(res.content) > 1000
+
+
+@pytest.mark.django_db
+def test_api_security_enforces_api_key(settings, sample_data):
+    settings.API_KEY = "super-secret-token"
+    c = Client()
+
+    # 1. Tanpa API Key -> 401
+    res = c.get("/api/reconcile/summary?d=2026-09-05")
+    assert res.status_code == 401
+    assert "Autentikasi gagal" in res.json()["error"]
+
+    # 2. API Key salah -> 401
+    res = c.get("/api/reconcile/summary?d=2026-09-05", HTTP_X_API_KEY="wrong-key")
+    assert res.status_code == 401
+
+    # 3. API Key benar via X-API-KEY -> 200
+    res = c.get("/api/reconcile/summary?d=2026-09-05", HTTP_X_API_KEY="super-secret-token")
+    assert res.status_code == 200
+
+    # 4. API Key benar via Authorization Bearer -> 200
+    res = c.get("/api/reconcile/summary?d=2026-09-05", HTTP_AUTHORIZATION="Bearer super-secret-token")
+    assert res.status_code == 200
+
+
+@pytest.mark.django_db
+def test_api_security_allows_session_user(settings, sample_data):
+    from django.contrib.auth import get_user_model
+
+    User = get_user_model()
+    user = User.objects.create_user(username="api_user", password="password")
+    settings.API_KEY = "super-secret-token"
+
+    c = Client()
+    c.force_login(user)
+    # Walau API_KEY disetel dan request tanpa header API Key, user login tetap diizinkan
+    res = c.get("/api/reconcile/summary?d=2026-09-05")
+    assert res.status_code == 200
+
+
+@pytest.mark.django_db
+def test_api_security_rejects_in_production_without_key_or_login(settings, sample_data):
+    settings.DEBUG = False
+    settings.API_KEY = ""
+
+    c = Client()
+    res = c.get("/api/reconcile/summary?d=2026-09-05")
+    assert res.status_code == 401
+    assert "Akses ditolak" in res.json()["error"]
+
+

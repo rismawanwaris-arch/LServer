@@ -95,7 +95,9 @@ def close_day(book_date: date, *, user=None, force: bool = False) -> ReconDay:
     unmatched = (
         BankMutation.objects.filter(book_date=book_date, match_status=MatchStatus.UNMATCHED).count()
         + OtomaxEntry.objects.filter(
-            book_date=book_date, category=OtomaxCategory.TOPUP_TARTUN, match_status=MatchStatus.UNMATCHED
+            book_date=book_date,
+            category=OtomaxCategory.TOPUP_TARTUN,
+            match_status__in=[MatchStatus.UNMATCHED, MatchStatus.PENDING_SETTLE],
         ).count()
     )
 

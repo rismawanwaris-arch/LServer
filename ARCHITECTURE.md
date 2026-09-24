@@ -18,7 +18,7 @@ Django project `config/` membungkus enam app, masing-masing satu tanggung jawab:
 | `apps/ingest` | Parser file mentah per bank/Otomax (`apps/ingest/parsers/*.py`) + `services.py` yang mengubah hasil parse jadi baris `BankMutation`/`OtomaxEntry` di DB. |
 | `apps/recon` | Inti bisnis: mesin pencocokan (`engine/`), carry-forward lintas hari (`carry.py`), tutup/buka buku (`close.py`), resolusi manual (`resolve.py`), laporan (`reports.py`), model (`models.py`). |
 | `apps/dashboard` | UI (Django template + HTMX/Alpine) — `views/` satu file per halaman, lihat tabel di bawah. |
-| `apps/api` | Endpoint REST tipis yang manggil fungsi service yang sama dengan dashboard (upload, jalankan pencocokan, laporan). **Catatan:** endpoint ini saat ini tidak diproteksi login — lihat bagian Keamanan di bawah. |
+| `apps/api` | Endpoint REST tipis yang manggil fungsi service yang sama dengan dashboard (upload, jalankan pencocokan, laporan). Diproteksi dengan decorator `api_auth_required` (mendukung `X-API-KEY`, `Authorization: Bearer <key>`, atau sesi login web). |
 
 ## Model inti & relasinya
 
@@ -99,14 +99,13 @@ ulang untuk tanggal itu. Selisih yang ketinggalan diselesaikan lewat `Adjustment
 bertanggal hari asal (append-only, tidak bisa diedit — lihat `Adjustment.save()`/
 `delete()`), bukan dengan mengedit balik data hari yang sudah ditutup.
 
-## Keamanan — perlu diperhatikan
+## Keamanan API REST
 
-`apps/api/*` **tidak diproteksi login** (`@csrf_exempt` tanpa `@login_required`) —
-siapa pun yang bisa menjangkau server bisa upload file, jalankan pencocokan, atau
-tag manual lewat endpoint ini tanpa autentikasi. Ini beda dengan seluruh `apps/dashboard`
-yang konsisten pakai `@login_required`. Kalau API ini benar-benar dipakai (bukan cuma
-warisan dari draf awal), perlu ditambah autentikasi sebelum dipercaya untuk data
-finansial nyata.
+Seluruh endpoint `apps/api/*` diproteksi oleh decorator `api_auth_required`:
+- **API Key**: Klien pihak ketiga / script otomatis dapat mengirim header `X-API-KEY: <key>` atau `Authorization: Bearer <key>`. Kunci dikonfigurasi melalui variabel lingkungan `API_KEY` di `.env` (atau setting Django).
+- **Session Auth**: Permintaan dari browser dengan sesi pengguna yang sudah login (`request.user.is_authenticated`) tetap diizinkan langsung.
+- **Enforcement Production**: Pada lingkungan produksi (`DEBUG=False`), setiap permintaan tanpa API Key valid atau sesi login akan ditolak dengan respons `401 Unauthorized`. Pada dev lokal (`DEBUG=True`), jika `API_KEY` belum disetel, akses diizinkan untuk kemudahan pengujian.
+
 
 ## Di mana mencari apa
 

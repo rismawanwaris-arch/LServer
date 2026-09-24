@@ -7,8 +7,9 @@ from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
 
+from apps.catalog.models import ExclusionRule, ResellerAlias
 from apps.catalog.services import find_matching_rule, resolve_reseller
-from apps.core.enums import Channel, ImportStatus, MatchStatus
+from apps.core.enums import Channel, DiscrepancyStatus, ImportStatus, MatchStatus
 from apps.core.normalize import (
     classify_otomax,
     extract_tokens,
@@ -48,12 +49,13 @@ def preview_file(channel: str, content: str | bytes, book_date: date | None = No
         )
 
     rows_preview = []
+    active_rules = list(ExclusionRule.objects.filter(active=True))
     if channel == Channel.OTOMAX:
         for r in result.otomax_rows[:20]:
             category, hint = classify_otomax(r.description_raw)
             embedded = strip_otomax_prefix(r.description_raw)
             tokens = extract_tokens(embedded)
-            rule = find_matching_rule(r.description_raw, channel="", is_bank=False)
+            rule = find_matching_rule(r.description_raw, channel="", is_bank=False, rules=active_rules)
             rows_preview.append(
                 {
                     "datetime": r.entry_datetime.strftime("%Y-%m-%d %H:%M") if r.entry_datetime else "-",
@@ -71,7 +73,7 @@ def preview_file(channel: str, content: str | bytes, book_date: date | None = No
     else:
         for r in result.bank_rows[:20]:
             tokens = extract_tokens(r.description_raw)
-            rule = find_matching_rule(r.description_raw, channel=channel, is_bank=True)
+            rule = find_matching_rule(r.description_raw, channel=channel, is_bank=True, rules=active_rules)
             rows_preview.append(
                 {
                     "datetime": r.txn_datetime.strftime("%Y-%m-%d %H:%M") if r.txn_datetime else "-",
@@ -151,12 +153,13 @@ def import_file(
 
 def _persist_bank(batch, result, channel, book_date) -> int:
     quarantined = 0
+    active_rules = list(ExclusionRule.objects.filter(active=True))
     for row in result.bank_rows:
         row_bdate = row.txn_datetime.date() if row.txn_datetime else book_date
         rh = _hash(channel, row_bdate, row.description_raw, row.amount, row.txn_datetime, row.external_ref)
 
         # Cek ExclusionRule
-        rule = find_matching_rule(row.description_raw, channel=channel, is_bank=True)
+        rule = find_matching_rule(row.description_raw, channel=channel, is_bank=True, rules=active_rules)
         if rule:
             ExcludedTransaction.objects.get_or_create(
                 row_hash=rh,
@@ -214,12 +217,14 @@ def _persist_bank(batch, result, channel, book_date) -> int:
 
 
 def _persist_otomax(batch, result, book_date) -> int:
+    active_rules = list(ExclusionRule.objects.filter(active=True))
+    alias_map = {a.alias_norm: a.reseller for a in ResellerAlias.objects.select_related("reseller")}
     for row in result.otomax_rows:
         row_bdate = row.entry_datetime.date() if row.entry_datetime else book_date
         rh = _hash(Channel.OTOMAX, row.description_raw, row.amount, row.entry_datetime, row.reseller_name_raw)
 
         # Cek ExclusionRule
-        rule = find_matching_rule(row.description_raw, channel="", is_bank=False)
+        rule = find_matching_rule(row.description_raw, channel="", is_bank=False, rules=active_rules)
         if rule:
             ExcludedTransaction.objects.get_or_create(
                 row_hash=rh,
@@ -248,7 +253,7 @@ def _persist_otomax(batch, result, book_date) -> int:
                 book_date=row_bdate,
                 entry_datetime=_aware(row.entry_datetime),
                 reseller_name_raw=row.reseller_name_raw,
-                reseller=resolve_reseller(row.reseller_name_raw),
+                reseller=resolve_reseller(row.reseller_name_raw, alias_map=alias_map),
                 amount=row.amount,
                 description_raw=row.description_raw,
                 category=category,
@@ -264,18 +269,19 @@ def _persist_otomax(batch, result, book_date) -> int:
 
 @transaction.atomic
 def apply_exclusion_rules_retroactive(book_date: date | None = None) -> dict[str, int]:
-    """Terapkan aturan pemisahan secara retrospektif pada transaksi yang belum cocok (UNMATCHED)."""
+    """Terapkan aturan pemisahan secara retrospektif pada transaksi yang belum cocok (UNMATCHED / PENDING_SETTLE)."""
     bank_qs = BankMutation.objects.filter(match_status=MatchStatus.UNMATCHED)
-    otomax_qs = OtomaxEntry.objects.filter(match_status=MatchStatus.UNMATCHED)
+    otomax_qs = OtomaxEntry.objects.filter(match_status__in=[MatchStatus.UNMATCHED, MatchStatus.PENDING_SETTLE])
 
     if book_date:
         bank_qs = bank_qs.filter(book_date=book_date)
         otomax_qs = otomax_qs.filter(book_date=book_date)
 
+    active_rules = list(ExclusionRule.objects.filter(active=True))
     bank_moved = 0
     batches_to_update = set()
     for bm in bank_qs:
-        rule = find_matching_rule(bm.description_raw, channel=bm.channel, is_bank=True)
+        rule = find_matching_rule(bm.description_raw, channel=bm.channel, is_bank=True, rules=active_rules)
         if rule:
             ExcludedTransaction.objects.get_or_create(
                 row_hash=bm.row_hash,
@@ -293,12 +299,13 @@ def apply_exclusion_rules_retroactive(book_date: date | None = None) -> dict[str
                 ),
             )
             batches_to_update.add(bm.import_batch)
+            bm.discrepancies.filter(status=DiscrepancyStatus.OPEN).delete()
             bm.delete()
             bank_moved += 1
 
     otomax_moved = 0
     for oe in otomax_qs:
-        rule = find_matching_rule(oe.description_raw, channel="", is_bank=False)
+        rule = find_matching_rule(oe.description_raw, channel="", is_bank=False, rules=active_rules)
         if rule:
             ExcludedTransaction.objects.get_or_create(
                 row_hash=oe.row_hash,
@@ -316,6 +323,7 @@ def apply_exclusion_rules_retroactive(book_date: date | None = None) -> dict[str
                 ),
             )
             batches_to_update.add(oe.import_batch)
+            oe.discrepancies.filter(status=DiscrepancyStatus.OPEN).delete()
             oe.delete()
             otomax_moved += 1
 
@@ -328,6 +336,24 @@ def apply_exclusion_rules_retroactive(book_date: date | None = None) -> dict[str
             + batch.excluded_transactions.count()
         )
         batch.save(update_fields=["excluded_count", "row_count"])
+
+    # Sinkronisasi ReconDay jika ada hari yang belum dikunci
+    affected_dates = {b.book_date for b in batches_to_update}
+    for d in affected_dates:
+        day = ReconDay.objects.filter(book_date=d, locked=False).first()
+        if day:
+            from apps.recon.close import compute_totals
+
+            totals = compute_totals(d)
+            day.total_in_bri = totals["bri"]
+            day.total_in_bca = totals["bca"]
+            day.total_in_merchant_bca = totals["merchant_bca"]
+            day.total_in_mandiri = totals["mandiri"]
+            day.total_in_bank = totals["bank"]
+            day.total_out_otomax = totals["otomax"]
+            day.selisih_initial = totals["selisih"]
+            day.recompute_selisih()
+            day.save()
 
     return {"bank_moved": bank_moved, "otomax_moved": otomax_moved, "total_moved": bank_moved + otomax_moved}
 

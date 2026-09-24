@@ -109,6 +109,18 @@ def test_bank_only_and_otomax_only_become_discrepancies():
 
 
 @pytest.mark.django_db
+def test_leftover_otomax_channel_attribution():
+    """Otomax leftover dengan channel_hint BCA/Mandiri harus mencatat Discrepancy sesuai channel-nya."""
+    o_bca = _otomax("TARTUN TF BCA 12345678", "250000", channel=Channel.BCA)
+    o_man = _otomax("TARTUN TF MANDIRI 87654321", "350000", channel=Channel.MANDIRI)
+    run_match(BD)
+    d_bca = Discrepancy.objects.get(otomax_entry=o_bca)
+    d_man = Discrepancy.objects.get(otomax_entry=o_man)
+    assert d_bca.channel == Channel.BCA
+    assert d_man.channel == Channel.MANDIRI
+
+
+@pytest.mark.django_db
 def test_qris_amount_diff_beyond_tolerance_stays_unmatched():
     """Default MATCH_AMOUNT_TOLERANCE=0: nama outlet cocok tapi nominal beda besar ->
     JANGAN auto-match. Biarkan kedua sisi muncul terpisah untuk ditinjau manual."""

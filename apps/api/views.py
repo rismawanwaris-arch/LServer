@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import functools
+import hmac
 import json
 from datetime import date, timedelta
 from decimal import Decimal
 
+from django.conf import settings
 from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -36,8 +39,52 @@ def _parse_date(val: str | None) -> date:
     return timezone.localdate()
 
 
+def api_auth_required(view_func):
+    """Decorator untuk memproteksi endpoint REST API.
+
+    Akses diizinkan jika:
+    1. Pengguna terautentikasi via sesi Django (request.user.is_authenticated), ATAU
+    2. Request menyertakan header 'X-API-KEY' atau 'Authorization: Bearer <key>'
+       yang cocok dengan settings.API_KEY, ATAU
+    3. settings.API_KEY belum disetel DAN settings.DEBUG bernilai True (lingkungan dev lokal).
+    """
+
+    @functools.wraps(view_func)
+    def _wrapped(request, *args, **kwargs):
+        if request.user and request.user.is_authenticated:
+            return view_func(request, *args, **kwargs)
+
+        configured_key = getattr(settings, "API_KEY", "").strip()
+        auth_header = request.headers.get("Authorization", "").strip()
+        api_key_header = request.headers.get("X-API-KEY", "").strip()
+        provided_key = ""
+        if auth_header.startswith("Bearer "):
+            provided_key = auth_header[7:].strip()
+        elif api_key_header:
+            provided_key = api_key_header
+
+        if configured_key:
+            if provided_key and hmac.compare_digest(provided_key, configured_key):
+                return view_func(request, *args, **kwargs)
+            return JsonResponse(
+                {"error": "Autentikasi gagal: API Key tidak valid atau tidak disertakan."},
+                status=401,
+            )
+
+        if not getattr(settings, "DEBUG", False):
+            return JsonResponse(
+                {"error": "Akses ditolak: Autentikasi login diperlukan atau API_KEY belum disetel di server."},
+                status=401,
+            )
+
+        return view_func(request, *args, **kwargs)
+
+    return _wrapped
+
+
 @csrf_exempt
 @require_POST
+@api_auth_required
 def upload_otomax(request):
     """POST /api/upload/otomax"""
     f = request.FILES.get("file")
@@ -71,6 +118,7 @@ def upload_otomax(request):
 
 @csrf_exempt
 @require_POST
+@api_auth_required
 def upload_mutasi(request, bank: str):
     """POST /api/upload/mutasi/{bank}"""
     channel = BANK_MAP.get(bank.lower())
@@ -109,6 +157,7 @@ def upload_mutasi(request, bank: str):
 
 @csrf_exempt
 @require_POST
+@api_auth_required
 def upload_preview(request):
     """POST /api/upload/preview"""
     f = request.FILES.get("file")
@@ -130,6 +179,7 @@ def upload_preview(request):
 
 @csrf_exempt
 @require_POST
+@api_auth_required
 def reconcile_run(request):
     """POST /api/reconcile/run"""
     bd_str = request.POST.get("book_date") or request.GET.get("book_date")
@@ -174,6 +224,7 @@ def reconcile_run(request):
 
 
 @require_GET
+@api_auth_required
 def reconcile_summary(request):
     """GET /api/reconcile/summary"""
     d = _parse_date(request.GET.get("d") or request.GET.get("date"))
@@ -206,6 +257,7 @@ def reconcile_summary(request):
 
 
 @require_GET
+@api_auth_required
 def reconcile_unmatched(request):
     """GET /api/reconcile/unmatched"""
     d_str = request.GET.get("d") or request.GET.get("date")
@@ -234,6 +286,7 @@ def reconcile_unmatched(request):
 
 
 @require_GET
+@api_auth_required
 def reconcile_pending_settle(request):
     """GET /api/reconcile/pending-settle"""
     d_str = request.GET.get("d") or request.GET.get("date")
@@ -260,6 +313,7 @@ def reconcile_pending_settle(request):
 
 @csrf_exempt
 @require_POST
+@api_auth_required
 def reconcile_manual_tag(request):
     """POST /api/reconcile/manual-tag"""
     mutation_id = request.POST.get("mutation_id")
@@ -303,12 +357,14 @@ def reconcile_manual_tag(request):
 
 
 @require_GET
+@api_auth_required
 def reports_daily(request):
     """GET /api/reports/daily"""
     return reconcile_summary(request)
 
 
 @require_GET
+@api_auth_required
 def reports_export(request):
     """GET /api/reports/export"""
     start_date = _parse_date(request.GET.get("start_date"))

@@ -9,6 +9,7 @@ from collections import defaultdict
 from datetime import date
 
 from django.contrib.auth.decorators import user_passes_test
+from django.db import models
 from django.urls import reverse
 from django.utils import timezone
 
@@ -90,22 +91,35 @@ def _find_auto_pairs(unmatched_banks, pending_otomax):
 def _sync_inconsistent_batches():
     """Otomatis selaraskan tanggal batch jika berbeda dengan tanggal transaksi di dalamnya,
     dan bersihkan batch kosong tanpa transaksi."""
-    for b in ImportBatch.objects.all():
-        mut_dates = list(b.mutations.values_list("book_date", flat=True))
-        oto_dates = list(b.otomax.values_list("book_date", flat=True))
-        all_dates = mut_dates + oto_dates
-        if all_dates:
-            target_date = max(set(all_dates), key=all_dates.count)
-            if b.book_date != target_date:
-                b.book_date = target_date
-                b.save(update_fields=["book_date", "updated_at"])
-        elif (
-            b.mutations.count() == 0
-            and b.otomax.count() == 0
-            and b.debits.count() == 0
-            and b.excluded_transactions.count() == 0
-        ):
-            b.delete()
+    # Bersihkan batch kosong tanpa data transaksi secara bulk
+    ImportBatch.objects.filter(
+        mutations__isnull=True,
+        otomax__isnull=True,
+        debits__isnull=True,
+        excluded_transactions__isnull=True,
+    ).delete()
+
+    # Hanya periksa batch yang memiliki transaksi dengan tanggal berbeda dari tanggal batch
+    inconsistent_batch_ids = set(
+        ImportBatch.objects.filter(
+            models.Q(mutations__isnull=False) & ~models.Q(mutations__book_date=models.F("book_date"))
+        ).values_list("id", flat=True)
+    ) | set(
+        ImportBatch.objects.filter(
+            models.Q(otomax__isnull=False) & ~models.Q(otomax__book_date=models.F("book_date"))
+        ).values_list("id", flat=True)
+    )
+
+    if inconsistent_batch_ids:
+        for b in ImportBatch.objects.filter(id__in=inconsistent_batch_ids):
+            mut_dates = list(b.mutations.values_list("book_date", flat=True))
+            oto_dates = list(b.otomax.values_list("book_date", flat=True))
+            all_dates = mut_dates + oto_dates
+            if all_dates:
+                target_date = max(set(all_dates), key=all_dates.count)
+                if b.book_date != target_date:
+                    b.book_date = target_date
+                    b.save(update_fields=["book_date", "updated_at"])
 
 
 def build_today_steps(book_date: date) -> list[dict]:
