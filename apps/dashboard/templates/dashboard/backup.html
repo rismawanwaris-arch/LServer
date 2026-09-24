@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Backup & Restore Data — RekonMutasi{% endblock %}
+{% block content %}
+<div class="mb-6">
+  <h1 class="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Backup & Restore Data</h1>
+  <p class="text-sm text-slate-500 mt-1 max-w-prose">
+    Mencakup mutasi bank, data Otomax, hasil pencocokan, selisih, Kode Reseller, Aturan Filter,
+    dan Pengaturan Aplikasi. <b>Akun login (user) dan riwayat perubahan tidak ikut</b> — restore
+    tidak pernah mengubah siapa yang bisa login.
+  </p>
+</div>
+
+<div class="card max-w-lg p-6 mb-6">
+  <h2 class="mb-1 text-base font-semibold text-slate-900 dark:text-white">Buat Backup</h2>
+  <p class="mb-4 text-sm text-slate-500 dark:text-slate-400">
+    Unduh snapshot seluruh data di atas sebagai satu file JSON.
+  </p>
+  <a href="{% url 'download-backup' %}" class="btn-primary inline-block">Download Backup Sekarang</a>
+</div>
+
+<div class="card max-w-lg p-6 mb-6 border-rose-300 dark:border-rose-800">
+  <h2 class="mb-1 text-base font-semibold text-rose-700 dark:text-rose-400">Restore dari File</h2>
+  <p class="mb-4 text-sm text-slate-500 dark:text-slate-400">
+    <b>Mengganti total</b> data di atas dengan isi file yang diupload — data yang sekarang akan
+    terhapus. Sistem otomatis membuat safety backup dari data saat ini sebelum menghapus, jadi
+    bisa dipulihkan lagi kalau file yang diupload ternyata salah. Anda akan diminta konfirmasi
+    dulu setelah melihat ringkasan isi file, sebelum data benar-benar diganti.
+  </p>
+  <form method="post" action="{% url 'restore-preview' %}" enctype="multipart/form-data" class="space-y-3">
+    {% csrf_token %}
+    <input type="file" name="file" accept="application/json,.json" required
+           class="block w-full text-sm text-slate-600 dark:text-slate-300
+                  file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-2
+                  file:text-sm file:font-medium file:text-slate-700
+                  dark:file:bg-slate-800 dark:file:text-slate-200">
+    <button type="submit" class="btn bg-rose-600 text-white hover:bg-rose-500">Lihat Isi File & Lanjutkan</button>
+  </form>
+</div>
+
+<div class="card max-w-lg p-6">
+  <h2 class="mb-1 text-base font-semibold text-slate-900 dark:text-white">Safety Backup Otomatis</h2>
+  <p class="mb-3 text-sm text-slate-500 dark:text-slate-400">
+    Dibuat otomatis oleh sistem tepat sebelum restore, tersimpan di server (media/backups/).
+  </p>
+  {% if safety_backups %}
+  <ul class="space-y-1 text-sm font-mono text-slate-600 dark:text-slate-300">
+    {% for name in safety_backups %}
+    <li>{{ name }}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="text-sm text-slate-400">Belum ada safety backup.</p>
+  {% endif %}
+</div>
+{% endblock %}

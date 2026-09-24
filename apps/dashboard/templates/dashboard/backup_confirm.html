@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Konfirmasi Restore — RekonMutasi{% endblock %}
+{% block content %}
+<div class="mb-6">
+  <h1 class="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Konfirmasi Restore</h1>
+  <p class="text-sm text-slate-500 mt-1 max-w-prose">
+    Ini isi file yang diupload. Data yang <b>sekarang ada di database akan dihapus total</b> dan
+    diganti dengan isi di bawah ini. Safety backup dari data saat ini akan dibuat otomatis
+    sebelum penghapusan, jadi masih bisa dipulihkan lagi kalau file ini ternyata salah.
+  </p>
+</div>
+
+<div class="card max-w-lg p-6 mb-6 border-rose-300 dark:border-rose-800">
+  <h2 class="mb-3 text-base font-semibold text-slate-900 dark:text-white">
+    Isi file: {{ total }} baris
+  </h2>
+  <table class="w-full text-sm mb-4">
+    <tbody>
+      {% for label, count in counts %}
+      <tr class="border-t border-slate-100 dark:border-slate-800">
+        <td class="py-1 text-slate-600 dark:text-slate-300">{{ label }}</td>
+        <td class="py-1 text-right font-mono">{{ count }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <form method="post" action="{% url 'restore-confirm' %}"
+        onsubmit="return confirm('Ganti TOTAL data sekarang dengan isi file ini? Tidak bisa dibatalkan langsung (harus restore ulang dari safety backup).')">
+    {% csrf_token %}
+    <input type="hidden" name="token" value="{{ token }}">
+    <div class="flex gap-2">
+      <button type="submit" class="btn bg-rose-600 text-white hover:bg-rose-500">Ya, Ganti Total Data Sekarang</button>
+      <a href="{% url 'backup' %}" class="btn">Batal</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

@@ -52,6 +52,11 @@ urlpatterns = [
     # Pengaturan Aplikasi
     path("pengaturan/", views.app_settings_view, name="app-settings"),
     path("pengaturan/simpan/", views.update_app_settings_action, name="update-app-settings"),
+    # Backup & Restore Data
+    path("backup/", views.backup_view, name="backup"),
+    path("backup/download/", views.download_backup_action, name="download-backup"),
+    path("backup/restore/preview/", views.restore_preview_action, name="restore-preview"),
+    path("backup/restore/confirm/", views.restore_confirm_action, name="restore-confirm"),
     # Auth
     path("login/", auth_views.LoginView.as_view(template_name="dashboard/login.html"), name="login"),
     path("logout/", auth_views.LogoutView.as_view(next_page="login"), name="logout"),

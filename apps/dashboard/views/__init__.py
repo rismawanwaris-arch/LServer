@@ -6,6 +6,7 @@ apps/dashboard/urls.py tidak perlu berubah sama sekali."""
 from __future__ import annotations
 
 from .app_settings import app_settings_view, update_app_settings_action
+from .backup import backup_view, download_backup_action, restore_confirm_action, restore_preview_action
 from .data_admin import data_admin, purge_all_view, purge_day_view
 from .day import day_view
 from .discrepancies import discrepancy_list_view
@@ -42,6 +43,7 @@ __all__ = [
     "add_reseller_action",
     "app_settings_view",
     "apply_exclusion_rules_action",
+    "backup_view",
     "bulk_manual_match_action",
     "close_view",
     "data_admin",
@@ -50,6 +52,7 @@ __all__ = [
     "delete_exclusion_rule_action",
     "delete_reseller_action",
     "discrepancy_list_view",
+    "download_backup_action",
     "edit_reseller_action",
     "exclusion_rules_view",
     "manual_match_action",
@@ -66,6 +69,8 @@ __all__ = [
     "reports_view",
     "reseller_view",
     "resolve_view",
+    "restore_confirm_action",
+    "restore_preview_action",
     "reversal_view",
     "run_engine",
     "toggle_exclusion_rule_action",
