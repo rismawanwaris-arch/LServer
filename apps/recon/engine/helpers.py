@@ -70,8 +70,20 @@ def _persist_match(book_date, channel, bank, otomax, mtype, note=""):
 
 def _next_code(book_date) -> str:
     prefix = f"SLS-{book_date:%Y%m%d}-"
-    n = Discrepancy.objects.filter(code__startswith=prefix).count() + 1
-    return f"{prefix}{n:03d}"
+    existing_codes = Discrepancy.objects.filter(code__startswith=prefix).values_list("code", flat=True)
+    max_num = 0
+    for code in existing_codes:
+        suffix = code[len(prefix):]
+        try:
+            val = int(suffix)
+            if val > max_num:
+                max_num = val
+        except ValueError:
+            pass
+    next_num = max_num + 1
+    while Discrepancy.objects.filter(code=f"{prefix}{next_num:03d}").exists():
+        next_num += 1
+    return f"{prefix}{next_num:03d}"
 
 
 def _make_discrepancy(book_date, channel, kind, *, amount, bank=None, otomax=None, note=""):

@@ -6,7 +6,7 @@ import pytest
 from django.utils import timezone
 
 from apps.catalog.models import MerchantMap, Reseller
-from apps.core.enums import Channel, MatchStatus, OtomaxCategory
+from apps.core.enums import Channel, DiscrepancyKind, MatchStatus, OtomaxCategory
 from apps.core.normalize import classify_otomax, extract_tokens, norm_ref, ref_core, strip_otomax_prefix
 from apps.ingest.models import BankMutation, ImportBatch, OtomaxEntry
 from apps.recon.carry import carry_forward
@@ -942,5 +942,35 @@ def test_recon_rematch_command():
     assert b.match_status == MatchStatus.MATCHED
     assert o.match_status == MatchStatus.MATCHED
     assert Match.objects.filter(book_date=d, bank_mutation=b, otomax_entry=o).exists()
+
+
+@pytest.mark.django_db
+def test_next_code_prevents_duplicate_key_violation():
+    from apps.recon.engine.helpers import _make_discrepancy, _next_code
+
+    d = date(2026, 8, 30)
+    # Simulate an existing high-numbered discrepancy (e.g. SLS-20260830-049)
+    Discrepancy.objects.create(
+        code="SLS-20260830-049",
+        origin_book_date=d,
+        channel=Channel.BRI,
+        kind=DiscrepancyKind.BANK_ONLY,
+        amount=Decimal("50000"),
+        status="WRITTEN_OFF",
+    )
+
+    # Next code must not be 001, 002... that would eventually hit 049 if created repeatedly,
+    # or if count was 1, it must not collide with 049!
+    # Specifically, it should jump past 049 to 050.
+    code = _next_code(d)
+    assert code == "SLS-20260830-050"
+
+    # Creating discrepancy must succeed without UniqueViolation
+    d1 = _make_discrepancy(d, Channel.BRI, DiscrepancyKind.BANK_ONLY, amount=Decimal("10000"))
+    assert d1.code == "SLS-20260830-050"
+
+    d2 = _make_discrepancy(d, Channel.BRI, DiscrepancyKind.BANK_ONLY, amount=Decimal("20000"))
+    assert d2.code == "SLS-20260830-051"
+
 
 
