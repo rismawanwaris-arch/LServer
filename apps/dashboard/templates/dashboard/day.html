@@ -86,6 +86,28 @@
     </div>
   </div>
 
+  <!-- Selisih Nominal pada Pasangan Matched (mis. cocok manual dgn nominal beda) -->
+  <div class="card border-l-4 {% if summary.amount_diff_count > 0 %}border-l-rose-500{% else %}border-l-emerald-500{% endif %}">
+    <div class="flex items-center justify-between">
+      <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Selisih Nominal Match</div>
+      {% if summary.amount_diff_count > 0 %}
+      <span class="badge-warn">{{ summary.amount_diff_count }} pasangan</span>
+      {% else %}
+      <span class="badge-good">0 pasangan</span>
+      {% endif %}
+    </div>
+    <div class="money mt-2 text-2xl font-bold {% if summary.amount_diff_count > 0 %}text-rose-600{% else %}text-emerald-600{% endif %}">
+      Rp {{ summary.amount_diff_amount|rupiah }}
+    </div>
+    <div class="mt-2 text-xs text-slate-500">Pasangan sudah cocok tapi nominal bank &amp; Otomax beda</div>
+    {% if summary.amount_diff_count > 0 %}
+    <a href="{% url 'discrepancy-list' %}?start_date={{ book_date|date:'Y-m-d' }}&end_date={{ book_date|date:'Y-m-d' }}"
+       class="mt-2 inline-flex items-center text-xs font-medium text-rose-600 hover:underline">
+      Lihat daftar selisih &rarr;
+    </a>
+    {% endif %}
+  </div>
+
   <!-- Matched Otomatis -->
   <div class="card border-l-4 border-l-emerald-500">
     <div class="flex items-center justify-between">

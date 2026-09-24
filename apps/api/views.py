@@ -198,6 +198,8 @@ def reconcile_summary(request):
         "unmatched_bank_amount": _dec(summary["unmatched_bank_amount"]),
         "pending_settle_count": summary["pending_settle_count"],
         "pending_settle_amount": _dec(summary["pending_settle_amount"]),
+        "amount_diff_count": summary["amount_diff_count"],
+        "amount_diff_amount": _dec(summary["amount_diff_amount"]),
         "per_bank": {k: {sk: _dec(sv) for sk, sv in v.items()} for k, v in summary["per_bank"].items()},
     }
     return JsonResponse(result)

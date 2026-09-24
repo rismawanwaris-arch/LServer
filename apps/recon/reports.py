@@ -73,12 +73,11 @@ def get_daily_summary(book_date: date) -> dict:
     # kelihatan lewat Discrepancy(AMOUNT_DIFF) yang dibuat khusus untuk pasangan itu
     # (lihat manual_pair_transactions & qris_match Pass 3), jadi harus ditambahkan manual
     # supaya tidak hilang dari total selisih.
-    amount_diff_amount = (
-        Discrepancy.objects.filter(
-            origin_book_date=book_date, kind=DiscrepancyKind.AMOUNT_DIFF, status=DiscrepancyStatus.OPEN
-        ).aggregate(s=Sum("amount"))["s"]
-        or ZERO
+    amount_diff_qs = Discrepancy.objects.filter(
+        origin_book_date=book_date, kind=DiscrepancyKind.AMOUNT_DIFF, status=DiscrepancyStatus.OPEN
     )
+    amount_diff_amount = amount_diff_qs.aggregate(s=Sum("amount"))["s"] or ZERO
+    amount_diff_count = amount_diff_qs.count()
     # Selisih riil = sisa PR rekonsiliasi (bank tanpa pasangan - otomax tanpa pasangan),
     # BUKAN total_bank - total_otomax: itu naive per book_date yang sama, jadi salah besar
     # kalau Otomax-nya dicatat lintas tanggal (mis. QRIS diinput H+1) padahal sudah matched.
@@ -103,6 +102,8 @@ def get_daily_summary(book_date: date) -> dict:
         "unmatched_bank_amount": unmatched_bank_amount,
         "pending_settle_count": pending_settle.count(),
         "pending_settle_amount": pending_settle_amount,
+        "amount_diff_count": amount_diff_count,
+        "amount_diff_amount": amount_diff_amount,
         "per_bank": per_bank,
         "otomax_lain_lain": otomax_lain_lain,
     }
