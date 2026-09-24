@@ -8,7 +8,7 @@ from decimal import Decimal
 
 import pytest
 
-from apps.core.enums import Channel, DiscrepancyKind, DiscrepancyStatus, MatchStatus
+from apps.core.enums import Channel, DiscrepancyKind, DiscrepancyStatus, MatchStatus, MatchType
 from apps.recon.engine import run_match
 from apps.recon.models import Discrepancy, Match
 from apps.recon.reports import get_daily_summary
@@ -146,3 +146,57 @@ def test_manual_match_view_with_amount_diff(client, django_user_model):
     content = res.content.decode()
     assert "nominal beda" in content
     assert "95.000" in content
+
+
+@pytest.mark.django_db
+def test_manual_match_merge_into_existing_diff_match(client, django_user_model):
+    user = django_user_model.objects.create_superuser(username="admin_merge", password="password123")
+    client.force_login(user)
+
+    # Bank mutation: Rp 2.577.000
+    bm = _bank("QRIS RAWA CELL 004767960", "2577000", channel=Channel.MERCHANT_BCA, book_date=BD)
+    # Otomax 1: Rp 2.399.000 (diff: Rp 178.000)
+    oe1 = _otomax("TARTUN QR RAWA CELL 1", "2399000", channel=Channel.MERCHANT_BCA, book_date=BD)
+    # Otomax 2: Rp 178.000 (pending settle)
+    oe2 = _otomax("TARTUN QR RAWA CELL 2", "178000", channel=Channel.MERCHANT_BCA, book_date=BD)
+
+    # 1. Pasangkan bm dan oe1
+    res1 = client.post(
+        "/manual-match/",
+        {"bank_id": bm.pk, "otomax_id": oe1.pk, "note": "Match 1", "book_date": BD.isoformat()},
+    )
+    assert res1.status_code in (200, 302)
+
+    match = Match.objects.get(bank_mutation=bm, voided_at__isnull=True)
+    assert match.amount_diff == Decimal("178000.00")
+    assert Discrepancy.objects.filter(
+        bank_mutation=bm, kind=DiscrepancyKind.AMOUNT_DIFF, status=DiscrepancyStatus.OPEN
+    ).exists()
+
+    # 2. Pasangkan bm yang sama dengan oe2 (menyerap sisa selisih Rp 178.000)
+    res2 = client.post(
+        "/manual-match/",
+        {"bank_id": bm.pk, "otomax_id": oe2.pk, "note": "Match 2 gabung", "book_date": BD.isoformat()},
+    )
+    assert res2.status_code in (200, 302)
+
+    match.refresh_from_db()
+    assert match.amount_otomax == Decimal("2577000.00")
+    assert match.amount_diff == Decimal("0.00")
+    assert match.match_type == MatchType.AGGREGATE
+    assert set(match.otomax_entries.values_list("id", flat=True)) == {oe1.id, oe2.id}
+
+    oe2.refresh_from_db()
+    assert oe2.match_status == MatchStatus.MANUAL
+
+    # Discrepancy AMOUNT_DIFF harus sudah bersih karena selisihnya sudah 0
+    assert not Discrepancy.objects.filter(
+        bank_mutation=bm, kind=DiscrepancyKind.AMOUNT_DIFF, status=DiscrepancyStatus.OPEN
+    ).exists()
+
+    # Cek di /matches/
+    res_matches = client.get("/matches/", {"d": BD.isoformat()})
+    assert res_matches.status_code == 200
+    m_content = res_matches.content.decode()
+    assert "2 Tiket Gabungan" in m_content
+    assert "QRIS RAWA CELL" in m_content

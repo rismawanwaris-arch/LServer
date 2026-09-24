@@ -97,6 +97,9 @@
           </td>
           <td class="text-xs font-semibold text-slate-800 dark:text-slate-200">
             {{ m.otomax_entry.reseller_name_raw|default:"—" }}
+            {% if m.otomax_entries.all|length > 1 %}
+              <span class="text-[10px] font-normal text-slate-400 block sm:inline">(+{{ m.otomax_entries.all|length|add:"-1" }} tiket)</span>
+            {% endif %}
           </td>
           <td class="money text-right font-semibold text-slate-900 dark:text-white">
             Rp {{ m.amount_otomax|rupiah }}
@@ -147,9 +150,28 @@
                 <div class="flex items-center justify-between">
                   <span class="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
                     <span class="h-2 w-2 rounded-full bg-purple-500"></span> Sisi Otomax
+                    {% if m.otomax_entries.all|length > 1 %}
+                    <span class="badge bg-purple-100 text-purple-800 text-[10px] font-bold dark:bg-purple-900 dark:text-purple-300">
+                      {{ m.otomax_entries.all|length }} Tiket Gabungan
+                    </span>
+                    {% endif %}
                   </span>
                   <span class="font-mono font-bold text-slate-700 dark:text-slate-300">#{{ m.otomax_entry.id|default:"-" }}</span>
                 </div>
+
+                {% if m.otomax_entries.all|length > 1 %}
+                <div class="space-y-2 mt-2">
+                  {% for oe in m.otomax_entries.all %}
+                  <div class="p-2.5 rounded-lg bg-slate-50 border border-slate-100 dark:bg-slate-900 dark:border-slate-750">
+                    <div class="flex items-center justify-between">
+                      <span class="font-bold text-slate-800 dark:text-slate-200">{{ oe.reseller_name_raw }}</span>
+                      <span class="money font-bold text-emerald-600 dark:text-emerald-400">Rp {{ oe.amount|rupiah }}</span>
+                    </div>
+                    <div class="font-mono text-[10px] text-slate-500 truncate mt-0.5">{{ oe.description_raw }}</div>
+                  </div>
+                  {% endfor %}
+                </div>
+                {% else %}
                 <div>
                   <span class="text-slate-400">Keterangan Asli:</span>
                   <div class="font-mono mt-0.5 p-2 rounded bg-slate-50 border border-slate-100 text-slate-800 dark:bg-slate-900 dark:border-slate-750 dark:text-slate-200">
@@ -170,6 +192,7 @@
                     {% empty %}<span class="text-slate-400">—</span>{% endfor %}
                   </div>
                 </div>
+                {% endif %}
               </div>
             </div>
 

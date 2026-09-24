@@ -19,7 +19,7 @@ def matches_view(request):
 
     qs = Match.objects.filter(book_date=book_date, voided_at__isnull=True).select_related(
         "bank_mutation", "otomax_entry"
-    )
+    ).prefetch_related("otomax_entries")
     if channel and channel in Channel.values:
         qs = qs.filter(channel=channel)
     if query:

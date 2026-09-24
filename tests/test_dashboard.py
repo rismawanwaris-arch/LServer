@@ -175,6 +175,9 @@ def test_dashboard_manual_review_and_tag(auth_client):
 @pytest.mark.django_db
 def test_dashboard_pending_settle_view(auth_client):
     d = date(2026, 9, 5)
+    batch_b = ImportBatch.objects.create(
+        channel=Channel.MERCHANT_BCA, book_date=d, source_filename="b.csv", file_hash="hb_ps"
+    )
     batch_o = ImportBatch.objects.create(channel=Channel.OTOMAX, book_date=d, source_filename="o.csv", file_hash="ho2")
     OtomaxEntry.objects.create(
         import_batch=batch_o,
@@ -186,12 +189,45 @@ def test_dashboard_pending_settle_view(auth_client):
         match_status=MatchStatus.PENDING_SETTLE,
     )
 
+    # Buat mutasi bank yang sudah cocok tapi masih ada sisa selisih (Rp 500.000)
+    bm_diff = BankMutation.objects.create(
+        import_batch=batch_b,
+        book_date=d,
+        channel=Channel.MERCHANT_BCA,
+        amount=Decimal("2500000"),
+        description_raw="QRIS OUTLET CIKADUT",
+        outlet_name="CIKADUT CELL",
+        row_hash="bm_diff_ps",
+        match_status=MatchStatus.MATCHED,
+    )
+    oe_matched = OtomaxEntry.objects.create(
+        import_batch=batch_o,
+        book_date=d,
+        reseller_name_raw="PLC CIKADUT",
+        amount=Decimal("2000000"),
+        description_raw="Deposit Cikadut",
+        row_hash="oe_matched_ps",
+        match_status=MatchStatus.MATCHED,
+    )
+    Match.objects.create(
+        book_date=d,
+        channel=Channel.MERCHANT_BCA,
+        bank_mutation=bm_diff,
+        otomax_entry=oe_matched,
+        amount_bank=Decimal("2500000"),
+        amount_otomax=Decimal("2000000"),
+        match_type="AUTO_EXACT",
+    )
+
     res = auth_client.get("/pending-settle/", {"d": "2026-09-05"})
     assert res.status_code == 200
     content = res.content.decode()
     assert "Pending Settle" in content
     assert "PLC999" in content
     assert "500.000" in content
+    assert "Masih Selisih" in content
+    assert "is_diff: true" in content
+    assert len(res.context["diff_matches"]) == 1
 
 
 @pytest.mark.django_db

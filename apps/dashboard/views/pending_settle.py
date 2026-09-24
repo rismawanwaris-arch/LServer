@@ -65,6 +65,19 @@ def pending_settle_view(request):
         ).order_by("-amount", "-txn_datetime")
     )
 
+    # Mutasi bank dari hasil cocok yang masih ada sisa selisih (amount_diff > 0)
+    diff_matches = list(
+        Match.objects.filter(
+            book_date__gte=book_date - timedelta(days=2),
+            book_date__lte=book_date + timedelta(days=1),
+            voided_at__isnull=True,
+            bank_mutation__isnull=False,
+            amount_diff__gt=Decimal("0.00"),
+        )
+        .select_related("bank_mutation", "otomax_entry")
+        .order_by("-amount_diff")
+    )
+
     auto_pairs = _find_auto_pairs(unmatched_banks, list(pending_qs) if tab != "resolved" else [])
     auto_pairable_count = len(auto_pairs)
 
@@ -90,6 +103,7 @@ def pending_settle_view(request):
             "resolved_count": resolved_count,
             "resolved_total": resolved_total,
             "unmatched_banks": unmatched_banks,
+            "diff_matches": diff_matches,
             "auto_pairable_count": auto_pairable_count,
             "otomax_tags": otomax_tags,
         },

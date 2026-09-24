@@ -170,13 +170,75 @@ def manual_pair_transactions(
     bm = BankMutation.objects.select_for_update().get(pk=bank_mutation.pk)
     o = OtomaxEntry.objects.select_for_update().get(pk=otomax_entry.pk)
 
-    # Validasi: pastikan belum dipasangkan dalam match aktif
-    if Match.objects.filter(bank_mutation=bm, voided_at__isnull=True).exists():
-        raise ValueError(f"Mutasi bank #{bm.id} sudah memiliki pasangan aktif.")
-    if Match.objects.filter(otomax_entry=o, voided_at__isnull=True).exists():
+    # Validasi: pastikan entri otomax belum dipasangkan dalam match aktif
+    if Match.objects.filter(Q(otomax_entry=o) | Q(otomax_entries=o), voided_at__isnull=True).exists():
         raise ValueError(f"Entri Otomax #{o.id} sudah memiliki pasangan aktif.")
 
-    # Update match_status
+    # Cek apakah mutasi bank ini sudah memiliki match aktif
+    existing_match = Match.objects.select_for_update().filter(bank_mutation=bm, voided_at__isnull=True).first()
+
+    if existing_match:
+        # KASUS: Menggabungkan transaksi Otomax ke mutasi bank yang sudah cocok tapi masih ada selisih
+        o.match_status = MatchStatus.MANUAL
+        o.save(update_fields=["match_status", "updated_at"])
+
+        # Pastikan otomax_entry awal juga masuk ke relasi ManyToMany otomax_entries
+        orig_id = existing_match.otomax_entry_id
+        if orig_id and not existing_match.otomax_entries.filter(pk=orig_id).exists():
+            existing_match.otomax_entries.add(existing_match.otomax_entry)
+        existing_match.otomax_entries.add(o)
+
+        existing_match.amount_otomax += o.amount
+        existing_match.amount_diff = (existing_match.amount_bank or ZERO) - existing_match.amount_otomax
+        existing_match.match_type = MatchType.AGGREGATE
+        match_note = note.strip()
+        if match_note:
+            existing_match.note = f"{existing_match.note} | {match_note}".strip(" |")
+        existing_match.save()
+
+        # Bersihkan Discrepancy OPEN milik entri Otomax ini
+        Discrepancy.objects.filter(otomax_entry=o, status=DiscrepancyStatus.OPEN).delete()
+
+        # Update atau hapus Discrepancy AMOUNT_DIFF mutasi bank
+        diff = existing_match.amount_diff
+        existing_disc = Discrepancy.objects.filter(
+            bank_mutation=bm,
+            kind=DiscrepancyKind.AMOUNT_DIFF,
+            status=DiscrepancyStatus.OPEN,
+        ).first()
+
+        if diff == ZERO:
+            if existing_disc:
+                existing_disc.delete()
+        else:
+            if existing_disc:
+                existing_disc.amount = diff
+                existing_disc.note = (
+                    f"Selisih nominal gabungan: Bank Rp {bm.amount:,.2f} vs "
+                    f"Otomax Rp {existing_match.amount_otomax:,.2f}"
+                )
+                existing_disc.save(update_fields=["amount", "note", "updated_at"])
+            else:
+                _make_discrepancy(
+                    bm.book_date,
+                    bm.channel,
+                    DiscrepancyKind.AMOUNT_DIFF,
+                    amount=diff,
+                    bank=bm,
+                    otomax=o,
+                    note=(
+                        f"Selisih nominal gabungan: Bank Rp {bm.amount:,.2f} vs "
+                        f"Otomax Rp {existing_match.amount_otomax:,.2f}"
+                    ),
+                )
+
+        day, _ = ReconDay.objects.select_for_update().get_or_create(book_date=bm.book_date)
+        day.recompute_selisih()
+        day.save(update_fields=["selisih_adjustments", "selisih_current", "updated_at"])
+
+        return existing_match
+
+    # Update match_status mutasi bank baru
     bm.match_status = MatchStatus.MANUAL
     bm.save(update_fields=["match_status", "updated_at"])
 
