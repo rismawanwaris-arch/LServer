@@ -179,9 +179,10 @@
               <select name="otomax_id" required class="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
                 <option value="">-- Pilih Transaksi Otomax --</option>
                 {% for o in unmatched_otomax %}
-                <option value="{{ o.id }}">
+                <option value="{{ o.id }}"
+                        title="{{ o.reseller_name_raw }} — Rp {{ o.amount|rupiah }}{% if o.entry_datetime %} — {{ o.entry_datetime|date:'d M Y H:i' }}{% endif %}&#10;{{ o.description_raw }}">
                   {% if o.amount == b.amount %}★ [NOMINAL SAMA: Rp {{ o.amount|rupiah }}]{% else %}[Rp {{ o.amount|rupiah }}]{% endif %}
-                  {{ o.reseller_name_raw }} ({{ o.description_raw|truncatechars:28 }})
+                  {{ o.reseller_name_raw }} ({{ o.description_raw|truncatechars:40 }})
                 </option>
                 {% endfor %}
               </select>
