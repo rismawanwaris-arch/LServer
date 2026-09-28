@@ -10,36 +10,18 @@ from apps.core.enums import DiscrepancyStatus
 from apps.core.models import AppSettings
 from apps.core.period import business_month_range
 
-from .close import compute_totals
-from .models import Discrepancy, Match, ReconDay
+from .models import Discrepancy, ReconDay
 
 
 def day_overview(book_date: date) -> dict:
-    day = ReconDay.objects.filter(book_date=book_date).first()
-    totals = (
-        compute_totals(book_date)
-        if not day or not day.locked
-        else {
-            "bri": day.total_in_bri,
-            "bca": day.total_in_bca,
-            "merchant_bca": day.total_in_merchant_bca,
-            "mandiri": day.total_in_mandiri,
-            "bank": day.total_in_bank,
-            "otomax": day.total_out_otomax,
-            "selisih": day.selisih_initial,
-        }
-    )
+    """Data dasar halaman Dashboard. Angka ringkasan datang dari get_daily_summary();
+    di sini cuma hal yang benar-benar ditampilkan (dulu ikut menghitung compute_totals()
+    -- 5 query -- yang hasilnya tidak dipakai template mana pun)."""
     return {
         "book_date": book_date,
-        "day": day,
-        "totals": totals,
-        "matches": Match.objects.filter(book_date=book_date, voided_at__isnull=True)
-        .select_related("bank_mutation", "otomax_entry")
-        .order_by("-match_type"),
-        "discrepancies": Discrepancy.objects.filter(origin_book_date=book_date)
-        .select_related("bank_mutation", "otomax_entry")
-        .order_by("status", "channel"),
-        "carried_open": open_discrepancies_before(book_date),
+        "day": ReconDay.objects.filter(book_date=book_date).first(),
+        # COUNT, bukan memuat semua baris selisih lama cuma untuk dihitung jumlahnya.
+        "carried_open_count": open_discrepancies_before(book_date).count(),
     }
 
 

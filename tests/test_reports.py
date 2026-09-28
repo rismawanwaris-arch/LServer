@@ -169,6 +169,9 @@ def test_get_daily_rows_identik_dengan_get_daily_summary_per_tanggal():
     b_diff = _bank("QRIS CILENGKRANG 3 CELL 004769151", "2778000", channel=Channel.BCA, book_date=d2)
     o_diff = _otomax("TARTUN TF BCA CILENGKRANG 3", "2788000", channel=Channel.BCA, book_date=d2)
     manual_pair_transactions(b_diff, o_diff)
+    # Selisih nominal kedua di hari yang sama: GROUP BY per tanggal harus menjumlahkan keduanya.
+    b_diff2 = _bank("QRIS CIBIRU 7 CELL 004769999", "1500000", channel=Channel.BCA, book_date=d2)
+    manual_pair_transactions(b_diff2, _otomax("TARTUN TF BCA CIBIRU 7", "1490000", channel=Channel.BCA, book_date=d2))
     tag_manual_mutation(_bank("SETOR TUNAI KASIR", "400000", book_date=d2), tag="setor_tunai")
     _otomax_other("TARTUN SALAH", "75000", OtomaxCategory.TOPUP_TARTUN, "BRI", d2, MatchStatus.IGNORED)
     _otomax("TARTUN TF BRI MASIH PENDING 333", "80000", book_date=d2)
@@ -189,7 +192,7 @@ def test_get_daily_rows_identik_dengan_get_daily_summary_per_tanggal():
     # Sanity: data uji memang mengisi kolom-kolom yang dibandingkan.
     by_date = {r["book_date"]: r for r in rows}
     assert by_date[d1]["matched_auto_count"] >= 1
-    assert by_date[d2]["amount_diff_count"] == 1
+    assert by_date[d2]["amount_diff_count"] == 2
     assert by_date[d2]["matched_manual_count"] >= 1
     assert by_date[d3]["day_locked"] is True
 
@@ -206,3 +209,64 @@ def test_laporan_satu_bulan_tidak_lagi_ribuan_query(client):
     assert res.status_code == 200
     assert len(res.context["daily_rows"]) == 31
     assert len(q) < 80, len(q)  # dulu ±1.381 query untuk 31 hari
+
+
+def _per_bank_breakdown_lama(bank_qs, otomax_all_qs):
+    """Salinan PERSIS implementasi lama (7 query per bank) sebagai acuan pembanding."""
+    from django.db.models import Sum
+
+    from apps.core.enums import BANK_CHANNELS
+
+    zero = Decimal("0.00")
+    per_bank = {}
+    for ch in BANK_CHANNELS:
+        ch_mut = bank_qs.filter(channel=ch)
+        ch_otomax = otomax_all_qs.filter(channel_hint=ch)
+        per_bank[ch] = {
+            "total": ch_mut.aggregate(s=Sum("amount"))["s"] or zero,
+            "matched_auto": ch_mut.filter(match_status=MatchStatus.MATCHED).aggregate(s=Sum("amount"))["s"] or zero,
+            "matched_manual": ch_mut.filter(match_status=MatchStatus.MANUAL).aggregate(s=Sum("amount"))["s"] or zero,
+            "unmatched": ch_mut.filter(match_status=MatchStatus.UNMATCHED).aggregate(s=Sum("amount"))["s"] or zero,
+            "unmatched_count": ch_mut.filter(match_status=MatchStatus.UNMATCHED).count(),
+            "otomax_total": ch_otomax.aggregate(s=Sum("amount"))["s"] or zero,
+            "otomax_count": ch_otomax.count(),
+        }
+    lain = otomax_all_qs.exclude(channel_hint__in=BANK_CHANNELS)
+    return per_bank, {
+        "otomax_total": lain.aggregate(s=Sum("amount"))["s"] or zero,
+        "otomax_count": lain.count(),
+    }
+
+
+@pytest.mark.django_db
+def test_per_bank_breakdown_identik_dengan_versi_lama():
+    """Optimasi Dashboard (30 -> 3 query): rekap per bank harus sama persis dengan
+    implementasi lama untuk berbagai status, channel, nominal negatif, dan entri Otomax
+    tanpa channel / dinetralkan."""
+    from apps.ingest.models import BankMutation
+    from apps.recon.reports import _per_bank_breakdown
+    from apps.recon.resolve import manual_pair_transactions, tag_manual_mutation
+
+    _bank("ATMLTRPRM 01884 000001039 21540100059656", "550000")
+    _otomax("TARTUN EDC BRI ATMLTRPRM 01884 000001039 21540100059656", "550000")
+    _bank("BCA MASUK TANPA PASANGAN 1", "125000", channel=Channel.BCA)
+    _bank("BCA MASUK TANPA PASANGAN 2", "75000", channel=Channel.BCA)
+    _bank("DEBIT BIAYA", "-6500")
+    b_diff = _bank("QRIS CILENGKRANG 3 CELL 004769151", "2778000", channel=Channel.MERCHANT_BCA)
+    manual_pair_transactions(b_diff, _otomax("TARTUN QR CILENGKRANG", "2788000", channel=Channel.MERCHANT_BCA))
+    tag_manual_mutation(_bank("SETOR TUNAI KASIR", "400000"), tag="setor_tunai")
+    _otomax_other("ADMIN TARTUN", "-6500", OtomaxCategory.ADMIN)
+    _otomax_other("STOR KAS", "90000", OtomaxCategory.OTHER, channel_hint="OTOMAX")
+    _otomax_other("SALAH TEMBAK", "75000", OtomaxCategory.TOPUP_TARTUN, "BRI", BD, MatchStatus.IGNORED)
+    _otomax("TARTUN TF MANDIRI PENDING", "80000", channel=Channel.MANDIRI)
+    run_match(BD)
+
+    bank_qs = BankMutation.objects.filter(book_date=BD)
+    otomax_all_qs = OtomaxEntry.objects.filter(book_date=BD).exclude(match_status=MatchStatus.IGNORED)
+    assert _per_bank_breakdown(bank_qs, otomax_all_qs) == _per_bank_breakdown_lama(bank_qs, otomax_all_qs)
+    # Juga untuk rentang (dipakai get_range_summary) dan hari kosong.
+    for qs_b, qs_o in [
+        (BankMutation.objects.filter(book_date__range=(BD, BD_NEXT)), OtomaxEntry.objects.all()),
+        (BankMutation.objects.filter(book_date=BD_NEXT), OtomaxEntry.objects.filter(book_date=BD_NEXT)),
+    ]:
+        assert _per_bank_breakdown(qs_b, qs_o) == _per_bank_breakdown_lama(qs_b, qs_o)

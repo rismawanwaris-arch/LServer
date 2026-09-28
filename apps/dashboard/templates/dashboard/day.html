@@ -112,10 +112,10 @@
       </div>
     </li>
   </ol>
-  {% if carried_open %}
+  {% if carried_open_count %}
   <p class="flex items-center gap-2 border-t border-slate-200 px-4 py-2.5 text-xs text-amber-700 dark:border-slate-800 dark:text-amber-400">
     <svg class="icon h-3.5 w-3.5"><use href="#i-info"/></svg>
-    Ada <b class="money">{{ carried_open|length }}</b> selisih OPEN dari hari sebelumnya yang ikut dicocokkan otomatis (carry-forward).
+    Ada <b class="money">{{ carried_open_count }}</b> selisih OPEN dari hari sebelumnya yang ikut dicocokkan otomatis (carry-forward).
   </p>
   {% endif %}
 </section>

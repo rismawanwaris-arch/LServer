@@ -24,25 +24,45 @@ def _per_bank_breakdown(bank_qs, otomax_all_qs) -> tuple[dict, dict]:
     TOPUP_TARTUN) yang channel_hint-nya cocok dengan channel bank itu. Entri Otomax tanpa
     channel_hint (mis. ADMIN, STOR_IN/STOR_OUT) tidak masuk channel manapun — supaya tidak
     "hilang" dari rekap, dikumpulkan terpisah sebagai bucket lain_lain."""
+    # 3 query GROUP BY (dulu 7 query per bank x 4 bank + 2 = 30). Hasil identik dengan versi
+    # per-channel lama -- dijaga test pembanding di tests/test_reports.py.
+    bank = {
+        r["channel"]: r
+        for r in bank_qs.filter(channel__in=BANK_CHANNELS)
+        .order_by()
+        .values("channel")
+        .annotate(
+            total=Sum("amount"),
+            matched_auto=Sum("amount", filter=Q(match_status=MatchStatus.MATCHED)),
+            matched_manual=Sum("amount", filter=Q(match_status=MatchStatus.MANUAL)),
+            unmatched=Sum("amount", filter=Q(match_status=MatchStatus.UNMATCHED)),
+            unmatched_count=Count("id", filter=Q(match_status=MatchStatus.UNMATCHED)),
+        )
+    }
+    otomax = {
+        r["channel_hint"]: r
+        for r in otomax_all_qs.filter(channel_hint__in=BANK_CHANNELS)
+        .order_by()
+        .values("channel_hint")
+        .annotate(otomax_total=Sum("amount"), otomax_count=Count("id"))
+    }
     per_bank = {}
     for ch in BANK_CHANNELS:
-        ch_mut = bank_qs.filter(channel=ch)
-        ch_otomax = otomax_all_qs.filter(channel_hint=ch)
+        b, o = bank.get(ch) or {}, otomax.get(ch) or {}
         per_bank[ch] = {
-            "total": ch_mut.aggregate(s=Sum("amount"))["s"] or ZERO,
-            "matched_auto": ch_mut.filter(match_status=MatchStatus.MATCHED).aggregate(s=Sum("amount"))["s"] or ZERO,
-            "matched_manual": ch_mut.filter(match_status=MatchStatus.MANUAL).aggregate(s=Sum("amount"))["s"] or ZERO,
-            "unmatched": ch_mut.filter(match_status=MatchStatus.UNMATCHED).aggregate(s=Sum("amount"))["s"] or ZERO,
-            "unmatched_count": ch_mut.filter(match_status=MatchStatus.UNMATCHED).count(),
-            "otomax_total": ch_otomax.aggregate(s=Sum("amount"))["s"] or ZERO,
-            "otomax_count": ch_otomax.count(),
+            "total": b.get("total") or ZERO,
+            "matched_auto": b.get("matched_auto") or ZERO,
+            "matched_manual": b.get("matched_manual") or ZERO,
+            "unmatched": b.get("unmatched") or ZERO,
+            "unmatched_count": b.get("unmatched_count") or 0,
+            "otomax_total": o.get("otomax_total") or ZERO,
+            "otomax_count": o.get("otomax_count") or 0,
         }
 
-    otomax_lain_lain = otomax_all_qs.exclude(channel_hint__in=BANK_CHANNELS)
-    lain_lain = {
-        "otomax_total": otomax_lain_lain.aggregate(s=Sum("amount"))["s"] or ZERO,
-        "otomax_count": otomax_lain_lain.count(),
-    }
+    lain = otomax_all_qs.exclude(channel_hint__in=BANK_CHANNELS).aggregate(
+        otomax_total=Sum("amount"), otomax_count=Count("id")
+    )
+    lain_lain = {"otomax_total": lain["otomax_total"] or ZERO, "otomax_count": lain["otomax_count"] or 0}
     return per_bank, lain_lain
 
 
@@ -140,6 +160,7 @@ def get_daily_rows(start_date: date, end_date: date) -> list[dict]:
     bank = {
         r["book_date"]: r
         for r in BankMutation.objects.filter(book_date__range=rng)
+        .order_by()
         .values("book_date")
         .annotate(
             total_bank=Sum("amount", filter=Q(amount__gt=0)),
@@ -152,6 +173,7 @@ def get_daily_rows(start_date: date, end_date: date) -> list[dict]:
     otomax = {
         r["book_date"]: r
         for r in OtomaxEntry.objects.filter(book_date__range=rng, category=OtomaxCategory.TOPUP_TARTUN)
+        .order_by()
         .values("book_date")
         .annotate(
             total_otomax=Sum("amount", filter=~Q(match_status=MatchStatus.IGNORED)),
@@ -163,6 +185,7 @@ def get_daily_rows(start_date: date, end_date: date) -> list[dict]:
         r["book_date"]: r
         for r in Match.objects.filter(book_date__range=rng, voided_at__isnull=True)
         .exclude(match_type=MatchType.MANUAL)
+        .order_by()
         .values("book_date")
         .annotate(matched_auto_count=Count("id"), matched_auto_amount=Sum("amount_bank"))
     }
@@ -171,6 +194,7 @@ def get_daily_rows(start_date: date, end_date: date) -> list[dict]:
         for r in Discrepancy.objects.filter(
             origin_book_date__range=rng, kind=DiscrepancyKind.AMOUNT_DIFF, status=DiscrepancyStatus.OPEN
         )
+        .order_by()
         .values("origin_book_date")
         .annotate(amount_diff_count=Count("id"), amount_diff_amount=Sum("amount"))
     }
