@@ -1,0 +1,39 @@
+<header class="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-slate-200 bg-slate-50/85 px-4 backdrop-blur sm:px-6 lg:px-8 dark:border-slate-800 dark:bg-slate-950/85">
+  <button type="button" @click="mobileMenuOpen = true" class="icon-btn md:hidden" aria-label="Buka menu">
+    <svg class="icon"><use href="#i-menu"/></svg>
+  </button>
+
+  <div class="hidden min-w-0 items-center gap-1.5 text-[13px] text-slate-500 sm:flex">
+    {% if section %}<span class="truncate">{{ section }}</span>
+    <svg class="icon h-3.5 w-3.5 text-slate-400"><use href="#i-right"/></svg>{% endif %}
+    <span class="truncate font-semibold text-slate-900 dark:text-slate-100">{{ label|default:"RekonMutasi" }}</span>
+  </div>
+
+  {% if work_date %}
+  <div class="date-stepper" aria-label="Tanggal buku">
+    <a href="{{ prev_url }}" class="date-stepper-btn" aria-label="Hari sebelumnya" title="Hari sebelumnya">
+      <svg class="icon"><use href="#i-left"/></svg>
+    </a>
+    <span class="date-stepper-label money">
+      <svg class="icon h-3.5 w-3.5 text-slate-400"><use href="#i-cal"/></svg>
+      {{ work_date|date:"D, d M Y" }}
+    </span>
+    <a href="{{ next_url }}" class="date-stepper-btn" aria-label="Hari berikutnya" title="Hari berikutnya">
+      <svg class="icon"><use href="#i-right"/></svg>
+    </a>
+  </div>
+  {% if locked %}
+  <span class="badge-mute hidden gap-1.5 sm:inline-flex"><svg class="icon h-3 w-3"><use href="#i-lock"/></svg>Sudah tutup buku</span>
+  {% else %}
+  <span class="badge-warn hidden gap-1.5 sm:inline-flex"><span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>Hari masih terbuka</span>
+  {% endif %}
+  {% endif %}
+
+  <!-- Tema: ikuti sistem → terang → gelap -->
+  <button type="button" class="icon-btn ml-auto"
+          x-data="themeToggle()" @click="cycle()" :title="label()" :aria-label="label()">
+    <svg class="icon" x-show="mode === 'system'"><use href="#i-monitor"/></svg>
+    <svg class="icon" x-show="mode === 'light'" x-cloak><use href="#i-sun"/></svg>
+    <svg class="icon" x-show="mode === 'dark'" x-cloak><use href="#i-moon"/></svg>
+  </button>
+</header>
