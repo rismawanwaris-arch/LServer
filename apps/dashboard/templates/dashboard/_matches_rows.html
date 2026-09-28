@@ -67,7 +67,7 @@
         {% if m.bank_mutations.all|length > 1 %}
         <div class="space-y-2 mt-2">
           {% for bm in m.bank_mutations.all %}
-          <div class="p-2.5 rounded-lg bg-slate-50 border border-slate-100 dark:bg-slate-900 dark:border-slate-750">
+          <div class="p-2.5 rounded-lg bg-slate-50 border border-slate-100 dark:bg-slate-900 dark:border-slate-800">
             <div class="flex items-center justify-between">
               <span class="font-bold text-slate-800 dark:text-slate-200">{{ bm.channel }} · {{ bm.book_date|date:"d M Y" }}</span>
               <span class="money font-bold text-emerald-600 dark:text-emerald-400">Rp {{ bm.amount|rupiah }}</span>
@@ -79,7 +79,7 @@
         {% else %}
         <div>
           <span class="text-slate-400">Keterangan Asli:</span>
-          <div class="font-mono mt-0.5 p-2 rounded bg-slate-50 border border-slate-100 text-slate-800 dark:bg-slate-900 dark:border-slate-750 dark:text-slate-200">
+          <div class="font-mono mt-0.5 p-2 rounded bg-slate-50 border border-slate-100 text-slate-800 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-200">
             {{ m.bank_mutation.description_raw|default:"-" }}
           </div>
         </div>
@@ -119,7 +119,7 @@
         {% if m.otomax_entries.all|length > 1 %}
         <div class="space-y-2 mt-2">
           {% for oe in m.otomax_entries.all %}
-          <div class="p-2.5 rounded-lg bg-slate-50 border border-slate-100 dark:bg-slate-900 dark:border-slate-750">
+          <div class="p-2.5 rounded-lg bg-slate-50 border border-slate-100 dark:bg-slate-900 dark:border-slate-800">
             <div class="flex items-center justify-between">
               <span class="font-bold text-slate-800 dark:text-slate-200">{{ oe.reseller_name_raw }}</span>
               <span class="money font-bold text-emerald-600 dark:text-emerald-400">Rp {{ oe.amount|rupiah }}</span>
@@ -131,7 +131,7 @@
         {% else %}
         <div>
           <span class="text-slate-400">Keterangan Asli:</span>
-          <div class="font-mono mt-0.5 p-2 rounded bg-slate-50 border border-slate-100 text-slate-800 dark:bg-slate-900 dark:border-slate-750 dark:text-slate-200">
+          <div class="font-mono mt-0.5 p-2 rounded bg-slate-50 border border-slate-100 text-slate-800 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-200">
             {{ m.otomax_entry.description_raw|default:"-" }}
           </div>
         </div>
