@@ -151,6 +151,13 @@
       .date-stepper-label { @apply flex h-full items-center gap-1.5 whitespace-nowrap border-x border-slate-200 px-2.5 text-[13px] font-semibold text-slate-900 dark:border-slate-700 dark:text-slate-100; }
 
       /* Blok halaman */
+      .page-title { @apply text-2xl font-semibold tracking-tight text-slate-900 dark:text-white; }
+      .page-sub { @apply mt-1 text-sm text-slate-500; }
+      .seg { @apply inline-flex gap-0.5 rounded-lg bg-slate-100 p-0.5 dark:bg-slate-800; }
+      .seg-item { @apply inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:text-slate-400 dark:hover:text-white; }
+      .seg-item-active { @apply bg-white text-slate-900 shadow-[0_1px_2px_rgba(16,24,40,0.08)] dark:bg-slate-700 dark:text-white; }
+      .seg-count { @apply rounded-full bg-slate-200/70 px-1.5 text-[11px] font-semibold text-slate-600 dark:bg-slate-600/60 dark:text-slate-200; }
+      .field-input, .field-select { @apply h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-900 shadow-[0_1px_2px_rgba(16,24,40,0.05)] focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100; }
       .section-title { @apply mb-2 text-[13px] font-semibold text-slate-700 dark:text-slate-300; }
       .card-link { @apply transition duration-150 hover:-translate-y-px hover:border-slate-300 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:hover:border-slate-700; }
       .kpi-label { @apply flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400; }
@@ -163,6 +170,7 @@
       .step-now { @apply border-transparent bg-slate-900 text-white dark:bg-white dark:text-slate-900; }
       .callout { @apply flex flex-wrap items-start gap-3 rounded-xl border px-4 py-3 text-sm sm:flex-nowrap sm:items-center; }
       .callout-crit { @apply border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200; }
+      .callout-good { @apply border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200; }
       .callout-warn { @apply border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200; }
     }
   </style>

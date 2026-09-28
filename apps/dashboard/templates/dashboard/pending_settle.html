@@ -3,70 +3,40 @@
 {% block title %}Pending Settle Otomax — RekonMutasi{% endblock %}
 
 {% block content %}
-<div class="mb-6 flex flex-wrap items-center justify-between gap-4">
-  <div>
-    <h1 class="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Laporan Pending Settle</h1>
-    <p class="text-sm text-slate-500 mt-1">
-      Transaksi Otomax yang belum ditemukan uang masuknya di mutasi bank manapun pada tanggal <b>{{ book_date|date:"d F Y" }}</b>.
-    </p>
-  </div>
-
-  <form method="get" class="flex items-center gap-2">
-    <input type="hidden" name="tab" value="{{ tab }}">
-    <input type="date" name="d" value="{{ book_date|date:'Y-m-d' }}"
-           class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium shadow-xs dark:border-slate-600 dark:bg-slate-800">
-    <button class="btn-ghost">Ganti Tanggal</button>
-  </form>
+<div class="mb-5">
+  <h1 class="page-title">Pending Settle</h1>
+  <p class="page-sub">Entri Otomax yang belum ditemukan uang masuknya di mutasi bank mana pun · <b class="font-medium text-slate-700 dark:text-slate-300">{{ book_date|date:"d F Y" }}</b></p>
 </div>
 
-<!-- KPI Summary Cards (Sinkronisasi Dua Sisi) -->
-<div class="grid gap-4 sm:grid-cols-2 mb-6">
-  <div class="card border-l-4 border-l-purple-500 p-4">
-    <div class="flex items-center justify-between">
-      <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Antrean Belum Settle</div>
-      <span class="badge bg-purple-100 text-purple-800 text-[10px] font-bold">Perlu Tindakan</span>
-    </div>
-    <div class="flex items-baseline justify-between mt-1">
-      <div class="money text-2xl font-bold text-purple-600">{{ pending_count }} transaksi</div>
-      <div class="money font-semibold text-sm text-slate-600 dark:text-slate-300">Rp {{ pending_total|rupiah }}</div>
-    </div>
-  </div>
-  <div class="card border-l-4 border-l-emerald-500 p-4">
-    <div class="flex items-center justify-between">
-      <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Sudah Selesai (Matched / Di-tag)</div>
-      <span class="badge bg-emerald-100 text-emerald-800 text-[10px] font-bold">Sinkron Selesai</span>
-    </div>
-    <div class="flex items-baseline justify-between mt-1">
-      <div class="money text-2xl font-bold text-emerald-600">{{ resolved_count }} transaksi</div>
-      <div class="money font-semibold text-sm text-slate-600 dark:text-slate-300">Rp {{ resolved_total|rupiah }}</div>
-    </div>
-  </div>
-</div>
-
-<!-- Tab Navigation & Filter Bar -->
-<div class="flex flex-wrap items-center justify-between gap-4 mb-5 pb-2 border-b border-slate-200 dark:border-slate-700">
-  <div class="flex items-center gap-2">
+<!-- Tab + filter + total -->
+<div class="mb-4 flex flex-wrap items-center gap-3">
+  <nav class="seg" aria-label="Status">
     <a href="?d={{ book_date|date:'Y-m-d' }}{% if selected_channel %}&channel={{ selected_channel }}{% endif %}&tab=pending"
-       class="btn {% if tab != 'resolved' %}btn-primary{% else %}btn-ghost{% endif %} text-xs font-bold py-1.5 px-3.5">
-      Belum Settle ({{ pending_count }})
+       class="seg-item {% if tab != 'resolved' %}seg-item-active{% endif %}"{% if tab != 'resolved' %} aria-current="page"{% endif %}>
+      Belum Settle <span class="seg-count money">{{ pending_count }}</span>
     </a>
     <a href="?d={{ book_date|date:'Y-m-d' }}{% if selected_channel %}&channel={{ selected_channel }}{% endif %}&tab=resolved"
-       class="btn {% if tab == 'resolved' %}btn-primary{% else %}btn-ghost{% endif %} text-xs font-bold py-1.5 px-3.5">
-      Sudah Selesai ({{ resolved_count }})
+       class="seg-item {% if tab == 'resolved' %}seg-item-active{% endif %}"{% if tab == 'resolved' %} aria-current="page"{% endif %}>
+      Sudah Selesai <span class="seg-count money">{{ resolved_count }}</span>
     </a>
-  </div>
+  </nav>
 
   <form method="get" class="flex items-center gap-2">
     <input type="hidden" name="d" value="{{ book_date|date:'Y-m-d' }}">
     <input type="hidden" name="tab" value="{{ tab }}">
-    <label class="text-xs font-semibold text-slate-600 dark:text-slate-400">Filter Perkiraan Bank:</label>
-    <select name="channel" onchange="this.form.submit()" class="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium dark:border-slate-600 dark:bg-slate-800">
-      <option value="">Semua Bank</option>
+    <label for="ps-channel" class="sr-only">Perkiraan bank</label>
+    <select id="ps-channel" name="channel" onchange="this.form.submit()" class="field-select">
+      <option value="">Semua bank</option>
       {% for val, label in channels %}
       <option value="{{ val }}" {% if selected_channel == val %}selected{% endif %}>{{ label }}</option>
       {% endfor %}
     </select>
   </form>
+
+  <div class="ml-auto text-xs text-slate-500">
+    {% if tab == 'resolved' %}Total selesai <b class="money text-sm text-slate-900 dark:text-white">Rp {{ resolved_total|rupiah }}</b>
+    {% else %}Total terbuka <b class="money text-sm text-slate-900 dark:text-white">Rp {{ pending_total|rupiah }}</b>{% endif %}
+  </div>
 </div>
 
 <!-- Table Pending Settle (PRD Section 9.5) -->
@@ -216,19 +186,11 @@
 
   <!-- SATU TOMBOL TUNGGAL DI BAGIAN ATAS UNTUK PENCOCOKAN DATA YANG COCOK -->
   {% if tab != 'resolved' and auto_pairable_count > 0 %}
-  <div class="card bg-emerald-50 border-emerald-200 dark:bg-emerald-950/40 dark:border-emerald-800 p-4 mb-6 flex flex-wrap items-center justify-between gap-4 shadow-sm">
-    <div class="flex items-center gap-3">
-      <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-600 text-white font-bold text-lg shadow-sm">
-        ⚡
-      </div>
-      <div>
-        <h3 class="font-bold text-slate-900 dark:text-white text-sm">
-          Pencocokan Cepat Otomatis
-        </h3>
-        <p class="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
-          Ditemukan <b>{{ auto_pairable_count }} data transaksi</b> yang memiliki data referensi pasangannya (nama pengirim / nominal unik).
-        </p>
-      </div>
+  <div class="callout callout-good mb-4">
+    <svg class="icon mt-0.5 h-5 w-5"><use href="#i-zap"/></svg>
+    <div class="flex-1">
+      <div class="font-semibold">Pencocokan Cepat Otomatis</div>
+      <div class="text-xs opacity-90">Ditemukan <b class="money">{{ auto_pairable_count }} data transaksi</b> yang memiliki data referensi pasangannya (nama pengirim / nominal unik).</div>
     </div>
     <form method="post" action="{% url 'manual-match-bulk' %}">
       {% csrf_token %}
@@ -236,9 +198,9 @@
       <input type="hidden" name="next_url" value="{{ request.get_full_path }}">
       <button type="submit"
               onclick="return confirm('Pasangkan langsung semua {{ auto_pairable_count }} data yang sudah ada pasangannya?');"
-              class="btn-secondary font-bold text-xs py-2.5 px-5 shadow-sm flex items-center gap-2">
-        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-        <span>Pasangkan Semua Data yang Cocok ({{ auto_pairable_count }} Transaksi)</span>
+              class="btn-secondary px-3 py-1.5 text-xs">
+        <svg class="icon h-3.5 w-3.5"><use href="#i-checks"/></svg>
+        <span>Pasangkan Semua ({{ auto_pairable_count }})</span>
       </button>
     </form>
   </div>
@@ -251,44 +213,52 @@
       <table class="w-full text-sm">
         <thead>
           <tr>
-            <th>Waktu Entri</th>
+            <th>Waktu</th>
             <th>Reseller</th>
-            <th>Perkiraan Channel</th>
-            <th>Keterangan Transaksi</th>
-            <th>Token Referensi</th>
+            <th>Channel</th>
+            <th>Keterangan Otomax</th>
+            <th class="hidden xl:table-cell">Token</th>
             <th class="text-right">Nominal</th>
             <th>Status</th>
-            <th class="text-center">Aksi Pencocokan</th>
+            <th class="text-right">Aksi</th>
           </tr>
         </thead>
         <tbody>
           {% for o in items %}
-          <tr class="hover:bg-slate-50/60 dark:hover:bg-slate-800/60 transition">
-            <td class="font-mono text-xs text-slate-500 whitespace-nowrap">{{ o.entry_datetime|date:"d M H:i"|default:o.book_date }}</td>
-            <td class="font-bold text-xs text-slate-900 dark:text-white">{{ o.reseller_name_raw }}</td>
+          <tr>
+            <td class="font-mono text-xs text-slate-500 whitespace-nowrap">{{ o.entry_datetime|date:"H:i"|default:o.book_date }}</td>
+            <td class="whitespace-nowrap text-[13px] font-semibold text-slate-900 dark:text-white">{{ o.reseller_name_raw }}</td>
             <td>
               {% if o.channel_hint %}
-              <span class="badge-mute">{{ o.channel_hint }}</span>
+              <span class="badge-info">{{ o.channel_hint }}</span>
               {% else %}
-              <span class="text-slate-400 text-xs">—</span>
+              <span class="badge-mute">{{ o.get_category_display }}</span>
               {% endif %}
             </td>
-            <td class="font-mono text-xs text-slate-700 dark:text-slate-300 max-w-xs truncate" title="{{ o.description_raw }}">
+            <td class="max-w-[16rem] truncate font-mono text-xs text-slate-600 dark:text-slate-300" title="{{ o.description_raw }}">
               {{ o.description_raw }}
             </td>
-            <td>
+            <td class="hidden xl:table-cell">
               {% for tk in o.extracted_tokens %}
-              <span class="badge-info text-[10px]">{{ tk }}</span>
-              {% empty %}<span class="text-slate-400 text-xs">—</span>{% endfor %}
+              <span class="badge-mute font-mono text-[10px]">{{ tk }}</span>
+              {% empty %}<span class="text-xs text-slate-400">—</span>{% endfor %}
             </td>
-            <td class="money text-right font-bold {% if o.amount < 0 %}text-rose-600 dark:text-rose-400{% else %}text-purple-600 dark:text-purple-400{% endif %}">
+            <td class="money whitespace-nowrap text-right font-semibold {% if o.amount < 0 %}text-rose-600 dark:text-rose-400{% else %}text-slate-900 dark:text-white{% endif %}">
               Rp {{ o.amount|rupiah }}
             </td>
             <td>
-              <span class="badge-warn text-[11px]">PENDING SETTLE</span>
+              {% if o.net_candidates %}
+              <span class="badge bg-violet-50 text-violet-700 ring-violet-600/20 dark:bg-violet-500/10 dark:text-violet-300 dark:ring-violet-500/25">
+                <svg class="icon h-3 w-3"><use href="#i-scale"/></svg>{{ o.net_candidates|length }} lawan Otomax
+              </span>
+              {% elif o.tgl_date and o.tgl_date != book_date %}
+              <span class="badge-warn">Bank tgl {{ o.tgl_date|date:"d M" }}?</span>
+              {% else %}
+              <span class="badge-warn"><span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>Pending settle</span>
+              {% endif %}
             </td>
-            <td class="text-center whitespace-nowrap">
-              <div class="flex items-center justify-center gap-1.5">
+            <td class="whitespace-nowrap">
+              <div class="flex items-center justify-end gap-1">
                 <button type="button"
                         @click="openMatch({
                           id: {{ o.id }},
@@ -301,8 +271,8 @@
                           tgl_date: '{{ o.tgl_date|date:'Y-m-d' }}',
                           desc: '{{ o.description_raw|escapejs }}'
                         })"
-                        class="btn-ghost py-1 px-2.5 text-xs font-semibold text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 dark:hover:bg-indigo-950/40">
-                  Pilih Lawan Bank &rarr;
+                        class="btn-ghost px-2.5 py-1 text-xs">
+                  <svg class="icon h-3.5 w-3.5"><use href="#i-search"/></svg>Cari Bank
                 </button>
                 <button type="button"
                         @click="openTag({
@@ -312,12 +282,13 @@
                           amount_formatted: 'Rp {{ o.amount|rupiah }}',
                           desc: '{{ o.description_raw|escapejs }}'
                         })"
-                        class="btn-ghost py-1 px-2.5 text-xs font-semibold text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/40">
-                  Beri Tag
+                        class="icon-btn" title="Beri Tag" aria-label="Beri Tag">
+                  <svg class="icon"><use href="#i-tag"/></svg>
                 </button>
                 {% if o.net_candidates %}
                 <button type="button"
                         title="Koreksi internal Otomax: netralkan dengan entri Otomax lain yang nominalnya persis berlawanan"
+                        aria-label="Netralkan dgn Otomax ({{ o.net_candidates|length }} lawan)"
                         @click="openNet({
                           id: {{ o.id }},
                           reseller: '{{ o.reseller_name_raw|escapejs }}',
@@ -338,8 +309,8 @@
                             {% endfor %}
                           ]
                         })"
-                        class="btn-ghost py-1 px-2.5 text-xs font-semibold text-teal-600 hover:text-teal-700 hover:bg-teal-50 dark:hover:bg-teal-950/40">
-                  Netralkan dgn Otomax ({{ o.net_candidates|length }})
+                        class="btn px-2.5 py-1 text-xs text-violet-700 ring-1 ring-inset ring-violet-600/25 hover:bg-violet-50 dark:text-violet-300 dark:ring-violet-500/30 dark:hover:bg-violet-500/10">
+                  <svg class="icon h-3.5 w-3.5"><use href="#i-scale"/></svg>Netralkan <span class="money">({{ o.net_candidates|length }})</span>
                 </button>
                 {% endif %}
               </div>
@@ -389,14 +360,14 @@
             <td class="font-mono text-xs text-slate-700 dark:text-slate-300 max-w-xs truncate" title="{{ o.description_raw }}">
               {{ o.description_raw }}
             </td>
-            <td class="money text-right font-bold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+            <td class="money whitespace-nowrap text-right font-semibold {% if o.amount < 0 %}text-rose-600 dark:text-rose-400{% else %}text-slate-900 dark:text-white{% endif %}">
               Rp {{ o.amount|rupiah }}
             </td>
             <td>
               {% if o.match_status == 'IGNORED' and o.net_pair %}
               <div class="space-y-0.5">
-                <span class="badge bg-teal-100 text-teal-800 dark:bg-teal-950/60 dark:text-teal-300 font-bold text-[11px]">
-                  Dinetralkan: #{{ o.net_pair.id }} {{ o.net_pair.reseller_name_raw }} (Rp {{ o.net_pair.amount|rupiah }})
+                <span class="badge bg-violet-50 text-violet-700 ring-violet-600/20 dark:bg-violet-500/10 dark:text-violet-300 dark:ring-violet-500/25">
+                  <svg class="icon h-3 w-3"><use href="#i-scale"/></svg>Dinetralkan: #{{ o.net_pair.id }} {{ o.net_pair.reseller_name_raw }} (Rp {{ o.net_pair.amount|rupiah }})
                 </span>
                 <div class="font-mono text-[10px] text-slate-500 truncate max-w-xs" title="{{ o.net_pair.description_raw }}">
                   {{ o.net_pair.description_raw }}{% if o.net_pair.book_date != o.book_date %} &middot; tgl {{ o.net_pair.book_date|date:"d M" }}{% endif %}
@@ -404,7 +375,7 @@
               </div>
               {% elif m and m.bank_mutation %}
               <div class="space-y-0.5">
-                <span class="badge bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 font-bold text-[11px]">
+                <span class="badge-good">
                   Lawan: {{ m.bank_mutation.channel }} (Rp {{ m.bank_mutation.amount|rupiah }})
                 </span>
                 <div class="font-mono text-[10px] text-slate-500 truncate max-w-xs" title="{{ m.bank_mutation.description_raw }}">
@@ -414,7 +385,7 @@
               {% elif m and m.note %}
               <span class="badge-good text-xs font-semibold">{{ m.note }}</span>
               {% else %}
-              <span class="badge-mute text-xs">MATCHED MANUAL</span>
+              <span class="badge-mute">Matched manual</span>
               {% endif %}
             </td>
             <td class="text-xs text-slate-600 dark:text-slate-300">
@@ -525,10 +496,10 @@
               <div class="rounded-xl border-2 border-purple-200 bg-purple-50/50 p-4 dark:border-purple-900/50 dark:bg-purple-950/20">
                 <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
                   <div class="flex items-center gap-2">
-                    <span class="badge-mute font-bold text-xs uppercase" x-text="activeOtomax.channel || 'OTOMAX'"></span>
+                    <span class="badge-mute" x-text="activeOtomax.channel || 'OTOMAX'"></span>
                     <span class="text-xs text-slate-500" x-text="activeOtomax.date"></span>
                   </div>
-                  <span class="money font-black text-xl text-purple-700 dark:text-purple-300" x-text="activeOtomax.amount_formatted"></span>
+                  <span class="money font-semibold text-xl text-slate-900 dark:text-white" x-text="activeOtomax.amount_formatted"></span>
                 </div>
                 <div class="font-bold text-slate-900 dark:text-white text-sm" x-text="activeOtomax.reseller"></div>
                 <div class="font-mono text-xs text-slate-600 dark:text-slate-300 mt-1" x-text="activeOtomax.desc"></div>
@@ -566,7 +537,7 @@
 
             <!-- List of Candidates -->
             <div>
-              <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
+              <label class="block mb-2 text-xs font-semibold text-slate-600 dark:text-slate-400">
                 Pilih Mutasi Bank Lawan (<span x-text="filteredBanks().length"></span> tersedia):
               </label>
 
@@ -582,7 +553,7 @@
                              class="mt-1 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer">
                       <div>
                         <div class="flex flex-wrap items-center gap-2">
-                          <span class="badge-mute font-bold text-[10px]" x-text="b.channel"></span>
+                          <span class="badge-mute text-[10px]" x-text="b.channel"></span>
                           <span class="text-[11px] text-slate-400" x-text="b.date"></span>
 
                           <template x-if="tglMatch(b)">
@@ -639,13 +610,13 @@
                       <template x-if="b.is_diff">
                         <div>
                           <div class="text-[10px] text-slate-400 uppercase font-semibold">Sisa Selisih</div>
-                          <span class="money font-black text-sm text-amber-600 dark:text-amber-400" x-text="b.diff_formatted"></span>
+                          <span class="money font-semibold text-sm text-amber-600 dark:text-amber-400" x-text="b.diff_formatted"></span>
                         </div>
                       </template>
                       <template x-if="!b.is_diff">
                         <div>
                           <div class="text-[10px] text-slate-400 uppercase font-semibold">Nominal</div>
-                          <span class="money font-black text-sm text-emerald-600 dark:text-emerald-400" x-text="b.amount_formatted"></span>
+                          <span class="money font-semibold text-sm text-emerald-600 dark:text-emerald-400" x-text="b.amount_formatted"></span>
                         </div>
                       </template>
                     </div>
@@ -753,7 +724,7 @@
               <div class="rounded-xl border border-purple-200 bg-purple-50/50 p-3.5 dark:border-purple-900/50 dark:bg-purple-950/20">
                 <div class="flex items-center justify-between gap-2 mb-1">
                   <span class="font-bold text-slate-900 dark:text-white text-sm" x-text="tagOtomax.reseller"></span>
-                  <span class="money font-black text-sm text-purple-700 dark:text-purple-300" x-text="tagOtomax.amount_formatted"></span>
+                  <span class="money font-semibold text-sm text-slate-900 dark:text-white" x-text="tagOtomax.amount_formatted"></span>
                 </div>
                 <div class="font-mono text-xs text-slate-600 dark:text-slate-400 truncate" x-text="tagOtomax.desc"></div>
               </div>
@@ -794,10 +765,11 @@
     </div>
   </div>
 
-  <!-- Modal Netralkan dengan entri Otomax lain (koreksi internal Otomax) -->
+  <!-- Panel samping: Netralkan dengan entri Otomax lain (koreksi internal Otomax) -->
   <div x-show="netModalOpen"
        x-cloak
-       class="fixed inset-0 z-50 overflow-y-auto"
+       @keydown.escape.window="netModalOpen = false"
+       class="fixed inset-0 z-50"
        aria-labelledby="net-modal-title" role="dialog" aria-modal="true">
     <div x-show="netModalOpen"
          x-transition:enter="ease-out duration-200"
@@ -806,20 +778,20 @@
          x-transition:leave="ease-in duration-150"
          x-transition:leave-start="opacity-100"
          x-transition:leave-end="opacity-0"
-         class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs transition-opacity"
+         class="fixed inset-0 bg-slate-950/50 backdrop-blur-xs"
          @click="netModalOpen = false"></div>
 
-    <div class="flex min-h-full items-center justify-center p-4 text-center sm:p-0">
+    <div class="fixed inset-y-0 right-0 flex w-full max-w-lg">
       <div x-show="netModalOpen"
-           x-transition:enter="ease-out duration-200"
-           x-transition:enter-start="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95"
-           x-transition:enter-end="opacity-100 translate-y-0 sm:scale-100"
-           x-transition:leave="ease-in duration-150"
-           x-transition:leave-start="opacity-100 translate-y-0 sm:scale-100"
-           x-transition:leave-end="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95"
-           class="relative transform overflow-hidden rounded-2xl bg-white text-left shadow-2xl transition-all sm:my-8 sm:w-full sm:max-w-2xl dark:bg-slate-800 dark:border dark:border-slate-700">
+           x-transition:enter="transform ease-out duration-300"
+           x-transition:enter-start="translate-x-full"
+           x-transition:enter-end="translate-x-0"
+           x-transition:leave="transform ease-in duration-200"
+           x-transition:leave-start="translate-x-0"
+           x-transition:leave-end="translate-x-full"
+           class="relative flex w-full flex-col border-l border-slate-200 bg-white text-left shadow-2xl dark:border-slate-800 dark:bg-slate-900">
 
-        <form method="post" action="{% url 'manual-net-reversal' %}">
+        <form method="post" action="{% url 'manual-net-reversal' %}" class="flex h-full flex-col">
           {% csrf_token %}
           <input type="hidden" name="rev_id" :value="netOtomax ? netOtomax.id : ''">
           <input type="hidden" name="book_date" value="{{ book_date|date:'Y-m-d' }}">
@@ -839,7 +811,7 @@
             </button>
           </div>
 
-          <div class="p-6 space-y-4">
+          <div class="flex-1 space-y-4 overflow-y-auto p-6">
             <template x-if="netOtomax">
               <div class="rounded-xl border border-purple-200 bg-purple-50/50 p-3.5 dark:border-purple-900/50 dark:bg-purple-950/20">
                 <div class="flex items-center justify-between gap-2 mb-1">
@@ -847,17 +819,17 @@
                     <span x-text="netOtomax.reseller"></span>
                     <span class="font-mono text-[11px] font-normal text-slate-500 ml-1" x-text="'#' + netOtomax.id + ' · ' + netOtomax.date"></span>
                   </span>
-                  <span class="money font-black text-sm text-purple-700 dark:text-purple-300" x-text="netOtomax.amount_formatted"></span>
+                  <span class="money font-semibold text-sm text-slate-900 dark:text-white" x-text="netOtomax.amount_formatted"></span>
                 </div>
                 <div class="font-mono text-xs text-slate-600 dark:text-slate-400 truncate" x-text="netOtomax.desc"></div>
               </div>
             </template>
 
             <div>
-              <div class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
+              <div class="mb-2 text-xs font-semibold text-slate-600 dark:text-slate-400">
                 Pilih lawan (nominal persis berlawanan, masih terbuka)
               </div>
-              <div class="space-y-2 max-h-72 overflow-y-auto">
+              <div class="space-y-2">
                 <template x-for="c in (netOtomax ? netOtomax.candidates : [])" :key="c.id">
                   <label class="flex items-start gap-3 rounded-xl border p-3 cursor-pointer transition"
                          :class="netPick === c.id ? 'border-teal-500 bg-teal-50/60 dark:bg-teal-950/30' : 'border-slate-200 hover:border-teal-300 dark:border-slate-700'">
@@ -872,7 +844,7 @@
                       <div class="font-mono text-[11px] text-slate-500 truncate mt-0.5" x-text="c.desc"></div>
                       <div class="text-[10px] text-slate-400 mt-0.5" x-text="'#' + c.id + ' · ' + c.date"></div>
                     </div>
-                    <span class="money font-black text-sm text-emerald-600 dark:text-emerald-400 shrink-0" x-text="c.amount_formatted"></span>
+                    <span class="money font-semibold text-sm text-emerald-600 dark:text-emerald-400 shrink-0" x-text="c.amount_formatted"></span>
                   </label>
                 </template>
               </div>
@@ -890,11 +862,11 @@
             </p>
           </div>
 
-          <div class="px-6 py-3 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 flex items-center justify-end gap-3 rounded-b-2xl">
+          <div class="flex items-center justify-end gap-3 border-t border-slate-200 bg-slate-50 px-6 py-3 dark:border-slate-800 dark:bg-slate-900/60">
             <button type="button" @click="netModalOpen = false" class="btn-ghost text-xs">
               Batal
             </button>
-            <button type="submit" :disabled="!netPick" class="btn-primary text-xs font-bold px-4 py-2 disabled:opacity-50">
+            <button type="submit" :disabled="!netPick" class="btn-primary px-4 py-2 text-xs disabled:opacity-50">
               Netralkan Keduanya
             </button>
           </div>
