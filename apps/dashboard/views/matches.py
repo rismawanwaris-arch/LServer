@@ -21,6 +21,13 @@ from ._shared import _parse_date
 
 PAGE_SIZE = 50
 
+# amount_diff = nominal bank - nominal Otomax: plus = bank lebih besar, minus = Otomax lebih besar.
+SELISIH_FILTERS = {
+    "any": {"exclude": {"amount_diff": 0}},
+    "plus": {"filter": {"amount_diff__gt": 0}},
+    "minus": {"filter": {"amount_diff__lt": 0}},
+}
+
 
 @login_required
 def matches_view(request):
@@ -28,6 +35,9 @@ def matches_view(request):
     channel = request.GET.get("channel", "")
     query = request.GET.get("q", "").strip()
     tab = "review" if request.GET.get("tab") == "review" else "all"
+    selisih = request.GET.get("selisih", "")
+    if selisih not in SELISIH_FILTERS:
+        selisih = ""
     page_number = request.GET.get("page", 1)
 
     qs = Match.objects.filter(book_date=book_date, voided_at__isnull=True).select_related(
@@ -36,6 +46,9 @@ def matches_view(request):
     review_count = qs.filter(needs_review=True).count()
     if tab == "review":
         qs = qs.filter(needs_review=True)
+    if selisih:
+        rule = SELISIH_FILTERS[selisih]
+        qs = qs.filter(**rule.get("filter", {})).exclude(**rule.get("exclude", {}))
     if channel and channel in Channel.values:
         qs = qs.filter(channel=channel)
     if query:
@@ -55,6 +68,7 @@ def matches_view(request):
         "channels": Channel.choices,
         "query": query,
         "tab": tab,
+        "selisih": selisih,
         "review_count": review_count,
         "page_obj": page_obj,
         "total_count": paginator.count,

@@ -151,7 +151,7 @@
         {% if m.needs_review %}
         <form method="post" action="{% url 'approve-match' m.id %}">
           {% csrf_token %}
-          <input type="hidden" name="next_url" value="{% url 'matches' %}?d={{ book_date|date:'Y-m-d' }}&tab={{ tab }}&channel={{ selected_channel }}&q={{ query|urlencode }}">
+          <input type="hidden" name="next_url" value="{% url 'matches' %}?d={{ book_date|date:'Y-m-d' }}&tab={{ tab }}&selisih={{ selisih }}&channel={{ selected_channel }}&q={{ query|urlencode }}">
           <button type="submit" class="btn-secondary py-1 px-3 text-xs font-semibold">Setujui Usulan</button>
         </form>
         {% endif %}
@@ -168,7 +168,7 @@
 {% endfor %}
 
 {% if page_obj.has_next %}
-<tr hx-get="{% url 'matches' %}?d={{ book_date|date:'Y-m-d' }}&channel={{ selected_channel }}&q={{ query|urlencode }}&tab={{ tab }}&page={{ page_obj.next_page_number }}"
+<tr hx-get="{% url 'matches' %}?d={{ book_date|date:'Y-m-d' }}&channel={{ selected_channel }}&q={{ query|urlencode }}&tab={{ tab }}&selisih={{ selisih }}&page={{ page_obj.next_page_number }}"
     hx-trigger="revealed"
     hx-swap="outerHTML"
     hx-target="this">

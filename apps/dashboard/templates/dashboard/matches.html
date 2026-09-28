@@ -56,13 +56,23 @@
       </select>
     </div>
 
+    <div class="flex items-center gap-2">
+      <label class="text-xs font-semibold text-slate-600 dark:text-slate-400">Selisih:</label>
+      <select name="selisih" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium dark:border-slate-600 dark:bg-slate-800">
+        <option value="">Semua</option>
+        <option value="any" {% if selisih == 'any' %}selected{% endif %}>Masih selisih (plus &amp; minus)</option>
+        <option value="plus" {% if selisih == 'plus' %}selected{% endif %}>Plus — bank lebih besar</option>
+        <option value="minus" {% if selisih == 'minus' %}selected{% endif %}>Minus — Otomax lebih besar</option>
+      </select>
+    </div>
+
     <div class="flex-1 min-w-[200px]">
       <input type="text" name="q" value="{{ query }}" placeholder="Cari keterangan, token, atau reseller..."
              class="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
     </div>
 
     <button type="submit" class="btn-primary py-1.5 text-xs">Filter</button>
-    {% if selected_channel or query %}
+    {% if selected_channel or query or selisih %}
     <a href="{% url 'matches' %}?d={{ book_date|date:'Y-m-d' }}{% if tab == 'review' %}&tab=review{% endif %}" class="btn-ghost py-1.5 text-xs">Reset</a>
     {% endif %}
 

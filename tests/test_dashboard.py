@@ -777,3 +777,27 @@ def test_discrepancy_list_displays_names_and_search_filter(auth_client):
 
 
 
+
+
+@pytest.mark.django_db
+def test_matches_filter_by_selisih_plus_minus(auth_client):
+    from apps.recon.resolve import manual_pair_transactions
+
+    from .test_engine import BD, _bank, _otomax
+
+    pas = _bank("TRANSFER PAS", "1000000")
+    manual_pair_transactions(pas, _otomax("TARTUN TF BRI TRANSFER PAS", "1000000"))
+    plus = _bank("TRANSFER BANK LEBIH", "500000")
+    manual_pair_transactions(plus, _otomax("TARTUN TF BRI TRANSFER BANK LEBIH", "450000"))
+    minus = _bank("TRANSFER OTOMAX LEBIH", "300000")
+    manual_pair_transactions(minus, _otomax("TARTUN TF BRI TRANSFER OTOMAX LEBIH", "330000"))
+
+    def banks(selisih):
+        res = auth_client.get("/matches/", {"d": BD.isoformat(), "selisih": selisih})
+        return {m.bank_mutation_id for m in res.context["page_obj"].object_list}
+
+    assert banks("") == {pas.id, plus.id, minus.id}
+    assert banks("any") == {plus.id, minus.id}
+    assert banks("plus") == {plus.id}
+    assert banks("minus") == {minus.id}
+    assert banks("ngawur") == {pas.id, plus.id, minus.id}  # nilai tak dikenal diabaikan
