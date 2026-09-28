@@ -9,14 +9,22 @@ from django.db import transaction
 from apps.core.enums import Channel, DiscrepancyKind, DiscrepancyStatus, MatchStatus, MatchType
 from apps.ingest.models import BankMutation, OtomaxEntry
 
-from .engine.helpers import _MATCHABLE_CATEGORIES
-from .models import Discrepancy, Match, ReconDay
-from .resolve import resolve_discrepancy
+from .engine.helpers import _MATCHABLE_CATEGORIES, _proposal_rejected
+from .models import Discrepancy, Match
+from .resolve import resolve_discrepancy, retire_leftover_discrepancies
+
+# Teks yang lebih pendek dari ini terlalu umum untuk dianggap "mirip" (mis. "TRANSFER").
+_MIN_SIMILAR_TEXT = 12
+_SIMILAR_REASON = "Susulan lintas hari, teks mirip tapi tidak persis"
 
 
 @transaction.atomic
 def carry_forward(book_date: date, user=None) -> int:
-    """Return jumlah discrepancy lama yang berhasil ditutup oleh data book_date."""
+    """Return jumlah discrepancy lama yang berhasil ditutup oleh data book_date.
+
+    Pasangan susulan yang teksnya cuma mirip dibuat sebagai USULAN: discrepancy lamanya
+    sengaja belum diselesaikan (Adjustment append-only, tidak bisa dibatalkan kalau usulan
+    ditolak) -- itu dilakukan approve_match() saat operator menyetujui."""
     resolved = 0
     stale = Discrepancy.objects.filter(status="OPEN", origin_book_date__lt=book_date).select_related(
         "bank_mutation", "otomax_entry"
@@ -24,40 +32,31 @@ def carry_forward(book_date: date, user=None) -> int:
 
     for disc in stale:
         # Iterasi sebelumnya bisa saja sudah menutup/menghapus disc ini sebagai selisih sisi
-        # lawan (lihat _retire_counterpart) -- queryset `stale` di atas sudah dievaluasi.
+        # lawan (lihat retire_leftover_discrepancies) -- queryset `stale` sudah dievaluasi.
         if not Discrepancy.objects.filter(pk=disc.pk, status=DiscrepancyStatus.OPEN).exists():
             continue
         match = None
+        counterpart = None
         if disc.kind == DiscrepancyKind.BANK_ONLY and disc.bank_mutation:
             match = _find_otomax_for(disc.bank_mutation, book_date)
             if match:
                 counterpart = Discrepancy.objects.filter(otomax_entry=match.otomax_entry)
-                _retire_counterpart(counterpart, match, user, book_date)
         elif disc.kind == DiscrepancyKind.OTOMAX_ONLY and disc.otomax_entry:
             match = _find_bank_for(disc.otomax_entry, book_date)
             if match:
                 counterpart = Discrepancy.objects.filter(bank_mutation=match.bank_mutation)
-                _retire_counterpart(counterpart, match, user, book_date)
-        if match:
+        if match and not match.needs_review:
+            retire_leftover_discrepancies(counterpart, match, user, book_date)
             resolve_discrepancy(disc, match=match, resolution_type="LATE_MATCH", user=user, on_date=book_date)
             resolved += 1
     return resolved
 
 
-def _retire_counterpart(qs, match: Match, user, on_date: date) -> None:
-    """Selisih milik baris "baru" yang barusan dipasangkan susulan (mis. OTOMAX_ONLY yang
-    dibuat leftovers untuk entri Otomax 3 Sep sesaat sebelum carry_forward memasangkannya
-    ke mutasi bank 30 Agu) sudah usang -- tanpa ini ia tetap OPEN jadi selisih "hantu" di
-    Daftar Selisih. Hari yang belum ditutup: hapus saja (sama seperti _persist_match).
-    Hari yang sudah ditutup: selisihnya bagian dari snapshot beku, jadi diselesaikan lewat
-    Adjustment, tidak dihapus."""
-    for disc in qs.filter(
-        status=DiscrepancyStatus.OPEN, kind__in=[DiscrepancyKind.BANK_ONLY, DiscrepancyKind.OTOMAX_ONLY]
-    ):
-        if ReconDay.objects.filter(book_date=disc.origin_book_date, locked=True).exists():
-            resolve_discrepancy(disc, match=match, resolution_type="LATE_MATCH", user=user, on_date=on_date)
-        else:
-            disc.delete()
+def _similar(a: str, b: str) -> bool:
+    """Teks satu terkandung utuh di teks lain (mis. operator tidak menyalin nomor di ujung
+    keterangan bank), dan cukup panjang untuk tidak kebetulan sama."""
+    shorter, longer = sorted((a or "", b or ""), key=len)
+    return len(shorter) >= _MIN_SIMILAR_TEXT and shorter in longer
 
 
 _OTOMAX_OPEN_STATUSES = [MatchStatus.UNMATCHED, MatchStatus.PENDING_SETTLE]
@@ -84,20 +83,25 @@ def _find_otomax_for(bank: BankMutation, book_date: date) -> Match | None:
         if bank.ref_core
         else None
     )
-    o = (
-        o
-        or OtomaxEntry.objects.filter(
-            book_date=book_date,
-            category__in=_MATCHABLE_CATEGORIES,
-            channel_hint=bank.channel,
-            amount=bank.amount,
-            ref_normalized=bank.ref_normalized,
-            match_status__in=_OTOMAX_OPEN_STATUSES,
-        ).first()
+    same_amount = OtomaxEntry.objects.filter(
+        book_date=book_date,
+        category__in=_MATCHABLE_CATEGORIES,
+        channel_hint=bank.channel,
+        amount=bank.amount,
+        match_status__in=_OTOMAX_OPEN_STATUSES,
     )
-    if not o:
+    o = o or same_amount.filter(ref_normalized=bank.ref_normalized).first()
+    if o:
+        return _persist(book_date, bank.channel, bank, o)
+
+    # Tidak persis: usulkan kalau ada TEPAT SATU kandidat yang teksnya mirip -- lebih dari
+    # satu berarti ambigu, jangan ditebak.
+    if _proposal_rejected(bank):
         return None
-    return _persist(book_date, bank.channel, bank, o)
+    similar = [c for c in same_amount if _similar(c.ref_normalized, bank.ref_normalized)]
+    if len(similar) != 1:
+        return None
+    return _persist(book_date, bank.channel, bank, similar[0], review_reason=_SIMILAR_REASON)
 
 
 def _find_bank_for(otomax: OtomaxEntry, book_date: date) -> Match | None:
@@ -105,30 +109,25 @@ def _find_bank_for(otomax: OtomaxEntry, book_date: date) -> Match | None:
     if not OtomaxEntry.objects.filter(pk=otomax.pk, match_status__in=_OTOMAX_OPEN_STATUSES).exists():
         return None
     channel = otomax.channel_hint or Channel.BRI
-    b = (
-        BankMutation.objects.filter(
-            book_date=book_date,
-            channel=channel,
-            amount=otomax.amount,
-            match_status=MatchStatus.UNMATCHED,
-        )
-        .filter(ref_normalized=otomax.ref_normalized)
-        .first()
+    same_amount = BankMutation.objects.filter(
+        book_date=book_date,
+        channel=channel,
+        amount=otomax.amount,
+        match_status=MatchStatus.UNMATCHED,
     )
+    b = same_amount.filter(ref_normalized=otomax.ref_normalized).first()
     if not b and otomax.ref_core:
-        b = BankMutation.objects.filter(
-            book_date=book_date,
-            channel=channel,
-            amount=otomax.amount,
-            ref_core=otomax.ref_core,
-            match_status=MatchStatus.UNMATCHED,
-        ).first()
-    if not b:
+        b = same_amount.filter(ref_core=otomax.ref_core).first()
+    if b:
+        return _persist(book_date, channel, b, otomax)
+
+    similar = [c for c in same_amount if _similar(otomax.ref_normalized, c.ref_normalized)]
+    if len(similar) != 1 or _proposal_rejected(similar[0]):
         return None
-    return _persist(book_date, channel, b, otomax)
+    return _persist(book_date, channel, similar[0], otomax, review_reason=_SIMILAR_REASON)
 
 
-def _persist(book_date, channel, bank, otomax) -> Match:
+def _persist(book_date, channel, bank, otomax, review_reason: str = "") -> Match:
     match = Match.objects.create(
         book_date=book_date,
         channel=channel,
@@ -138,6 +137,8 @@ def _persist(book_date, channel, bank, otomax) -> Match:
         amount_bank=bank.amount,
         amount_otomax=otomax.amount,
         note="carry-forward",
+        needs_review=bool(review_reason),
+        review_reason=review_reason,
     )
     for row in (bank, otomax):
         row.match_status = MatchStatus.MATCHED

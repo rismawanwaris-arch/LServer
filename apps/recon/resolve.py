@@ -64,6 +64,56 @@ def resolve_discrepancy(
     return adj
 
 
+def retire_leftover_discrepancies(qs, match: Match, user, on_date: date) -> None:
+    """Selisih BANK_ONLY/OTOMAX_ONLY yang usang begitu barisnya dapat pasangan (mis.
+    OTOMAX_ONLY yang dibuat leftovers untuk entri Otomax 3 Sep sesaat sebelum carry_forward
+    memasangkannya ke mutasi bank 30 Agu) -- tanpa ini ia tetap OPEN jadi selisih "hantu"
+    di Daftar Selisih. Hari yang belum ditutup: hapus saja (sama seperti _persist_match).
+    Hari yang sudah ditutup: selisihnya bagian dari snapshot beku, jadi diselesaikan lewat
+    Adjustment, tidak dihapus."""
+    for disc in qs.filter(
+        status=DiscrepancyStatus.OPEN, kind__in=[DiscrepancyKind.BANK_ONLY, DiscrepancyKind.OTOMAX_ONLY]
+    ):
+        if ReconDay.objects.filter(book_date=disc.origin_book_date, locked=True).exists():
+            resolve_discrepancy(disc, match=match, resolution_type="LATE_MATCH", user=user, on_date=on_date)
+        else:
+            disc.delete()
+
+
+@transaction.atomic
+def approve_match(match: Match, user=None) -> Match:
+    """Setujui usulan pencocokan mesin -> jadi final. Efek yang sengaja DITUNDA selama
+    masih usulan (karena tidak bisa dibatalkan kalau usulannya ternyata ditolak) dijalankan
+    di sini: selisih lama dari hari sebelumnya diselesaikan lewat Adjustment (append-only),
+    selisih sisa yang usang dibersihkan, dan mapping merchant QRIS dipelajari."""
+    from .engine.qris_match import learn_merchant_map
+
+    m = Match.objects.select_for_update().get(pk=match.pk)
+    if m.voided_at:
+        raise ValueError(f"Pencocokan #{m.id} sudah dibatalkan, tidak bisa disetujui.")
+    if not m.needs_review:
+        return m
+
+    m.needs_review = False
+    m.reviewed_by = user
+    m.reviewed_at = timezone.now()
+    m.save(update_fields=["needs_review", "reviewed_by", "reviewed_at", "updated_at"])
+
+    otomax_ids = set(m.otomax_entries.values_list("id", flat=True))
+    if m.otomax_entry_id:
+        otomax_ids.add(m.otomax_entry_id)
+    leftovers = Discrepancy.objects.filter(
+        status=DiscrepancyStatus.OPEN, kind__in=[DiscrepancyKind.BANK_ONLY, DiscrepancyKind.OTOMAX_ONLY]
+    ).filter(Q(bank_mutation_id=m.bank_mutation_id) | Q(otomax_entry_id__in=otomax_ids))
+    for disc in leftovers.filter(origin_book_date__lt=m.book_date):
+        resolve_discrepancy(disc, match=m, resolution_type="LATE_MATCH", user=user, on_date=m.book_date)
+    retire_leftover_discrepancies(leftovers.filter(origin_book_date__gte=m.book_date), m, user, m.book_date)
+
+    if m.channel == Channel.MERCHANT_BCA and m.bank_mutation:
+        learn_merchant_map(m.bank_mutation, m.otomax_entry)
+    return m
+
+
 def write_off(discrepancy: Discrepancy, *, reason: str, user=None) -> Adjustment:
     return resolve_discrepancy(discrepancy, resolution_type="WRITE_OFF", reason=reason, user=user)
 

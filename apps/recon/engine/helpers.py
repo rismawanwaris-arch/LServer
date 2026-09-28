@@ -40,7 +40,14 @@ def _mark(obj, status=MatchStatus.MATCHED):
     obj.save(update_fields=["match_status"])
 
 
-def _persist_match(book_date, channel, bank, otomax, mtype, note=""):
+def _proposal_rejected(bank) -> bool:
+    """Operator pernah membatalkan usulan mesin untuk mutasi ini -- jangan usulkan lagi
+    (kalau tidak, tiap "Jalankan Matching Engine" memunculkan usulan yang sama berulang).
+    Pencocokan final yang pasti (ref/token persis) tetap boleh."""
+    return Match.objects.filter(bank_mutation=bank, needs_review=True, voided_at__isnull=False).exists()
+
+
+def _persist_match(book_date, channel, bank, otomax, mtype, note="", review_reason=""):
     m = Match.objects.create(
         book_date=book_date,
         channel=channel,
@@ -51,6 +58,8 @@ def _persist_match(book_date, channel, bank, otomax, mtype, note=""):
         amount_otomax=otomax.amount,
         confidence=getattr(otomax, "_fuzzy_score", None),
         note=note,
+        needs_review=bool(review_reason),
+        review_reason=review_reason,
     )
     if mtype != MatchType.AGGREGATE:
         _mark(bank)

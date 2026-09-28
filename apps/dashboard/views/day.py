@@ -6,7 +6,7 @@ from django.contrib.auth.decorators import login_required
 from django.shortcuts import render
 
 from apps.core.enums import Channel
-from apps.recon.models import Adjustment, Discrepancy
+from apps.recon.models import Adjustment, Discrepancy, Match
 from apps.recon.reports import get_daily_summary
 from apps.recon.selectors import alarm_discrepancies, cumulative_open_total, day_overview
 
@@ -21,6 +21,7 @@ def day_view(request):
     ctx["alarms"] = alarm_discrepancies(today=book_date)
     ctx["cumulative_open"] = cumulative_open_total()
     ctx["channels"] = Channel.choices
+    ctx["proposal_count"] = Match.objects.filter(book_date=book_date, needs_review=True, voided_at__isnull=True).count()
     day = ctx["day"]
     ctx["can_reopen"] = bool(
         day

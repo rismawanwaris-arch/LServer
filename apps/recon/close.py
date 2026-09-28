@@ -78,16 +78,16 @@ def close_day(book_date: date, *, user=None, force: bool = False) -> ReconDay:
     if day.locked:
         raise DayLocked(f"{book_date} sudah ditutup.")
 
-    fuzzy_pending = Match.objects.filter(
-        book_date=book_date, match_type="AUTO_FUZZY", voided_at__isnull=True, note=""
-    ).exists()
+    proposals_pending = Match.objects.filter(
+        book_date=book_date, needs_review=True, voided_at__isnull=True
+    ).count()
     unmapped = Discrepancy.objects.filter(
         origin_book_date=book_date, note__contains="belum di-mapping", status="OPEN"
     ).exists()
-    if not force and (fuzzy_pending or unmapped):
+    if not force and (proposals_pending or unmapped):
         raise DayNotReady(
-            "Masih ada AUTO_FUZZY belum di-review atau merchant QRIS belum di-mapping. "
-            "Pakai force=True untuk tetap menutup."
+            f"Masih ada {proposals_pending} usulan pencocokan yang belum dikonfirmasi (menu Hasil Cocok "
+            "→ Perlu Konfirmasi) atau merchant QRIS belum di-mapping. Pakai force=True untuk tetap menutup."
         )
 
     totals = compute_totals(book_date)

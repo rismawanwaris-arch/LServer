@@ -17,7 +17,7 @@ from apps.core.enums import Channel, MatchStatus, MatchType
 from apps.core.normalize import norm_ref
 from apps.ingest.models import BankMutation, OtomaxEntry
 
-from .helpers import _MATCHABLE_CATEGORIES, _OPEN_STATUSES, RunStats, _persist_match
+from .helpers import _MATCHABLE_CATEGORIES, _OPEN_STATUSES, RunStats, _persist_match, _proposal_rejected
 
 # Toleransi hari (H-min, H+max) per bank
 BANK_DATE_TOLERANCE = {
@@ -112,10 +112,13 @@ def _match_ref(book_date: date, channel: str) -> RunStats:
                 mtype = MatchType.AUTO_EXACT
                 match_note = f"Cocok via Kode Reseller ({o.reseller_name_raw})"
 
-        # 3. Fuzzy match fallback (Priority 2)
-        if o is None:
+        # 3. Fuzzy match fallback (Priority 2) -- cuma usulan, wajib dikonfirmasi operator.
+        review_reason = ""
+        if o is None and not _proposal_rejected(b):
             o = _fuzzy_candidate(b, otomax, used)
             mtype = MatchType.AUTO_FUZZY
+            if o is not None:
+                review_reason = "Kemiripan teks (fuzzy)"
 
         # 4. Tartun PLC vs Auto Deposit (Pencocokan Nominal Sesuai Instruksi)
         if o is None and _is_tartun_plc(b):
@@ -128,7 +131,7 @@ def _match_ref(book_date: date, channel: str) -> RunStats:
         if o is None:
             continue
 
-        _persist_match(book_date, channel, b, o, mtype, note=match_note)
+        _persist_match(book_date, channel, b, o, mtype, note=match_note, review_reason=review_reason)
         stats.matched += 1
     return stats
 

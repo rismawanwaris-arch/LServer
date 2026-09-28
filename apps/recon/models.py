@@ -52,6 +52,20 @@ class Match(TimeStampedModel):
         on_delete=models.SET_NULL,
         related_name="voided_matches",
     )
+    # "Usulan" dari mesin yang belum boleh dianggap final (gabungan beberapa entri Otomax,
+    # cocok nominal saja, kemiripan teks) -- tutup buku ditolak selama masih ada. Usulan
+    # yang dibatalkan operator tetap needs_review=True + voided_at terisi: itulah penanda
+    # "sudah ditolak" supaya mesin tidak mengusulkan ulang pasangan untuk mutasi yang sama.
+    needs_review = models.BooleanField(default=False, db_index=True)
+    review_reason = models.CharField(max_length=120, blank=True)
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="reviewed_matches",
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
     history = HistoricalRecords()
 
     class Meta:

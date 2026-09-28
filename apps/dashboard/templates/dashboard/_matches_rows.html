@@ -21,6 +21,9 @@
     {% else %}
     <span class="badge-mute text-[11px]">{{ m.get_match_type_display }}</span>
     {% endif %}
+    {% if m.needs_review %}
+    <span class="badge-warn text-[10px] font-bold mt-1 block w-max" title="{{ m.review_reason }}">⏳ Perlu konfirmasi</span>
+    {% endif %}
   </td>
   <td class="font-mono text-xs max-w-xs truncate text-slate-700 dark:text-slate-300">
     {% firstof m.bank_mutation.ref_normalized m.bank_mutation.description_raw "—" %}
@@ -129,23 +132,43 @@
       </div>
     </div>
 
+    {% if m.needs_review %}
+    <div class="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">
+      <b>Usulan mesin — belum final.</b> Alasan: {{ m.review_reason|default:"perlu dicek operator" }}.
+      Cek sisi bank &amp; Otomax di atas, lalu Setujui kalau memang pasangannya, atau Tolak supaya kedua sisi kembali ke antrean.
+    </div>
+    {% elif m.reviewed_at %}
+    <div class="mt-3 text-[11px] text-emerald-700 dark:text-emerald-400">
+      ✓ Usulan disetujui oleh {{ m.reviewed_by|default:"—" }} pada {{ m.reviewed_at|date:"d M Y H:i" }}.
+    </div>
+    {% endif %}
+
     <div class="mt-3 pt-2 flex flex-wrap items-center justify-between gap-2 text-xs">
       <div class="text-slate-500">
         {% if m.note %}<b>Catatan:</b> {{ m.note }}{% endif %}
       </div>
-      <form method="post" action="{% url 'unpair-match' m.id %}" onsubmit="return confirm('Batalkan pencocokan ini? {% if m.match_type == "AGGREGATE" %}Semua baris Otomax dalam grup ini {% else %}Kedua transaksi {% endif %}akan kembali ke antrean belum cocok.');">
-        {% csrf_token %}
-        <button type="submit" class="btn-danger py-1 px-3 text-xs font-semibold">
-          Batalkan Pencocokan{% if m.match_type == 'AGGREGATE' %} (Grup){% endif %}
-        </button>
-      </form>
+      <div class="flex items-center gap-2">
+        {% if m.needs_review %}
+        <form method="post" action="{% url 'approve-match' m.id %}">
+          {% csrf_token %}
+          <input type="hidden" name="next_url" value="{% url 'matches' %}?d={{ book_date|date:'Y-m-d' }}&tab={{ tab }}&channel={{ selected_channel }}&q={{ query|urlencode }}">
+          <button type="submit" class="btn-secondary py-1 px-3 text-xs font-semibold">Setujui Usulan</button>
+        </form>
+        {% endif %}
+        <form method="post" action="{% url 'unpair-match' m.id %}" onsubmit="return confirm('{% if m.needs_review %}Tolak usulan ini? Mesin tidak akan mengusulkannya lagi untuk mutasi ini. {% else %}Batalkan pencocokan ini? {% endif %}{% if m.match_type == "AGGREGATE" %}Semua baris Otomax dalam grup ini {% else %}Kedua transaksi {% endif %}akan kembali ke antrean belum cocok.');">
+          {% csrf_token %}
+          <button type="submit" class="btn-danger py-1 px-3 text-xs font-semibold">
+            {% if m.needs_review %}Tolak Usulan{% else %}Batalkan Pencocokan{% endif %}{% if m.match_type == 'AGGREGATE' %} (Grup){% endif %}
+          </button>
+        </form>
+      </div>
     </div>
   </td>
 </tr>
 {% endfor %}
 
 {% if page_obj.has_next %}
-<tr hx-get="{% url 'matches' %}?d={{ book_date|date:'Y-m-d' }}&channel={{ selected_channel }}&q={{ query|urlencode }}&page={{ page_obj.next_page_number }}"
+<tr hx-get="{% url 'matches' %}?d={{ book_date|date:'Y-m-d' }}&channel={{ selected_channel }}&q={{ query|urlencode }}&tab={{ tab }}&page={{ page_obj.next_page_number }}"
     hx-trigger="revealed"
     hx-swap="outerHTML"
     hx-target="this">

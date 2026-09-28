@@ -25,7 +25,7 @@ from .manual_review import (
     manual_tag_action,
     unpair_match_action,
 )
-from .matches import matches_view
+from .matches import approve_match_action, matches_view
 from .pending_settle import manual_tag_otomax_action, pending_settle_view
 from .reports import reports_export_action, reports_view
 from .resellers import (
@@ -43,6 +43,7 @@ __all__ = [
     "add_reseller_action",
     "app_settings_view",
     "apply_exclusion_rules_action",
+    "approve_match_action",
     "backup_view",
     "bulk_manual_match_action",
     "close_view",

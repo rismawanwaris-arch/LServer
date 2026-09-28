@@ -17,7 +17,7 @@ from apps.core.enums import Channel, DiscrepancyKind, DiscrepancyStatus, MatchSt
 from apps.ingest.models import BankMutation, OtomaxEntry
 
 from ..models import Discrepancy, Match
-from .helpers import _OPEN_STATUSES, ZERO, RunStats, _make_discrepancy, _mark
+from .helpers import _OPEN_STATUSES, ZERO, RunStats, _make_discrepancy, _mark, _proposal_rejected
 from .ref_match import _open_bank
 
 _ALIASES = {
@@ -87,12 +87,39 @@ def _find_best_group(b: BankMutation, groups: list[dict], mmap: dict) -> tuple[d
     return None, 0.0
 
 
+def _review_reason(rows: list[OtomaxEntry], *, amount_only: bool = False) -> str:
+    """Alasan pencocokan QRIS ini harus jadi usulan, atau "" kalau boleh langsung final.
+    Menggabungkan beberapa tiket, atau cocok cuma karena totalnya kebetulan sama (tanpa
+    cek nama outlet), rawan jadi pencocokan "hantu" -- operator wajib mengecek dulu."""
+    parts = []
+    if amount_only:
+        parts.append("Cocok nominal saja, nama outlet tidak dicek")
+    if len(rows) > 1:
+        parts.append(f"Gabungan {len(rows)} tiket QRIS")
+    return " · ".join(parts)
+
+
+def learn_merchant_map(bank: BankMutation, primary_otomax: OtomaxEntry | None) -> None:
+    """Auto-learn mapping merchant QRIS -> reseller. Cuma dari pencocokan yang sudah pasti
+    (final / sudah disetujui) -- mapping yang dipelajari dari usulan yang ternyata salah
+    akan membuat pencocokan berikutnya ikut salah tapi dianggap "teridentifikasi"."""
+    if bank.external_ref and primary_otomax and primary_otomax.reseller:
+        MerchantMap.objects.get_or_create(
+            merchant_id=bank.external_ref,
+            defaults={
+                "reseller": primary_otomax.reseller,
+                "merchant_name": bank.outlet_name or bank.description_raw,
+            },
+        )
+
+
 def _persist_qris_match(
     book_date: date,
     bank: BankMutation,
     otomax_rows: list[OtomaxEntry],
     mtype: str,
     note: str = "",
+    review_reason: str = "",
 ):
     otomax_total = sum((o.amount for o in otomax_rows), ZERO)
     primary_otomax = otomax_rows[0] if otomax_rows else None
@@ -106,21 +133,16 @@ def _persist_qris_match(
         amount_otomax=otomax_total,
         confidence=100 if mtype == MatchType.AUTO_EXACT else 90,
         note=note,
+        needs_review=bool(review_reason),
+        review_reason=review_reason,
     )
     m.otomax_entries.set(otomax_rows)
     _mark(bank, MatchStatus.MATCHED)
     for o in otomax_rows:
         _mark(o, MatchStatus.MATCHED)
 
-    # Auto-learn mapping ke MerchantMap jika reseller sudah ada
-    if bank.external_ref and primary_otomax and primary_otomax.reseller:
-        MerchantMap.objects.get_or_create(
-            merchant_id=bank.external_ref,
-            defaults={
-                "reseller": primary_otomax.reseller,
-                "merchant_name": bank.outlet_name or bank.description_raw,
-            },
-        )
+    if not review_reason:
+        learn_merchant_map(bank, primary_otomax)
 
     # Bersihkan discrepancy leftover (BANK_ONLY / OTOMAX_ONLY) lama jika ada
     if bank:
@@ -187,6 +209,9 @@ def _match_qris(book_date: date) -> RunStats:
     for b in list(unmatched_banks):
         grp, score = _find_best_group(b, list(otomax_groups.values()), mmap)
         if grp and b.amount == grp["total"]:
+            reason = _review_reason(grp["rows"])
+            if reason and _proposal_rejected(b):
+                continue
             mtype = MatchType.AUTO_EXACT if len(grp["rows"]) == 1 else MatchType.AGGREGATE
             b_name = b.outlet_name or b.external_ref
             _persist_qris_match(
@@ -195,13 +220,17 @@ def _match_qris(book_date: date) -> RunStats:
                 grp["rows"],
                 mtype,
                 note=f"QRIS {b_name} cocok dengan {grp['raw_name']}: nominal persis Rp {b.amount:,.2f}",
+                review_reason=reason,
             )
             stats.matched += 1
             grp["used"] = True
             unmatched_banks.remove(b)
 
-    # Pass 2: Cocokan nominal persis jika unik di antara sisa grup
+    # Pass 2: Cocokan nominal persis jika unik di antara sisa grup -- nama outlet TIDAK
+    # dicek, jadi selalu usulan (bisa saja outlet A kebetulan totalnya sama dgn tiket B).
     for b in list(unmatched_banks):
+        if _proposal_rejected(b):
+            continue
         matching_grps = [grp for grp in otomax_groups.values() if not grp["used"] and b.amount == grp["total"]]
         if len(matching_grps) == 1:
             grp = matching_grps[0]
@@ -213,6 +242,7 @@ def _match_qris(book_date: date) -> RunStats:
                 grp["rows"],
                 mtype,
                 note=f"QRIS {b_name}: cocok nominal persis Rp {b.amount:,.2f} dengan {grp['raw_name']}",
+                review_reason=_review_reason(grp["rows"], amount_only=True),
             )
             stats.matched += 1
             grp["used"] = True
@@ -228,6 +258,9 @@ def _match_qris(book_date: date) -> RunStats:
             diff = b.amount - grp["total"]
             if abs(diff) > amount_tolerance:
                 continue
+            reason = _review_reason(grp["rows"])
+            if reason and _proposal_rejected(b):
+                continue
             b_name = b.outlet_name or b.external_ref
             note_str = f"QRIS {b_name} selisih nominal: Bank {b.amount:,.2f} vs Otomax {grp['total']:,.2f}"
             _persist_qris_match(
@@ -236,6 +269,7 @@ def _match_qris(book_date: date) -> RunStats:
                 grp["rows"],
                 MatchType.AGGREGATE,
                 note=note_str,
+                review_reason=reason,
             )
             _make_discrepancy(
                 book_date,
