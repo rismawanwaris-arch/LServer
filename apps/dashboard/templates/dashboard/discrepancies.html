@@ -211,7 +211,7 @@
           <td>
             {% if d.kind == 'BANK_ONLY' %}<span class="badge-warn">bank only</span>
             {% elif d.kind == 'OTOMAX_ONLY' %}<span class="badge-crit">otomax only</span>
-            {% elif d.kind == 'AMOUNT_DIFF' %}<span class="badge-warn">nominal beda</span>
+            {% elif d.kind == 'AMOUNT_DIFF' %}<span class="badge-warn" title="Sudah dipasangkan tapi nominal beda. Tutup lewat Pending Settle → Pilih Lawan Bank → 'Masih Selisih' begitu Otomax direvisi.">nominal beda · {% if d.amount < 0 %}Otomax lebih{% else %}Otomax kurang{% endif %}</span>
             {% else %}<span class="badge-mute">{{ d.kind }}</span>{% endif %}
           </td>
           <td class="money text-right whitespace-nowrap font-medium">Rp&nbsp;{{ d.amount|rupiah }}</td>
