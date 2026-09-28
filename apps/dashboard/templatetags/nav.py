@@ -21,7 +21,17 @@ _OPEN = [MatchStatus.UNMATCHED, MatchStatus.PENDING_SETTLE]
 
 # Halaman yang membaca ?d= -- link sidebar-nya membawa tanggal kerja, dan bilah atasnya
 # menampilkan pemilih tanggal ‹ ›.
-_DATED = {"day", "upload", "manual-review", "pending-settle", "reversal", "discrepancy-list", "matches", "reports"}
+_DATED = {
+    "day",
+    "upload",
+    "manual-review",
+    "pending-settle",
+    "reversal",
+    "discrepancy-list",
+    "matches",
+    "reports",
+    "exclusion-rules",
+}
 _STEPPER = _DATED - {"reports"}
 # Halaman yang juga punya mode "semua tanggal" (tanpa ?d=): bilah atasnya harus bilang
 # "Semua tanggal", bukan tanggal terakhir dari sesi -- kalau tidak, judul dan isi rancu.

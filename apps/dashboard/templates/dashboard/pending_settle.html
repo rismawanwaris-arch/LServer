@@ -557,7 +557,7 @@
                           <span class="text-[11px] text-slate-400" x-text="b.date"></span>
 
                           <template x-if="tglMatch(b)">
-                            <span class="badge-info text-[10px] font-bold">✓ Sesuai TGL di Otomax</span>
+                            <span class="badge-info text-[10px]">Sesuai TGL di Otomax</span>
                           </template>
                           <template x-if="dayGap(b) !== 0">
                             <span class="badge-warn text-[10px]"
@@ -566,7 +566,7 @@
 
                           <!-- Badge untuk Bank Belum Cocok -->
                           <template x-if="!b.is_diff && parseFloat(b.amount) === parseFloat(activeOtomax.amount)">
-                            <span class="badge-good text-[10px] font-bold">★ Nominal Sama</span>
+                            <span class="badge-good text-[10px]">Nominal sama</span>
                           </template>
 
                           <!-- Badge untuk Bank Masih Selisih -->
@@ -576,7 +576,7 @@
                             </span>
                           </template>
                           <template x-if="b.is_diff && parseFloat(b.diff_amount) === parseFloat(activeOtomax.amount)">
-                            <span class="badge-good text-[10px] font-bold">★ Sisa Selisih Pas Sama</span>
+                            <span class="badge-good text-[10px]">Sisa selisih pas sama</span>
                           </template>
 
                           <template x-if="b.outlet">

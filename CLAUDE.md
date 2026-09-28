@@ -28,6 +28,12 @@ Rekonsiliasi harian mutasi bank (BRI / BCA / Merchant BCA QRIS / Mandiri) vs OTO
 5. **Regression Test untuk Bugfix**: Setiap kali memperbaiki bug di parser atau engine rekonsiliasi, WAJIB menambahkan test baru di `tests/` yang mereplikasi data mentah gagal sebelum menulis fix.
 6. **Autentikasi Dashboard**: Semua view di `apps/dashboard/views/` harus menggunakan `@login_required`.
 
+## Konvensi UI (redesign 2026-09)
+- Layout & komponen ada di `apps/dashboard/templates/base.html` (token warna: skala `slate` = abu-abu netral, `indigo` = aksen biru). Pakai kelas yang sudah ada: `.page-title`/`.page-sub`, `.card`, `.btn-primary|ghost|secondary|danger`, `.badge-good|warn|crit|mute|info`, `.seg`/`.seg-item`/`.seg-item-active`/`.seg-count` (tab), `.field-input`/`.field-select`, `.callout-*`, `.icon-btn`.
+- Ikon dari sprite `dashboard/_icons.html`: `<svg class="icon"><use href="#i-nama"/></svg>` — jangan pakai emoji sebagai ikon.
+- Sidebar & bilah atas dirender `apps/dashboard/templatetags/nav.py`. Pemilih tanggal hanya di bilah atas: halaman baru yang membaca `?d=` cukup didaftarkan di `_DATED` (dan `_OPTIONAL_DATE` kalau punya mode semua tanggal) — jangan bikin form "Ganti Tanggal" sendiri.
+- Warna makna: bank = indigo, Otomax = violet, nominal negatif = rose; setiap kelas warna wajib punya pasangan `dark:`.
+
 ## Skills Tersedia
 - `.claude/skills/htmx-patterns/SKILL.md`: Pola parsial HTMX, request detection, loading indicator, dan UI feedback.
 - `.claude/skills/pytest-django-patterns/SKILL.md`: Pola pengujian pytest-django, TDD, database isolation, dan fixtures.

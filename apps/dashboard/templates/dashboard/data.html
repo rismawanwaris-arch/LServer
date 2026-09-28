@@ -1,15 +1,17 @@
 {% extends "base.html" %}
-{% block title %}Hapus data — Rekonsiliasi{% endblock %}
+{% block title %}Reset & Purge Data — RekonMutasi{% endblock %}
 
 {% block content %}
-<h1 class="mb-1 text-2xl">Hapus data</h1>
-<p class="mb-6 max-w-prose text-sm text-slate-500">
+<div class="mb-5">
+<h1 class="page-title">Reset &amp; Purge Data</h1>
+<p class="page-sub max-w-prose">
   Menghapus data transaksi (mutasi, OTOMAX, pasangan, selisih, penyesuaian, tutup buku).
-  <b>Reseller, alias, dan mapping merchant tidak ikut terhapus.</b> Tidak bisa dibatalkan.
+  <b class="font-medium text-slate-700 dark:text-slate-300">Reseller, alias, dan mapping merchant tidak ikut terhapus.</b> Tidak bisa dibatalkan.
 </p>
+</div>
 
-<div class="card mb-6">
-  <h2 class="mb-3 font-semibold">Per tanggal buku</h2>
+<div class="card mb-6 overflow-hidden p-0">
+  <h2 class="border-b border-slate-200 px-4 py-3 text-sm font-semibold dark:border-slate-800">Per tanggal buku</h2>
   {% if rows %}
   <div class="overflow-x-auto">
     <table class="w-full text-sm">
@@ -20,10 +22,10 @@
       <tbody>
         {% for r in rows %}
         <tr>
-          <td class="font-mono">{{ r.book_date|date:'Y-m-d' }}</td>
+          <td class="money whitespace-nowrap font-medium">{{ r.book_date|date:'d M Y' }}</td>
           <td>
-            {% if r.locked %}<span class="badge-mute">DITUTUP</span>
-            {% else %}<span class="badge-warn">{{ r.status }}</span>{% endif %}
+            {% if r.locked %}<span class="badge-mute"><svg class="icon h-3 w-3"><use href="#i-lock"/></svg>Ditutup</span>
+            {% else %}<span class="badge-warn">{{ r.status|title }}</span>{% endif %}
           </td>
           <td class="money text-right">{{ r.bank }}</td>
           <td class="money text-right">{{ r.otomax }}</td>
@@ -39,7 +41,7 @@
                 <input type="checkbox" name="include_closed" value="1"> termasuk yang ditutup
               </label>
               {% endif %}
-              <button class="text-xs font-medium text-rose-600 hover:text-rose-500">Hapus</button>
+              <button class="btn-ghost px-2.5 py-1 text-xs text-rose-600 hover:border-rose-300 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-500/10"><svg class="icon h-3.5 w-3.5"><use href="#i-trash"/></svg>Hapus</button>
             </form>
           </td>
         </tr>
@@ -48,12 +50,12 @@
     </table>
   </div>
   {% else %}
-  <p class="text-sm text-slate-400">Belum ada data.</p>
+  <p class="px-4 py-8 text-center text-sm text-slate-500">Belum ada data.</p>
   {% endif %}
 </div>
 
-<div class="card border-rose-300 dark:border-rose-800">
-  <h2 class="mb-1 font-semibold text-rose-700 dark:text-rose-400">Reset semua data transaksi</h2>
+<div class="card border-rose-200 dark:border-rose-500/30">
+  <h2 class="mb-1 flex items-center gap-2 text-sm font-semibold text-rose-700 dark:text-rose-400"><svg class="icon"><use href="#i-alert"/></svg>Reset semua data transaksi</h2>
   <p class="mb-3 text-sm text-slate-500">
     Menghapus <b>seluruh</b> tanggal, termasuk yang sudah ditutup. Total sekarang:
     {% for k, v in totals.items %}<span class="font-mono">{{ k }}={{ v }}</span>{% if not forloop.last %} · {% endif %}{% endfor %}.
@@ -62,14 +64,13 @@
         onsubmit="return confirm('Hapus SEMUA data transaksi? Tidak bisa dibatalkan.')">
     {% csrf_token %}
     <label class="block text-sm">
-      <span class="text-slate-500">Ketik <code class="font-mono">HAPUS SEMUA</code> untuk konfirmasi</span>
-      <input type="text" name="confirm" autocomplete="off" required
-             class="mt-1 w-64 rounded-lg border border-slate-300 px-2 py-1 dark:border-slate-600 dark:bg-slate-800">
+      <span class="text-slate-500">Ketik <code class="rounded bg-slate-100 px-1 font-mono text-slate-800 dark:bg-slate-800 dark:text-slate-200">HAPUS SEMUA</code> untuk konfirmasi</span>
+      <input type="text" name="confirm" autocomplete="off" required class="field-input mt-1 block h-9 w-64 text-sm">
     </label>
     <label class="flex items-center gap-2 text-xs text-slate-500">
       <input type="checkbox" name="include_history" value="1"> termasuk riwayat perubahan
     </label>
-    <button class="btn bg-rose-600 text-white hover:bg-rose-500">Hapus semua data transaksi</button>
+    <button class="btn-danger"><svg class="icon"><use href="#i-trash"/></svg>Hapus semua data transaksi</button>
   </form>
 </div>
 {% endblock %}
