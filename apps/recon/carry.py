@@ -6,10 +6,11 @@ from datetime import date
 
 from django.db import transaction
 
-from apps.core.enums import Channel, DiscrepancyKind, MatchStatus, MatchType, OtomaxCategory
+from apps.core.enums import Channel, DiscrepancyKind, DiscrepancyStatus, MatchStatus, MatchType
 from apps.ingest.models import BankMutation, OtomaxEntry
 
-from .models import Discrepancy, Match
+from .engine.helpers import _MATCHABLE_CATEGORIES
+from .models import Discrepancy, Match, ReconDay
 from .resolve import resolve_discrepancy
 
 
@@ -22,15 +23,41 @@ def carry_forward(book_date: date, user=None) -> int:
     )
 
     for disc in stale:
+        # Iterasi sebelumnya bisa saja sudah menutup/menghapus disc ini sebagai selisih sisi
+        # lawan (lihat _retire_counterpart) -- queryset `stale` di atas sudah dievaluasi.
+        if not Discrepancy.objects.filter(pk=disc.pk, status=DiscrepancyStatus.OPEN).exists():
+            continue
         match = None
         if disc.kind == DiscrepancyKind.BANK_ONLY and disc.bank_mutation:
             match = _find_otomax_for(disc.bank_mutation, book_date)
+            if match:
+                counterpart = Discrepancy.objects.filter(otomax_entry=match.otomax_entry)
+                _retire_counterpart(counterpart, match, user, book_date)
         elif disc.kind == DiscrepancyKind.OTOMAX_ONLY and disc.otomax_entry:
             match = _find_bank_for(disc.otomax_entry, book_date)
+            if match:
+                counterpart = Discrepancy.objects.filter(bank_mutation=match.bank_mutation)
+                _retire_counterpart(counterpart, match, user, book_date)
         if match:
             resolve_discrepancy(disc, match=match, resolution_type="LATE_MATCH", user=user, on_date=book_date)
             resolved += 1
     return resolved
+
+
+def _retire_counterpart(qs, match: Match, user, on_date: date) -> None:
+    """Selisih milik baris "baru" yang barusan dipasangkan susulan (mis. OTOMAX_ONLY yang
+    dibuat leftovers untuk entri Otomax 3 Sep sesaat sebelum carry_forward memasangkannya
+    ke mutasi bank 30 Agu) sudah usang -- tanpa ini ia tetap OPEN jadi selisih "hantu" di
+    Daftar Selisih. Hari yang belum ditutup: hapus saja (sama seperti _persist_match).
+    Hari yang sudah ditutup: selisihnya bagian dari snapshot beku, jadi diselesaikan lewat
+    Adjustment, tidak dihapus."""
+    for disc in qs.filter(
+        status=DiscrepancyStatus.OPEN, kind__in=[DiscrepancyKind.BANK_ONLY, DiscrepancyKind.OTOMAX_ONLY]
+    ):
+        if ReconDay.objects.filter(book_date=disc.origin_book_date, locked=True).exists():
+            resolve_discrepancy(disc, match=match, resolution_type="LATE_MATCH", user=user, on_date=on_date)
+        else:
+            disc.delete()
 
 
 _OTOMAX_OPEN_STATUSES = [MatchStatus.UNMATCHED, MatchStatus.PENDING_SETTLE]
@@ -47,7 +74,7 @@ def _find_otomax_for(bank: BankMutation, book_date: date) -> Match | None:
     o = (
         OtomaxEntry.objects.filter(
             book_date=book_date,
-            category=OtomaxCategory.TOPUP_TARTUN,
+            category__in=_MATCHABLE_CATEGORIES,
             channel_hint=bank.channel,
             amount=bank.amount,
             match_status__in=_OTOMAX_OPEN_STATUSES,
@@ -61,7 +88,7 @@ def _find_otomax_for(bank: BankMutation, book_date: date) -> Match | None:
         o
         or OtomaxEntry.objects.filter(
             book_date=book_date,
-            category=OtomaxCategory.TOPUP_TARTUN,
+            category__in=_MATCHABLE_CATEGORIES,
             channel_hint=bank.channel,
             amount=bank.amount,
             ref_normalized=bank.ref_normalized,

@@ -487,7 +487,7 @@ def test_bidirectional_sync_between_review_and_pending_settle(auth_client):
     # 1. Manual Review: bm NOT in 'unmatched' items, IS in 'tagged', oe NOT in dropdown
     res_mr_unm = auth_client.get("/review-manual/", {"d": "2026-09-05", "tab": "unmatched"})
     assert len(res_mr_unm.context["items"]) == 0
-    assert len(res_mr_unm.context["unmatched_otomax"]) == 0
+    assert len(res_mr_unm.context["otomax_candidates"]) == 0
 
     res_mr_tag = auth_client.get("/review-manual/", {"d": "2026-09-05", "tab": "tagged"})
     assert len(res_mr_tag.context["items"]) == 1

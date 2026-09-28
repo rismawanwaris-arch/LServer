@@ -13,11 +13,12 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
 from apps.core.enums import Channel, MatchStatus, OtomaxCategory
+from apps.core.normalize import parse_tgl_date
 from apps.ingest.models import BankMutation, OtomaxEntry
 from apps.recon.models import Match
 from apps.recon.resolve import tag_manual_otomax
 
-from ._shared import _find_auto_pairs, _parse_date
+from ._shared import _CANDIDATE_WINDOW, _EXTENDED_WINDOW_DAYS, _find_auto_pairs, _parse_date
 
 
 @login_required
@@ -57,29 +58,52 @@ def pending_settle_view(request):
         items = list(pending_qs.order_by("-amount"))
 
     # Daftar mutasi bank yang belum cocok untuk kandidat pencocokan manual
+    window = (book_date + timedelta(days=_CANDIDATE_WINDOW[0]), book_date + timedelta(days=_CANDIDATE_WINDOW[1]))
     unmatched_banks = list(
         BankMutation.objects.filter(
-            book_date__gte=book_date - timedelta(days=2),
-            book_date__lte=book_date + timedelta(days=1),
+            book_date__range=window,
             match_status=MatchStatus.UNMATCHED,
         ).order_by("-amount", "-txn_datetime")
     )
 
-    # Mutasi bank dari hasil cocok yang masih ada sisa selisih (amount_diff > 0)
+    # Mutasi bank dari hasil cocok yang masih ada sisa selisih -- DUA arah: Otomax kurang
+    # (diff > 0) maupun Otomax lebih (diff < 0, mis. operator mengoreksi 3.540.000 dengan
+    # menembak -90.000 alih-alih membalik lalu mengentri ulang 3.450.000).
     diff_matches = list(
         Match.objects.filter(
-            book_date__gte=book_date - timedelta(days=2),
-            book_date__lte=book_date + timedelta(days=1),
+            book_date__range=window,
             voided_at__isnull=True,
             bank_mutation__isnull=False,
-            amount_diff__gt=Decimal("0.00"),
         )
+        .exclude(amount_diff=Decimal("0.00"))
         .select_related("bank_mutation", "otomax_entry")
         .order_by("-amount_diff")
     )
 
+    # Pencocokan Cepat sengaja tetap cuma memakai jendela normal (perilaku lama).
     auto_pairs = _find_auto_pairs(unmatched_banks, list(pending_qs) if tab != "resolved" else [])
     auto_pairable_count = len(auto_pairs)
+
+    for o in items:
+        o.tgl_date = parse_tgl_date(o.description_raw)
+    for b in unmatched_banks:
+        b.is_extended = False
+    if tab != "resolved" and items:
+        # Kandidat dari luar jendela normal (entri Otomax yang dientri beberapa hari telat):
+        # cuma yang nominalnya persis sama dengan salah satu entri di halaman ini, atau yang
+        # tanggalnya disebut operator lewat "TGL ..." di keterangan Otomax.
+        amounts = {o.amount for o in items} | {abs(o.amount) for o in items}
+        tgl_dates = {o.tgl_date for o in items if o.tgl_date}
+        wide = (book_date - timedelta(days=_EXTENDED_WINDOW_DAYS), book_date + timedelta(days=_EXTENDED_WINDOW_DAYS))
+        extended = (
+            BankMutation.objects.filter(book_date__range=wide, match_status=MatchStatus.UNMATCHED)
+            .exclude(book_date__range=window)
+            .filter(models.Q(amount__in=amounts) | models.Q(book_date__in=tgl_dates))
+            .order_by("-amount", "-txn_datetime")
+        )
+        for b in extended:
+            b.is_extended = True
+            unmatched_banks.append(b)
 
     otomax_tags = [
         ("revisi", "Revisi / Koreksi Kasir"),

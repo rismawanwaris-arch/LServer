@@ -86,6 +86,8 @@
       id: {{ b.id }},
       match_id: null,
       is_diff: false,
+      book_date: '{{ b.book_date|date:'Y-m-d' }}',
+      extended: {{ b.is_extended|yesno:'true,false' }},
       channel: '{{ b.channel }}',
       amount: {{ b.amount|stringformat:'.2f' }},
       amount_formatted: 'Rp {{ b.amount|rupiah }}',
@@ -103,6 +105,8 @@
       id: {{ m.bank_mutation.id }},
       match_id: {{ m.id }},
       is_diff: true,
+      book_date: '{{ m.bank_mutation.book_date|date:'Y-m-d' }}',
+      extended: false,
       channel: '{{ m.bank_mutation.channel }}',
       amount: {{ m.bank_mutation.amount|stringformat:'.2f' }},
       amount_formatted: 'Rp {{ m.bank_mutation.amount|rupiah }}',
@@ -128,6 +132,13 @@
   openTag(o) {
     this.tagOtomax = o;
     this.tagModalOpen = true;
+  },
+  dayGap(b) {
+    if (!this.activeOtomax || !b.book_date) return 0;
+    return Math.round((Date.parse(b.book_date) - Date.parse(this.activeOtomax.book_date)) / 86400000);
+  },
+  tglMatch(b) {
+    return !!(this.activeOtomax && this.activeOtomax.tgl_date && b.book_date === this.activeOtomax.tgl_date);
   },
   filteredBanks() {
     if (!this.activeOtomax) return [];
@@ -156,7 +167,7 @@
         if (!matchDesc && !matchOutlet && !matchReseller && !matchAmt && !matchDiff) return false;
       }
       return true;
-    });
+    }).sort((a, b) => this.tglMatch(b) - this.tglMatch(a));
   },
   exactCount() {
     if (!this.activeOtomax) return 0;
@@ -258,6 +269,8 @@
                           amount: '{{ o.amount|stringformat:'.2f' }}',
                           amount_formatted: 'Rp {{ o.amount|rupiah }}',
                           date: '{{ o.entry_datetime|date:'d M H:i'|default:o.book_date }}',
+                          book_date: '{{ o.book_date|date:'Y-m-d' }}',
+                          tgl_date: '{{ o.tgl_date|date:'Y-m-d' }}',
                           desc: '{{ o.description_raw|escapejs }}'
                         })"
                         class="btn-ghost py-1 px-2.5 text-xs font-semibold text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 dark:hover:bg-indigo-950/40">
@@ -493,6 +506,14 @@
                         <div class="flex flex-wrap items-center gap-2">
                           <span class="badge-mute font-bold text-[10px]" x-text="b.channel"></span>
                           <span class="text-[11px] text-slate-400" x-text="b.date"></span>
+
+                          <template x-if="tglMatch(b)">
+                            <span class="badge-info text-[10px] font-bold">✓ Sesuai TGL di Otomax</span>
+                          </template>
+                          <template x-if="dayGap(b) !== 0">
+                            <span class="badge-warn text-[10px]"
+                                  x-text="dayGap(b) < 0 ? (-dayGap(b)) + ' hari sebelum Otomax' : dayGap(b) + ' hari sesudah Otomax'"></span>
+                          </template>
 
                           <!-- Badge untuk Bank Belum Cocok -->
                           <template x-if="!b.is_diff && parseFloat(b.amount) === parseFloat(activeOtomax.amount)">

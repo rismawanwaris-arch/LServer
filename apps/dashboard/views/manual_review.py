@@ -9,14 +9,30 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db import models
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from apps.core.enums import Channel, ManualTag, MatchStatus, OtomaxCategory
+from apps.core.normalize import parse_tgl_date
 from apps.ingest.models import BankMutation, OtomaxEntry
 from apps.recon.models import Match
-from apps.recon.resolve import manual_pair_transactions, tag_manual_mutation, unpair_match
+from apps.recon.resolve import manual_pair_many, manual_pair_transactions, tag_manual_mutation, unpair_match
 
-from ._shared import _find_auto_pairs, _parse_date
+from ._shared import _CANDIDATE_WINDOW, _EXTENDED_WINDOW_DAYS, _find_auto_pairs, _parse_date
+
+
+def _otomax_candidate(o: OtomaxEntry, book_date, *, extended: bool) -> dict:
+    return {
+        "id": o.id,
+        "reseller": o.reseller_name_raw,
+        "cents": int(o.amount * 100),
+        "desc": o.description_raw,
+        "when": (o.entry_datetime and timezone.localtime(o.entry_datetime).strftime("%d %b %H:%M"))
+        or o.book_date.strftime("%d %b"),
+        "day_gap": (o.book_date - book_date).days,
+        "tgl_match": parse_tgl_date(o.description_raw) == book_date,
+        "extended": extended,
+    }
 
 
 @login_required
@@ -46,23 +62,35 @@ def manual_review_view(request):
 
     # Daftar entri Otomax belum cocok untuk opsi pencocokan manual
     # (Hanya transaksi yang belum selesai, bukan potongan admin)
-    unmatched_otomax = list(
-        OtomaxEntry.objects.filter(
-            book_date__gte=book_date - timedelta(days=2),
-            book_date__lte=book_date + timedelta(days=1),
-            match_status__in=[MatchStatus.PENDING_SETTLE, MatchStatus.UNMATCHED],
-        )
-        .exclude(category=OtomaxCategory.ADMIN)
-        .order_by("-amount")
-    )
+    open_otomax = OtomaxEntry.objects.filter(
+        match_status__in=[MatchStatus.PENDING_SETTLE, MatchStatus.UNMATCHED],
+    ).exclude(category=OtomaxCategory.ADMIN)
+    window = (book_date + timedelta(days=_CANDIDATE_WINDOW[0]), book_date + timedelta(days=_CANDIDATE_WINDOW[1]))
+    unmatched_otomax = list(open_otomax.filter(book_date__range=window).order_by("-amount"))
 
     if tab == "tagged":
         items = list(tagged_qs.order_by("-updated_at"))
     else:
         items = list(unmatched_qs.order_by("-amount"))
 
+    # Pencocokan Cepat sengaja tetap cuma memakai jendela normal (perilaku lama).
     auto_pairs = _find_auto_pairs(items if tab != "tagged" else [], unmatched_otomax)
     auto_pairable_count = len(auto_pairs)
+
+    otomax_candidates = []
+    if tab != "tagged":
+        bank_amounts = {b.amount for b in items}
+        wide = (book_date - timedelta(days=_EXTENDED_WINDOW_DAYS), book_date + timedelta(days=_EXTENDED_WINDOW_DAYS))
+        extended = [
+            o
+            for o in open_otomax.filter(book_date__range=wide).exclude(book_date__range=window).order_by("-amount")
+            if o.amount in bank_amounts or parse_tgl_date(o.description_raw) == book_date
+        ]
+        otomax_candidates = [_otomax_candidate(o, book_date, extended=False) for o in unmatched_otomax] + [
+            _otomax_candidate(o, book_date, extended=True) for o in extended
+        ]
+    for b in items:
+        b.amount_cents = int(b.amount * 100)
 
     return render(
         request,
@@ -78,7 +106,7 @@ def manual_review_view(request):
             "tagged_count": tagged_count,
             "tagged_total": tagged_total,
             "manual_tags": ManualTag.choices,
-            "unmatched_otomax": unmatched_otomax,
+            "otomax_candidates": otomax_candidates,
             "auto_pairable_count": auto_pairable_count,
         },
     )
@@ -106,27 +134,49 @@ def manual_tag_action(request, pk: int):
 @login_required
 @require_POST
 def manual_match_action(request):
-    otomax_id = request.POST.get("otomax_id")
+    # otomax_ids (daftar centang Review Manual, bisa >1) atau otomax_id tunggal
+    # (Pending Settle, Reversal).
+    raw_ids = [i for i in request.POST.getlist("otomax_ids") if i] or [
+        i for i in [request.POST.get("otomax_id")] if i
+    ]
     bank_id = request.POST.get("bank_id")
     note = request.POST.get("note", "").strip()
     book_date = request.POST.get("book_date")
     fallback_url = f"/pending-settle/?d={book_date}" if book_date else "/"
     next_url = request.POST.get("next_url") or request.META.get("HTTP_REFERER") or fallback_url
 
-    if not otomax_id or not bank_id:
+    try:
+        otomax_ids = [int(i) for i in raw_ids]
+    except ValueError:
+        otomax_ids = []
+    if not otomax_ids or not bank_id:
         messages.error(request, "Pilih transaksi Otomax dan mutasi Bank yang akan dicocokkan.")
         return redirect(next_url)
 
     bm = get_object_or_404(BankMutation, pk=bank_id)
-    o = get_object_or_404(OtomaxEntry, pk=otomax_id)
 
     try:
-        manual_pair_transactions(bank_mutation=bm, otomax_entry=o, note=note, user=request.user)
-        messages.success(
-            request,
-            f"Berhasil mencocokkan Otomax '{o.reseller_name_raw}' (Rp {o.amount:,.0f}) "
-            f"dengan mutasi {bm.channel} (Rp {bm.amount:,.0f}).",
-        )
+        if len(otomax_ids) == 1:
+            o = get_object_or_404(OtomaxEntry, pk=otomax_ids[0])
+            manual_pair_transactions(bank_mutation=bm, otomax_entry=o, note=note, user=request.user)
+            messages.success(
+                request,
+                f"Berhasil mencocokkan Otomax '{o.reseller_name_raw}' (Rp {o.amount:,.0f}) "
+                f"dengan mutasi {bm.channel} (Rp {bm.amount:,.0f}).",
+            )
+        else:
+            entries = list(OtomaxEntry.objects.filter(pk__in=otomax_ids))
+            match = manual_pair_many(bm, entries, note=note, user=request.user)
+            msg = (
+                f"Berhasil menggabungkan {len(entries)} entri Otomax (total Rp {match.amount_otomax:,.0f}) "
+                f"dengan mutasi {bm.channel} (Rp {bm.amount:,.0f})."
+            )
+            if match.amount_diff:
+                messages.warning(
+                    request, f"{msg} Sisa selisih Rp {match.amount_diff:,.0f} tercatat di Daftar Selisih."
+                )
+            else:
+                messages.success(request, msg)
     except ValueError as e:
         messages.error(request, str(e))
     except Exception as e:

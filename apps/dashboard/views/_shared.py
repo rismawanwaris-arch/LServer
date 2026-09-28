@@ -22,6 +22,13 @@ staff_only = user_passes_test(lambda u: u.is_superuser)
 
 _REVERSAL_OPEN_STATUSES = [MatchStatus.UNMATCHED, MatchStatus.PENDING_SETTLE]
 
+# Kandidat pencocokan manual (Review Manual & Pending Settle): jendela "normal" dalam
+# hari relatif ke tanggal halaman, plus jendela lebar yang cuma dipakai untuk kandidat
+# bernominal persis sama / yang "TGL ..."-nya menunjuk tanggal ini -- supaya entri yang
+# dientri operator beberapa hari telat tetap bisa dipasangkan manual.
+_CANDIDATE_WINDOW = (-2, 1)
+_EXTENDED_WINDOW_DAYS = 14
+
 
 def _parse_date(raw: str | None, default=None) -> date:
     if raw:

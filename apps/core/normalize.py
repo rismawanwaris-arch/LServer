@@ -9,6 +9,7 @@ Semua pencocokan bertumpu pada dua kunci deterministik dari satu string keterang
 from __future__ import annotations
 
 import re
+from datetime import date
 from decimal import Decimal, InvalidOperation
 
 from .enums import Channel, OtomaxCategory
@@ -74,8 +75,39 @@ _OTOMAX_PREFIXES = (
     "TARTUN QR BULK ",
     "TARTUN QR ",
     "BAYAR KE BRI ",
+    "BAYAR KE BCA ",
+    "BAYAR KE MANDIRI ",
+    "BAYAR QR ",
     "TIKET DEPOSIT BRI ",
 )
+
+_MONTHS = {
+    "JAN": 1,
+    "FEB": 2,
+    "PEB": 2,
+    "MAR": 3,
+    "APR": 4,
+    "MEI": 5,
+    "MAY": 5,
+    "JUN": 6,
+    "JUL": 7,
+    "AGS": 8,
+    "AGU": 8,
+    "AUG": 8,
+    "SEP": 9,
+    "OKT": 10,
+    "OCT": 10,
+    "NOV": 11,
+    "NOP": 11,
+    "DES": 12,
+    "DEC": 12,
+}
+_TGL = r"TGL\s+(\d{1,2})[/\-]([A-Z]{3}|\d{1,2})[/\-](\d{2,4})"
+_TGL_ANY = re.compile(rf"\b{_TGL}\b")
+# Operator OTOMAX sering menambahkan "TGL 30/AGS/2026" di akhir keterangan yang disalin
+# dari mutasi bank -- teks bank-nya sendiri tidak punya akhiran ini. Wajib didahului
+# teks lain supaya keterangan yang isinya cuma "TGL ..." tidak jadi string kosong.
+_TGL_SUFFIX = re.compile(rf"\s+{_TGL}$")
 
 
 def norm_ref(s: str | None) -> str:
@@ -83,12 +115,34 @@ def norm_ref(s: str | None) -> str:
 
 
 def strip_otomax_prefix(s: str | None) -> str:
-    """Buang prefix keterangan OTOMAX supaya menyisakan ref bank mentah."""
+    """Buang prefix & akhiran "TGL dd/bln/yyyy" keterangan OTOMAX supaya menyisakan ref
+    bank mentah."""
     t = norm_ref(s)
     for p in _OTOMAX_PREFIXES:
         if t.startswith(p):
-            return t[len(p) :].strip()
-    return t
+            t = t[len(p) :].strip()
+            break
+    return _TGL_SUFFIX.sub("", t)
+
+
+def parse_tgl_date(s: str | None) -> date | None:
+    """Tanggal yang disebut operator lewat "TGL 30/AGS/2026" / "TGL 29-AUG-2026" di
+    keterangan OTOMAX -- biasanya tanggal mutasi bank pasangannya. None kalau tidak ada
+    atau tidak valid."""
+    m = _TGL_ANY.search(norm_ref(s))
+    if not m:
+        return None
+    day, month_raw, year_raw = m.groups()
+    month = int(month_raw) if month_raw.isdigit() else _MONTHS.get(month_raw)
+    year = int(year_raw)
+    if year < 100:
+        year += 2000
+    if not month:
+        return None
+    try:
+        return date(year, month, int(day))
+    except ValueError:
+        return None
 
 
 def ref_core(s: str | None) -> str:
@@ -168,6 +222,9 @@ _TARTUN_CHANNEL = [
     (re.compile(r"\bTARTUN TF MANDIRI\b"), Channel.MANDIRI),
     (re.compile(r"\bTARTUN QR\b"), Channel.MERCHANT_BCA),
     (re.compile(r"\bBAYAR KE BRI\b"), Channel.BRI),
+    (re.compile(r"\bBAYAR KE BCA\b"), Channel.BCA),
+    (re.compile(r"\bBAYAR KE MANDIRI\b"), Channel.MANDIRI),
+    (re.compile(r"\bBAYAR QR\b.*\bLIVIN\b"), Channel.MANDIRI),
     (re.compile(r"\bTIKET DEPOSIT BRI\b"), Channel.BRI),
     (re.compile(r"\b(?:AUTO|TIKET)?\s*DEPOSIT BCA\b"), Channel.BCA),
     (re.compile(r"\b(?:AUTO|TIKET)?\s*DEPOSIT BRI\b"), Channel.BRI),
@@ -191,8 +248,12 @@ def classify_otomax(description: str | None) -> tuple[str, str | None]:
         return OtomaxCategory.STOR_IN, None
     if t.startswith("AUTO DEPOSIT") or t.startswith("TIKET DEPOSIT") or t.startswith("DEPOSIT"):
         return OtomaxCategory.TOPUP_TARTUN, _channel_hint(t)
-    if t.startswith("BAYAR KE BRI"):
-        return OtomaxCategory.PAYMENT, Channel.BRI
+    if t.startswith("BAYAR KE BRI") or t.startswith("BAYAR KE BCA") or t.startswith("BAYAR KE MANDIRI"):
+        return OtomaxCategory.PAYMENT, _channel_hint(t)
+    # "BAYAR QR ... LIVIN" = QRIS lewat Livin' (Mandiri). "BAYAR QR" tanpa penanda bank
+    # sengaja dibiarkan OTHER tanpa channel -- belum jelas bank mana, jadi manual.
+    if t.startswith("BAYAR QR") and re.search(r"\bLIVIN\b", t):
+        return OtomaxCategory.PAYMENT, Channel.MANDIRI
     if t.startswith("TARTUN "):
         return OtomaxCategory.TOPUP_TARTUN, _channel_hint(t)
     return OtomaxCategory.OTHER, _channel_hint(t)

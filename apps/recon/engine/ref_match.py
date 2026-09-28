@@ -13,11 +13,11 @@ from django.db import models
 from rapidfuzz import fuzz
 
 from apps.catalog.models import Reseller
-from apps.core.enums import Channel, MatchStatus, MatchType, OtomaxCategory
+from apps.core.enums import Channel, MatchStatus, MatchType
 from apps.core.normalize import norm_ref
 from apps.ingest.models import BankMutation, OtomaxEntry
 
-from .helpers import _OPEN_STATUSES, RunStats, _persist_match
+from .helpers import _MATCHABLE_CATEGORIES, _OPEN_STATUSES, RunStats, _persist_match
 
 # Toleransi hari (H-min, H+max) per bank
 BANK_DATE_TOLERANCE = {
@@ -37,7 +37,7 @@ def _open_otomax(book_date: date, channel: str, tolerance: tuple[int, int] = (-1
     end_d = book_date + timedelta(days=tolerance[1])
     return OtomaxEntry.objects.filter(
         book_date__range=(start_d, end_d),
-        category=OtomaxCategory.TOPUP_TARTUN,
+        category__in=_MATCHABLE_CATEGORIES,
         match_status__in=_OPEN_STATUSES,
     ).filter(models.Q(channel_hint=channel) | models.Q(channel_hint=""))
 

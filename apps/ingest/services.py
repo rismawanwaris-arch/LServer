@@ -34,6 +34,20 @@ def _aware(dt: datetime | None) -> datetime | None:
     return timezone.make_aware(dt)
 
 
+def otomax_derived_fields(description_raw: str) -> dict:
+    """Field OtomaxEntry yang diturunkan dari keterangan mentah -- satu sumber kebenaran
+    untuk impor maupun klasifikasi ulang data lama (reclassify_otomax)."""
+    category, hint = classify_otomax(description_raw)
+    embedded = strip_otomax_prefix(description_raw)
+    return {
+        "category": category,
+        "channel_hint": hint or "",
+        "ref_normalized": norm_ref(embedded),
+        "ref_core": ref_core(embedded),
+        "extracted_tokens": extract_tokens(embedded),
+    }
+
+
 class ImportBlocked(Exception):
     pass
 
@@ -243,9 +257,6 @@ def _persist_otomax(batch, result, book_date) -> int:
             )
             continue
 
-        category, hint = classify_otomax(row.description_raw)
-        embedded = strip_otomax_prefix(row.description_raw)
-        tokens = extract_tokens(embedded)
         OtomaxEntry.objects.get_or_create(
             row_hash=rh,
             defaults=dict(
@@ -256,12 +267,8 @@ def _persist_otomax(batch, result, book_date) -> int:
                 reseller=resolve_reseller(row.reseller_name_raw, alias_map=alias_map),
                 amount=row.amount,
                 description_raw=row.description_raw,
-                category=category,
-                channel_hint=hint or "",
-                ref_normalized=norm_ref(embedded),
-                ref_core=ref_core(embedded),
-                extracted_tokens=tokens,
                 match_status=MatchStatus.UNMATCHED,
+                **otomax_derived_fields(row.description_raw),
             ),
         )
     return 0

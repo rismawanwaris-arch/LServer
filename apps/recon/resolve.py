@@ -258,8 +258,74 @@ def manual_pair_transactions(
         note=match_note,
         matched_by=user,
     )
+    _settle_manual_pair(bm, [o], match, match_note, user)
+    return match
 
+
+@transaction.atomic
+def manual_pair_many(
+    bank_mutation: BankMutation,
+    otomax_entries: list[OtomaxEntry],
+    note: str = "",
+    user=None,
+) -> Match:
+    """Pasangkan SATU mutasi bank dengan BEBERAPA entri Otomax sekaligus -- untuk koreksi
+    operator yang ditembak sebagai selisih, bukan dibalik lalu dientri ulang (mis. +3.540.000
+    lalu -90.000 untuk transfer 3.450.000). Dipilih operator, jadi langsung final."""
+    ids = sorted({o.pk for o in otomax_entries})
+    if len(ids) < 2:
+        raise ValueError("Pilih minimal 2 entri Otomax untuk digabungkan.")
+
+    bm = BankMutation.objects.select_for_update().get(pk=bank_mutation.pk)
+    entries = list(OtomaxEntry.objects.select_for_update().filter(pk__in=ids).order_by("pk"))
+    if len(entries) != len(ids):
+        raise ValueError("Sebagian entri Otomax yang dipilih tidak ditemukan.")
+
+    if Match.objects.filter(bank_mutation=bm, voided_at__isnull=True).exists():
+        raise ValueError(
+            f"Mutasi bank #{bm.id} sudah punya pasangan aktif. Batalkan dulu pasangannya, atau "
+            "tambahkan entri lewat daftar 'Masih Selisih' di Pending Settle."
+        )
+    open_statuses = {MatchStatus.UNMATCHED, MatchStatus.PENDING_SETTLE}
+    for o in entries:
+        already_paired = Match.objects.filter(Q(otomax_entry=o) | Q(otomax_entries=o), voided_at__isnull=True).exists()
+        if o.match_status not in open_statuses or already_paired:
+            raise ValueError(
+                f"Entri Otomax #{o.id} ({o.reseller_name_raw}) sudah tidak terbuka atau sudah punya pasangan aktif."
+            )
+
+    bm.match_status = MatchStatus.MANUAL
+    bm.save(update_fields=["match_status", "updated_at"])
+    for o in entries:
+        o.match_status = MatchStatus.MANUAL
+        o.save(update_fields=["match_status", "updated_at"])
+
+    primary = max(entries, key=lambda o: abs(o.amount))
+    match_note = note.strip() or (
+        f"Pencocokan manual gabungan {len(entries)} entri Otomax vs {bm.channel} "
+        f"({', '.join(sorted({o.reseller_name_raw for o in entries}))})"
+    )
+    match = Match.objects.create(
+        book_date=bm.book_date,
+        channel=bm.channel,
+        bank_mutation=bm,
+        otomax_entry=primary,
+        match_type=MatchType.MANUAL,
+        amount_bank=bm.amount,
+        amount_otomax=sum((o.amount for o in entries), ZERO),
+        confidence=100,
+        note=match_note,
+        matched_by=user,
+    )
+    match.otomax_entries.set(entries)
+    _settle_manual_pair(bm, entries, match, match_note, user)
+    return match
+
+
+def _settle_manual_pair(bm: BankMutation, entries: list[OtomaxEntry], match: Match, match_note: str, user) -> None:
+    """Rapikan Discrepancy setelah pencocokan manual baru (1:1 maupun gabungan)."""
     diff = match.amount_diff  # = amount_bank - amount_otomax, dihitung otomatis di Match.save()
+    otomax_refs = ", ".join(f"#{o.id}" for o in entries)
 
     if diff == ZERO:
         # Nominal pas sama -- kedua sisi benar-benar sudah sepenuhnya terjelaskan,
@@ -269,10 +335,10 @@ def manual_pair_transactions(
                 disc,
                 match=match,
                 resolution_type="DATA_FIX",
-                reason=f"Cocok manual dengan Otomax #{o.id}: {match_note}",
+                reason=f"Cocok manual dengan Otomax {otomax_refs}: {match_note}",
                 user=user,
             )
-        for disc in Discrepancy.objects.filter(otomax_entry=o, status=DiscrepancyStatus.OPEN):
+        for disc in Discrepancy.objects.filter(otomax_entry__in=entries, status=DiscrepancyStatus.OPEN):
             resolve_discrepancy(
                 disc,
                 match=match,
@@ -288,10 +354,10 @@ def manual_pair_transactions(
         # AMOUNT_DIFF baru senilai sisa selisih riil, tetap OPEN, supaya kelihatan di
         # Daftar Selisih & Dashboard sampai ada yang menyelesaikan/write-off terpisah.
         Discrepancy.objects.filter(bank_mutation=bm, status=DiscrepancyStatus.OPEN).delete()
-        Discrepancy.objects.filter(otomax_entry=o, status=DiscrepancyStatus.OPEN).delete()
+        Discrepancy.objects.filter(otomax_entry__in=entries, status=DiscrepancyStatus.OPEN).delete()
         diff_note = (
             f"Selisih nominal pencocokan manual: Bank Rp {bm.amount:,.2f} vs "
-            f"Otomax Rp {o.amount:,.2f} ({match_note})"
+            f"Otomax Rp {match.amount_otomax:,.2f} ({match_note})"
         )
         _make_discrepancy(
             bm.book_date,
@@ -299,15 +365,13 @@ def manual_pair_transactions(
             DiscrepancyKind.AMOUNT_DIFF,
             amount=diff,
             bank=bm,
-            otomax=o,
+            otomax=match.otomax_entry,
             note=diff_note,
         )
 
     day, _ = ReconDay.objects.select_for_update().get_or_create(book_date=bm.book_date)
     day.recompute_selisih()
     day.save(update_fields=["selisih_adjustments", "selisih_current", "updated_at"])
-
-    return match
 
 
 @transaction.atomic

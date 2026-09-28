@@ -6,7 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-from apps.core.enums import DiscrepancyKind, DiscrepancyStatus, MatchStatus, MatchType
+from apps.core.enums import DiscrepancyKind, DiscrepancyStatus, MatchStatus, MatchType, OtomaxCategory
 
 from ..models import Discrepancy, Match
 
@@ -16,6 +16,11 @@ ZERO = Decimal("0.00")
 # PENDING_SETTLE diperlakukan sama seperti UNMATCHED karena keduanya berarti "belum ada
 # pasangan aktif" — beda dari MATCHED/MANUAL/IGNORED yang statusnya sudah final.
 _OPEN_STATUSES = [MatchStatus.UNMATCHED, MatchStatus.PENDING_SETTLE]
+
+# Kategori OTOMAX yang punya uang masuk nyata di mutasi bank, jadi ikut dicocokkan mesin.
+# PAYMENT ("BAYAR KE <bank>") sengaja TIDAK ikut dihitung di KPI total Otomax (yang
+# tetap cuma TOPUP_TARTUN) -- ini murni soal kandidat pencocokan.
+_MATCHABLE_CATEGORIES = [OtomaxCategory.TOPUP_TARTUN, OtomaxCategory.PAYMENT]
 
 
 @dataclass

@@ -625,8 +625,9 @@ def test_reversal_netting_cross_day_matches_correction_not_original():
 
 @pytest.mark.django_db
 def test_reversal_netting_matches_via_ref_core_when_original_lacks_tgl_suffix():
-    """Data nyata: entri asli tidak punya akhiran "TGL ...", REV & revisian punya —
-    ref_normalized jadi beda persis, jadi netting harus jatuh ke ref_core."""
+    """Data nyata: entri asli tidak punya akhiran "TGL ...", REV & revisian punya. Dulu ini
+    membuat ref_normalized beda persis; sekarang akhiran TGL dibuang saat normalisasi, jadi
+    ref_normalized sama -- tapi netting tetap harus benar (ref_core tetap jalur pertamanya)."""
     day1 = date(2026, 9, 12)
     day2 = date(2026, 9, 13)
     original_desc = "TARTUN EDC BRI 6013013636952876#192240520005#EDC#TRFLA"
@@ -645,7 +646,7 @@ def test_reversal_netting_matches_via_ref_core_when_original_lacks_tgl_suffix():
         correction_desc, "1150000", "PLC SA", book_date=day2,
         entry_datetime=timezone.make_aware(datetime(2026, 9, 13, 9, 32, 9)),
     )
-    assert original.ref_normalized != rev.ref_normalized  # persis skenario yang gagal di produksi
+    assert original.ref_normalized == rev.ref_normalized  # akhiran "TGL 12/SEP/2026" dibuang
     assert original.ref_core == rev.ref_core == correction.ref_core
 
     b = _bank("6013013636952876#192240520005#EDC#TRFLA", "1150000", channel=Channel.BRI, book_date=day1)
