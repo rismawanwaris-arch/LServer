@@ -107,3 +107,31 @@ def test_halaman_tanpa_tanggal_tidak_menampilkan_pemilih_tanggal(client_op):
 def test_halaman_login_tanpa_sidebar():
     html = Client().get("/login/").content.decode()
     assert "Navigasi utama" not in html
+
+
+@pytest.mark.django_db
+def test_reversal_tanpa_tanggal_bilah_atas_bilang_semua_tanggal(client_op):
+    """Regression (masukan operator 28 Sep): di mode semua tanggal, bilah atas dulu tetap
+    menampilkan tanggal terakhir dari sesi + halaman punya form tanggal sendiri -> rancu."""
+    client_op.get(f"/?d={BD}")  # sesi ingat 16 Sep
+    html = client_op.get("/reversal/").content.decode()
+
+    assert "Semua tanggal" in html
+    assert "Hari sebelumnya" not in html  # tidak ada stepper tanggal sesi
+    assert "Filter Tanggal" not in html
+    # Tombol kembali ke per tanggal membawa tanggal kerja terakhir.
+    assert f'href="?d={BD}&tab=belum"' in html
+
+
+@pytest.mark.django_db
+def test_daftar_selisih_rentang_tanggal_tampil_di_bilah_atas(client_op):
+    html = client_op.get("/selisih/", {"start_date": "2026-09-01", "end_date": "2026-09-10"}).content.decode()
+    assert "01 Sep 2026 – 10 Sep 2026" in html
+    assert "Ganti Tanggal" not in html
+
+
+@pytest.mark.django_db
+def test_daftar_selisih_per_tanggal_pakai_stepper(client_op):
+    html = client_op.get("/selisih/", {"d": BD.isoformat()}).content.decode()
+    assert "Hari sebelumnya" in html
+    assert 'aria-current="page">\n      <svg class="icon h-3.5 w-3.5"><use href="#i-cal"/></svg>Per tanggal' in html

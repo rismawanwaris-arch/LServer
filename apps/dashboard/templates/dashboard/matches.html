@@ -3,84 +3,71 @@
 {% block title %}Hasil Rekonsiliasi {{ book_date }} — RekonMutasi{% endblock %}
 
 {% block content %}
-<div class="mb-6 flex flex-wrap items-center justify-between gap-4">
-  <div>
-    <h1 class="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Hasil Rekonsiliasi (Matched)</h1>
-    <p class="text-sm text-slate-500 mt-1">
-      Daftar transaksi mutasi bank dan Otomax yang berhasil dipasangkan untuk tanggal buku <b>{{ book_date|date:"d F Y" }}</b>.
-    </p>
-  </div>
-
-  <form method="get" class="flex items-center gap-2">
-    <input type="date" name="d" value="{{ book_date|date:'Y-m-d' }}"
-           class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium shadow-xs dark:border-slate-600 dark:bg-slate-800">
-    <button class="btn-ghost">Ganti Tanggal</button>
-  </form>
+{% with d=book_date|date:'Y-m-d' %}
+<div class="mb-5">
+  <h1 class="page-title">Hasil Rekonsiliasi</h1>
+  <p class="page-sub">Mutasi bank dan entri Otomax yang sudah dipasangkan · <b class="font-medium text-slate-700 dark:text-slate-300">{{ book_date|date:"d F Y" }}</b></p>
 </div>
 
 <!-- Tab: semua pasangan / usulan mesin yang wajib dikonfirmasi operator -->
-<div class="flex items-center gap-2 mb-4 border-b border-slate-200 dark:border-slate-700">
-  <a href="{% url 'matches' %}?d={{ book_date|date:'Y-m-d' }}"
-     class="px-4 py-2.5 text-sm font-semibold border-b-2 -mb-px transition
-     {% if tab != 'review' %}border-indigo-500 text-indigo-600 dark:text-indigo-400{% else %}border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200{% endif %}">
-    Semua Pasangan
-  </a>
-  <a href="{% url 'matches' %}?d={{ book_date|date:'Y-m-d' }}&tab=review"
-     class="px-4 py-2.5 text-sm font-semibold border-b-2 -mb-px transition flex items-center gap-2
-     {% if tab == 'review' %}border-amber-500 text-amber-600 dark:text-amber-400{% else %}border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200{% endif %}">
-    <span>Perlu Konfirmasi</span>
-    <span class="rounded-full px-2 py-0.5 text-xs font-bold {% if review_count %}bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200{% else %}bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300{% endif %}">{{ review_count }}</span>
-  </a>
+<div class="mb-3 flex flex-wrap items-center gap-3">
+  <nav class="seg" aria-label="Jenis pasangan">
+    <a href="{% url 'matches' %}?d={{ d }}" class="seg-item {% if tab != 'review' %}seg-item-active{% endif %}"{% if tab != 'review' %} aria-current="page"{% endif %}>
+      Semua Pasangan
+    </a>
+    <a href="{% url 'matches' %}?d={{ d }}&tab=review" class="seg-item {% if tab == 'review' %}seg-item-active{% endif %}"{% if tab == 'review' %} aria-current="page"{% endif %}>
+      Perlu Konfirmasi
+      <span class="seg-count money {% if review_count %}!bg-amber-100 !text-amber-800 dark:!bg-amber-500/20 dark:!text-amber-300{% endif %}">{{ review_count }}</span>
+    </a>
+  </nav>
+  <div class="ml-auto text-xs text-slate-500">
+    <b class="money text-sm text-slate-900 dark:text-white">{{ total_count }}</b> pasangan
+  </div>
 </div>
 
 {% if tab == 'review' %}
-<p class="mb-4 text-xs text-slate-500 dark:text-slate-400">
-  Pasangan di bawah ini dibuat mesin tapi <b>belum final</b> — gabungan beberapa tiket, cocok nominal saja, atau teks cuma mirip.
-  Buka tiap baris, cek detailnya, lalu <b>Setujui</b> atau <b>Tolak</b>. Tutup buku ditolak selama masih ada usulan di tanggal ini.
-</p>
+<div class="callout callout-warn mb-3">
+  <svg class="icon mt-0.5 h-5 w-5"><use href="#i-clock"/></svg>
+  <div class="text-xs">
+    Pasangan di bawah ini dibuat mesin tapi <b>belum final</b> — gabungan beberapa tiket, cocok nominal saja, atau teks cuma mirip.
+    Buka tiap baris, cek detailnya, lalu <b>Setujui</b> atau <b>Tolak</b>. Tutup buku ditolak selama masih ada usulan di tanggal ini.
+  </div>
+</div>
 {% endif %}
 
-<!-- Filter Bar -->
-<div class="card mb-6 p-4">
-  <form method="get" class="flex flex-wrap items-center gap-3">
-    <input type="hidden" name="d" value="{{ book_date|date:'Y-m-d' }}">
-    {% if tab == 'review' %}<input type="hidden" name="tab" value="review">{% endif %}
+<!-- Filter -->
+<form method="get" class="mb-4 flex flex-wrap items-center gap-2">
+  <input type="hidden" name="d" value="{{ d }}">
+  {% if tab == 'review' %}<input type="hidden" name="tab" value="review">{% endif %}
 
-    <div class="flex items-center gap-2">
-      <label class="text-xs font-semibold text-slate-600 dark:text-slate-400">Channel:</label>
-      <select name="channel" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium dark:border-slate-600 dark:bg-slate-800">
-        <option value="">Semua Bank</option>
-        {% for val, label in channels %}
-        <option value="{{ val }}" {% if selected_channel == val %}selected{% endif %}>{{ label }}</option>
-        {% endfor %}
-      </select>
-    </div>
+  <label for="m-channel" class="sr-only">Channel</label>
+  <select id="m-channel" name="channel" onchange="this.form.submit()" class="field-select">
+    <option value="">Semua bank</option>
+    {% for val, label in channels %}
+    <option value="{{ val }}" {% if selected_channel == val %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
 
-    <div class="flex items-center gap-2">
-      <label class="text-xs font-semibold text-slate-600 dark:text-slate-400">Selisih:</label>
-      <select name="selisih" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium dark:border-slate-600 dark:bg-slate-800">
-        <option value="">Semua</option>
-        <option value="any" {% if selisih == 'any' %}selected{% endif %}>Masih selisih (plus &amp; minus)</option>
-        <option value="plus" {% if selisih == 'plus' %}selected{% endif %}>Plus — bank lebih besar</option>
-        <option value="minus" {% if selisih == 'minus' %}selected{% endif %}>Minus — Otomax lebih besar</option>
-      </select>
-    </div>
+  <label for="m-selisih" class="sr-only">Selisih</label>
+  <select id="m-selisih" name="selisih" onchange="this.form.submit()" class="field-select">
+    <option value="">Semua selisih</option>
+    <option value="any" {% if selisih == 'any' %}selected{% endif %}>Masih selisih (plus &amp; minus)</option>
+    <option value="plus" {% if selisih == 'plus' %}selected{% endif %}>Plus — bank lebih besar</option>
+    <option value="minus" {% if selisih == 'minus' %}selected{% endif %}>Minus — Otomax lebih besar</option>
+  </select>
 
-    <div class="flex-1 min-w-[200px]">
-      <input type="text" name="q" value="{{ query }}" placeholder="Cari keterangan, token, atau reseller..."
-             class="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
-    </div>
-
-    <button type="submit" class="btn-primary py-1.5 text-xs">Filter</button>
-    {% if selected_channel or query or selisih %}
-    <a href="{% url 'matches' %}?d={{ book_date|date:'Y-m-d' }}{% if tab == 'review' %}&tab=review{% endif %}" class="btn-ghost py-1.5 text-xs">Reset</a>
-    {% endif %}
-
-    <div class="ml-auto text-xs text-slate-500">
-      Total: <b>{{ total_count }}</b> pasangan ditemukan
-    </div>
-  </form>
-</div>
+  <div class="relative min-w-[220px] flex-1 sm:max-w-sm">
+    <svg class="icon pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400"><use href="#i-search"/></svg>
+    <label for="m-q" class="sr-only">Cari</label>
+    <input id="m-q" type="search" name="q" value="{{ query }}" placeholder="Cari keterangan, token, atau reseller…" class="field-input w-full pl-8">
+  </div>
+  <button type="submit" class="btn-primary px-3 py-1.5 text-xs">Cari</button>
+  {% if selected_channel or query or selisih %}
+  <a href="{% url 'matches' %}?d={{ d }}{% if tab == 'review' %}&tab=review{% endif %}" class="btn-ghost px-3 py-1.5 text-xs">
+    <svg class="icon h-3.5 w-3.5"><use href="#i-x"/></svg>Reset
+  </a>
+  {% endif %}
+</form>
 
 <!-- Matches Table (PRD Section 9.3: read-only, bisa expand untuk lihat detail pasangan) -->
 <div class="card overflow-hidden p-0">
@@ -90,7 +77,7 @@
         <tr>
           <th class="w-8"></th>
           <th>Channel</th>
-          <th>Metode Match</th>
+          <th>Metode</th>
           <th>Ref / Keterangan Bank</th>
           <th class="text-right">Nominal Bank</th>
           <th>Reseller Otomax</th>
@@ -103,7 +90,7 @@
         {% include "dashboard/_matches_rows.html" %}
         {% else %}
         <tr>
-          <td colspan="8" class="text-center py-12 text-slate-400">
+          <td colspan="8" class="py-12 text-center text-sm text-slate-500">
             {% if tab == 'review' %}
             Tidak ada usulan pencocokan yang menunggu konfirmasi untuk tanggal ini.
             {% else %}
@@ -116,4 +103,5 @@
     </table>
   </div>
 </div>
+{% endwith %}
 {% endblock %}

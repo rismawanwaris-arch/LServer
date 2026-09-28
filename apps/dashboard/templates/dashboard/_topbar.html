@@ -9,7 +9,19 @@
     <span class="truncate font-semibold text-slate-900 dark:text-slate-100">{{ label|default:"RekonMutasi" }}</span>
   </div>
 
-  {% if work_date %}
+  {% if all_dates %}
+  <!-- Mode semua tanggal: tidak ada tanggal kerja; klik untuk memilih satu tanggal -->
+  <label class="date-stepper relative cursor-pointer px-2.5 text-[13px] font-semibold text-slate-900 hover:bg-slate-50 dark:text-slate-100 dark:hover:bg-slate-800" title="Pilih satu tanggal">
+    <span class="flex items-center gap-1.5 money">
+      <svg class="icon h-3.5 w-3.5 text-slate-400"><use href="#i-cal"/></svg>
+      {% if range_start or range_end %}{{ range_start|date:"d M Y"|default:"…" }} – {{ range_end|date:"d M Y"|default:"…" }}{% else %}Semua tanggal{% endif %}
+    </span>
+    <input type="date" aria-label="Pilih tanggal buku"
+           class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+           onclick="try { this.showPicker(); } catch (e) {}"
+           onchange="if (this.value) { var u = new URL(location.href); ['start_date','end_date','page'].forEach(function (k) { u.searchParams.delete(k); }); u.searchParams.set('d', this.value); location.href = u; }">
+  </label>
+  {% elif work_date %}
   <div class="date-stepper" aria-label="Tanggal buku">
     <a href="{{ prev_url }}" class="date-stepper-btn" aria-label="Hari sebelumnya" title="Hari sebelumnya">
       <svg class="icon"><use href="#i-left"/></svg>

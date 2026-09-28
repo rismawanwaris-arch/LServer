@@ -3,86 +3,64 @@
 {% block title %}Monitor Reversal Otomax — RekonMutasi{% endblock %}
 
 {% block content %}
-<div class="mb-6 flex flex-wrap items-center justify-between gap-4">
-  <div>
-    <h1 class="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Monitor Reversal Otomax</h1>
-    <p class="text-sm text-slate-500 mt-1">
-      Baris "REV ..." yang membatalkan sebuah topup harus saling menetralkan dengan entri aslinya.
-      Murni koreksi internal Otomax — tidak ada uang bank yang bergerak.
-    </p>
-  </div>
-
-  <form method="get" class="flex items-center gap-2">
-    <input type="hidden" name="tab" value="{{ tab }}">
-    <input type="date" name="d" value="{{ book_date }}"
-           class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium shadow-xs dark:border-slate-600 dark:bg-slate-800">
-    <button class="btn-ghost">Filter Tanggal</button>
-    {% if book_date %}
-    <a href="?tab={{ tab }}" class="btn-ghost text-xs">Semua Tanggal</a>
-    {% endif %}
-  </form>
+<div class="mb-5">
+  <h1 class="page-title">Reversal Otomax</h1>
+  <p class="page-sub">
+    Baris "REV …" yang membatalkan sebuah topup harus saling menetralkan dengan entri aslinya. Murni koreksi internal Otomax — tidak ada uang bank yang bergerak.
+  </p>
 </div>
 
-<!-- KPI Summary Cards -->
-<div class="grid gap-4 sm:grid-cols-2 mb-6">
-  <div class="card border-l-4 border-l-amber-500 p-4">
-    <div class="flex items-center justify-between">
-      <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Belum Netted</div>
-      <span class="badge bg-amber-100 text-amber-800 text-[10px] font-bold">Perlu Cek Manual</span>
-    </div>
-    <div class="flex items-baseline justify-between mt-1">
-      <div class="money text-2xl font-bold text-amber-600">{{ belum_count }} transaksi</div>
-      <div class="money font-semibold text-sm text-slate-600 dark:text-slate-300">Rp {{ belum_total|rupiah }}</div>
-    </div>
-  </div>
-  <div class="card border-l-4 border-l-emerald-500 p-4">
-    <div class="flex items-center justify-between">
-      <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Sudah Netted (Otomatis/Manual)</div>
-      <span class="badge bg-emerald-100 text-emerald-800 text-[10px] font-bold">Sinkron Selesai</span>
-    </div>
-    <div class="flex items-baseline justify-between mt-1">
-      <div class="money text-2xl font-bold text-emerald-600">{{ netted_count }} transaksi</div>
-      <div class="money font-semibold text-sm text-slate-600 dark:text-slate-300">Rp {{ netted_total|rupiah }}</div>
-    </div>
-  </div>
-</div>
+<!-- Cakupan tanggal + status -->
+<div class="mb-4 flex flex-wrap items-center gap-3">
+  <nav class="seg" aria-label="Cakupan tanggal">
+    <a href="?d={% if book_date %}{{ book_date }}{% elif nav_book_date %}{{ nav_book_date }}{% else %}{% now 'Y-m-d' %}{% endif %}&tab={{ tab }}"
+       class="seg-item {% if book_date %}seg-item-active{% endif %}"{% if book_date %} aria-current="page"{% endif %}>
+      <svg class="icon h-3.5 w-3.5"><use href="#i-cal"/></svg>Per tanggal
+    </a>
+    <a href="?tab={{ tab }}" class="seg-item {% if not book_date %}seg-item-active{% endif %}"{% if not book_date %} aria-current="page"{% endif %}>
+      Semua tanggal
+    </a>
+  </nav>
 
-<!-- Tab Navigation -->
-<div class="flex items-center gap-2 mb-5 pb-2 border-b border-slate-200 dark:border-slate-700">
-  <a href="?{% if book_date %}d={{ book_date }}&{% endif %}tab=belum"
-     class="btn {% if tab != 'netted' %}btn-primary{% else %}btn-ghost{% endif %} text-xs font-bold py-1.5 px-3.5">
-    Belum Netted ({{ belum_count }})
-  </a>
-  <a href="?{% if book_date %}d={{ book_date }}&{% endif %}tab=netted"
-     class="btn {% if tab == 'netted' %}btn-primary{% else %}btn-ghost{% endif %} text-xs font-bold py-1.5 px-3.5">
-    Sudah Netted ({{ netted_count }})
-  </a>
+  <nav class="seg" aria-label="Status netting">
+    <a href="?{% if book_date %}d={{ book_date }}&{% endif %}tab=belum" class="seg-item {% if tab != 'netted' %}seg-item-active{% endif %}"{% if tab != 'netted' %} aria-current="page"{% endif %}>
+      Belum Netted <span class="seg-count money {% if belum_count %}!bg-amber-100 !text-amber-800 dark:!bg-amber-500/20 dark:!text-amber-300{% endif %}">{{ belum_count }}</span>
+    </a>
+    <a href="?{% if book_date %}d={{ book_date }}&{% endif %}tab=netted" class="seg-item {% if tab == 'netted' %}seg-item-active{% endif %}"{% if tab == 'netted' %} aria-current="page"{% endif %}>
+      Sudah Netted <span class="seg-count money">{{ netted_count }}</span>
+    </a>
+  </nav>
+
+  <div class="ml-auto text-xs text-slate-500">
+    {% if tab == 'netted' %}Total netted <b class="money text-sm text-slate-900 dark:text-white">Rp {{ netted_total|rupiah }}</b>
+    {% else %}Total belum netted <b class="money text-sm text-slate-900 dark:text-white">Rp {{ belum_total|rupiah }}</b>{% endif %}
+  </div>
 </div>
 
 {% if tab != 'netted' %}
 <!-- Tab 1: Belum Netted, lengkap dengan kandidat pasangan -->
 <div class="space-y-4">
   {% for rev, candidates, unmatched_banks in items %}
-  <div class="card p-0 overflow-hidden" x-data="{ openMatch: null, manualBankOpen: false }">
-    <div class="flex flex-wrap items-center justify-between gap-3 p-4 bg-amber-50/60 dark:bg-amber-950/20 border-b border-amber-200 dark:border-amber-900/50">
+  <div class="card overflow-hidden p-0" x-data="{ openMatch: null, manualBankOpen: false }">
+    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 p-4 dark:border-slate-800">
       <div>
         <div class="flex items-center gap-2 mb-1">
-          <span class="badge-warn text-[11px]">REVERSAL</span>
+          <span class="badge bg-violet-50 text-violet-700 ring-violet-600/20 dark:bg-violet-500/10 dark:text-violet-300 dark:ring-violet-500/25"><svg class="icon h-3 w-3"><use href="#i-swap"/></svg>Reversal</span>
           <span class="font-mono text-xs text-slate-500">{{ rev.entry_datetime|date:"d M Y H:i"|default:rev.book_date }}</span>
-          {% if rev.ref_core %}<span class="badge-info text-[10px]">{{ rev.ref_core }}</span>{% endif %}
+          {% if rev.ref_core %}<span class="badge-mute font-mono text-[10px]">{{ rev.ref_core }}</span>{% endif %}
         </div>
-        <div class="font-bold text-slate-900 dark:text-white text-sm">{{ rev.reseller_name_raw }}</div>
+        <div class="text-sm font-semibold text-slate-900 dark:text-white">{{ rev.reseller_name_raw }}</div>
         <div class="font-mono text-xs text-slate-600 dark:text-slate-300 mt-0.5">{{ rev.description_raw }}</div>
       </div>
       <div class="text-right">
-        <div class="money text-xl font-black text-rose-600 dark:text-rose-400">Rp {{ rev.amount|rupiah }}</div>
+        <div class="money text-xl font-semibold {% if rev.amount < 0 %}text-rose-600 dark:text-rose-400{% else %}text-slate-900 dark:text-white{% endif %}">Rp {{ rev.amount|rupiah }}</div>
         <div class="text-[11px] text-slate-400">#{{ rev.id }}</div>
       </div>
     </div>
 
     <div class="p-4">
       {% if candidates %}
-      <div class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
+      <div class="mb-2 text-xs font-medium text-slate-500">
         Kandidat Pasangan (nominal berlawanan Rp {{ candidates.0.0.amount|rupiah }})
       </div>
       <div class="space-y-2">
@@ -93,17 +71,17 @@
               <div class="flex items-center gap-2 flex-wrap">
                 <span class="font-bold text-xs text-slate-900 dark:text-white">{{ c.reseller_name_raw }}</span>
                 {% if c.reseller_name_raw == rev.reseller_name_raw %}
-                <span class="badge-good text-[10px] font-bold">★ Reseller Sama</span>
+                <span class="badge-good text-[10px]">Reseller sama</span>
                 {% else %}
-                <span class="badge-mute text-[10px]">Reseller Beda</span>
+                <span class="badge-mute text-[10px]">Reseller beda</span>
                 {% endif %}
                 {% if c.ref_core and c.ref_core == rev.ref_core %}
-                <span class="badge-good text-[10px] font-bold">★ Ref Sama ({{ c.ref_core }})</span>
+                <span class="badge-good text-[10px]">Ref sama ({{ c.ref_core }})</span>
                 {% endif %}
                 {% if c.match_status == 'MATCHED' %}
-                <span class="badge bg-rose-100 text-rose-800 text-[10px] font-bold">Sudah MATCHED ke Bank</span>
+                <span class="badge-crit text-[10px]">Sudah MATCHED ke Bank</span>
                 {% elif c.match_status == 'MANUAL' %}
-                <span class="badge bg-rose-100 text-rose-800 text-[10px] font-bold">Sudah Di-tag Manual</span>
+                <span class="badge-crit text-[10px]">Sudah Di-tag Manual</span>
                 {% else %}
                 <span class="badge-mute text-[10px]">{{ c.get_match_status_display }}</span>
                 {% endif %}
@@ -114,7 +92,7 @@
               </div>
             </div>
             <div class="flex items-center gap-3 shrink-0">
-              <span class="money font-black text-sm text-emerald-600 dark:text-emerald-400">Rp {{ c.amount|rupiah }}</span>
+              <span class="money text-sm font-semibold text-slate-900 dark:text-white">Rp {{ c.amount|rupiah }}</span>
               {% if c.match_status == 'UNMATCHED' or c.match_status == 'PENDING_SETTLE' %}
               <form method="post" action="{% url 'manual-net-reversal' %}">
                 {% csrf_token %}
@@ -124,8 +102,8 @@
                 <input type="hidden" name="next_url" value="{{ request.get_full_path }}">
                 <button type="submit"
                         onclick="return confirm('Netralkan REV #{{ rev.id }} dengan entri #{{ c.id }}? Keduanya akan ditandai selesai (IGNORED), tanpa membuat pencocokan ke mutasi bank.');"
-                        class="btn-secondary text-xs font-bold py-1.5 px-3">
-                  Netkan Manual &rarr;
+                        class="btn-primary px-3 py-1.5 text-xs">
+                  <svg class="icon h-3.5 w-3.5"><use href="#i-scale"/></svg>Netkan Manual
                 </button>
               </form>
               {% elif active_match %}
@@ -144,11 +122,11 @@
                dengan opsi Batalkan Pencocokan langsung dari sini (sama seperti di Hasil Cocok). -->
           <div x-show="openMatch === {{ c.id }}" x-cloak style="display: none;"
                class="border-t border-slate-200 dark:border-slate-700 bg-indigo-50/30 dark:bg-slate-800/50 p-4">
-            <div class="grid gap-4 md:grid-cols-2 rounded-xl bg-white p-4 border border-slate-200 shadow-xs dark:bg-slate-800 dark:border-slate-700 text-xs">
+            <div class="grid gap-4 rounded-xl border border-slate-200 bg-white p-4 text-xs md:grid-cols-2 dark:border-slate-800 dark:bg-slate-900">
               <div class="space-y-2 border-r border-slate-100 dark:border-slate-700 pr-4">
                 <div class="flex items-center justify-between">
                   <span class="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                    <span class="h-2 w-2 rounded-full bg-blue-500"></span> Sisi Bank {% if active_match.channel %}({{ active_match.channel }}){% endif %}
+                    <span class="h-2 w-2 rounded-full bg-indigo-500"></span> Sisi Bank {% if active_match.channel %}({{ active_match.channel }}){% endif %}
                   </span>
                   <span class="font-mono font-bold text-slate-700 dark:text-slate-300">#{{ active_match.bank_mutation.id|default:"-" }}</span>
                 </div>
@@ -171,7 +149,7 @@
               <div class="space-y-2 pl-2">
                 <div class="flex items-center justify-between">
                   <span class="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                    <span class="h-2 w-2 rounded-full bg-purple-500"></span> Sisi Otomax
+                    <span class="h-2 w-2 rounded-full bg-violet-500"></span> Sisi Otomax
                   </span>
                   <span class="font-mono font-bold text-slate-700 dark:text-slate-300">#{{ c.id }}</span>
                 </div>
@@ -252,7 +230,8 @@
     </div>
   </div>
   {% empty %}
-  <div class="card text-center py-12 text-slate-400">
+  <div class="card py-12 text-center text-sm text-slate-500">
+    <span class="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400"><svg class="icon h-5 w-5"><use href="#i-check"/></svg></span>
     Tidak ada baris REVERSAL yang menggantung{% if book_date %} untuk tanggal ini{% endif %}. Semua sudah netted.
   </div>
   {% endfor %}
@@ -277,22 +256,19 @@
       </thead>
       <tbody x-data="{ open: null }">
         {% for rev in items %}
-        <tr class="cursor-pointer group hover:bg-slate-50/60 dark:hover:bg-slate-800/60 transition"
-            @click="open = (open === {{ rev.id }} ? null : {{ rev.id }})">
-          <td class="text-center text-slate-400 group-hover:text-indigo-600">
-            <svg class="h-4 w-4 transform transition-transform" :class="{ 'rotate-90': open === {{ rev.id }} }" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-            </svg>
+        <tr class="group cursor-pointer" @click="open = (open === {{ rev.id }} ? null : {{ rev.id }})">
+          <td class="text-center text-slate-400 group-hover:text-slate-900 dark:group-hover:text-white">
+            <svg class="icon transition-transform" :class="{ 'rotate-90': open === {{ rev.id }} }"><use href="#i-right"/></svg>
           </td>
           <td class="font-mono text-xs text-slate-500 whitespace-nowrap">{{ rev.entry_datetime|date:"d M H:i"|default:rev.book_date }}</td>
           <td class="font-bold text-xs text-slate-900 dark:text-white">{{ rev.reseller_name_raw }}</td>
           <td class="font-mono text-xs text-slate-700 dark:text-slate-300 max-w-xs truncate" title="{{ rev.description_raw }}">
             {{ rev.description_raw }}
           </td>
-          <td class="money text-right font-bold text-rose-600 dark:text-rose-400 whitespace-nowrap">Rp {{ rev.amount|rupiah }}</td>
+          <td class="money whitespace-nowrap text-right font-semibold {% if rev.amount < 0 %}text-rose-600 dark:text-rose-400{% else %}text-slate-900 dark:text-white{% endif %}">Rp {{ rev.amount|rupiah }}</td>
           <td>
             {% if rev.net_pair %}
-            <span class="badge-good text-[11px] font-bold">
+            <span class="badge bg-violet-50 text-violet-700 ring-violet-600/20 dark:bg-violet-500/10 dark:text-violet-300 dark:ring-violet-500/25">
               #{{ rev.net_pair.id }} {{ rev.net_pair.reseller_name_raw }} (Rp {{ rev.net_pair.amount|rupiah }})
             </span>
             {% else %}
@@ -313,9 +289,9 @@
         </tr>
 
         <!-- Detail lengkap, expand di klik (sama seperti Hasil Cocok) -->
-        <tr x-show="open === {{ rev.id }}" style="display: none;" class="bg-indigo-50/30 border-b border-indigo-100 dark:bg-slate-800/50 dark:border-slate-700">
+        <tr x-show="open === {{ rev.id }}" style="display: none;" class="!bg-slate-50 dark:!bg-slate-950/40">
           <td colspan="8" class="p-4">
-            <div class="grid gap-4 md:grid-cols-2 rounded-xl bg-white p-4 border border-slate-200 shadow-xs dark:bg-slate-800 dark:border-slate-700 text-xs">
+            <div class="grid gap-4 rounded-xl border border-slate-200 bg-white p-4 text-xs md:grid-cols-2 dark:border-slate-800 dark:bg-slate-900">
               <!-- Sisi REV -->
               <div class="space-y-2 border-r border-slate-100 dark:border-slate-700 pr-4">
                 <div class="flex items-center justify-between">
@@ -343,7 +319,7 @@
               <div class="space-y-2 pl-2">
                 <div class="flex items-center justify-between">
                   <span class="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                    <span class="h-2 w-2 rounded-full bg-emerald-500"></span> Dinetralkan Dengan
+                    <span class="h-2 w-2 rounded-full bg-violet-500"></span> Dinetralkan Dengan
                   </span>
                   <span class="font-mono font-bold text-slate-700 dark:text-slate-300">#{{ rev.net_pair.id|default:"-" }}</span>
                 </div>

@@ -23,6 +23,9 @@ _OPEN = [MatchStatus.UNMATCHED, MatchStatus.PENDING_SETTLE]
 # menampilkan pemilih tanggal ‹ ›.
 _DATED = {"day", "upload", "manual-review", "pending-settle", "reversal", "discrepancy-list", "matches", "reports"}
 _STEPPER = _DATED - {"reports"}
+# Halaman yang juga punya mode "semua tanggal" (tanpa ?d=): bilah atasnya harus bilang
+# "Semua tanggal", bukan tanggal terakhir dari sesi -- kalau tidak, judul dan isi rancu.
+_OPTIONAL_DATE = {"reversal", "discrepancy-list"}
 
 
 @dataclass
@@ -77,6 +80,13 @@ def _work_date(context) -> date | None:
             except ValueError:
                 continue
     return None
+
+
+def _parse(raw) -> date | None:
+    try:
+        return date.fromisoformat(raw) if raw else None
+    except ValueError:
+        return None
 
 
 def _counts(d: date) -> dict[str, int]:
@@ -137,11 +147,15 @@ def topbar(context):
         for it in items:
             if it.url_name == current:
                 section, label = title, it.label
-    d = _work_date(context) if current in _STEPPER else None
+    all_dates = current in _OPTIONAL_DATE and not request.GET.get("d")
+    d = _work_date(context) if current in _STEPPER and not all_dates else None
     day = ReconDay.objects.filter(book_date=d).first() if d else None
     return {
         "section": section,
         "label": label,
+        "all_dates": all_dates,
+        "range_start": _parse(request.GET.get("start_date")) if all_dates else None,
+        "range_end": _parse(request.GET.get("end_date")) if all_dates else None,
         "work_date": d,
         "prev_url": _with_date(request, d - timedelta(days=1)) if d else "",
         "next_url": _with_date(request, d + timedelta(days=1)) if d else "",
