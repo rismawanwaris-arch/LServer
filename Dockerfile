@@ -24,6 +24,9 @@ COPY pyproject.toml ./
 RUN uv pip install --system --no-cache -r pyproject.toml
 COPY . .
 COPY --from=css /out/tailwind.css apps/dashboard/static/css/tailwind.css
-RUN SECRET_KEY=build ALLOWED_HOSTS=build python manage.py collectstatic --noinput
+# SECRET_KEY di sini cuma dipakai selama build (collectstatic tidak menyentuh
+# database/koneksi nyata), bukan runtime -- tapi tetap harus >=32 karakter supaya
+# lolos guard panjang minimum di config/settings/prod.py.
+RUN SECRET_KEY=build-time-only-not-used-at-runtime-000000 ALLOWED_HOSTS=build python manage.py collectstatic --noinput
 EXPOSE 8000
 CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3", "--timeout", "120"]
