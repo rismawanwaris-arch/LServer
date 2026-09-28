@@ -13,3 +13,14 @@ def rupiah(value) -> str:
     except (InvalidOperation, TypeError, ValueError):
         return str(value)
     return f"{d:,}".replace(",", ".")
+
+
+@register.filter
+def channel_label(value) -> str:
+    """Kode channel -> nama tampilan ('MERCHANT_BCA' -> 'Merchant BCA (QRIS)')."""
+    from apps.core.enums import Channel
+
+    try:
+        return Channel(value).label
+    except ValueError:
+        return str(value)

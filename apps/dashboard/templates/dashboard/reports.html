@@ -3,75 +3,55 @@
 {% block title %}Riwayat & Laporan Rekonsiliasi — RekonMutasi{% endblock %}
 
 {% block content %}
-<div class="mb-6 flex flex-wrap items-center justify-between gap-4">
+<div class="mb-5 flex flex-wrap items-end justify-between gap-3">
   <div>
-    <h1 class="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Riwayat & Laporan Rekonsiliasi</h1>
-    <p class="text-sm text-slate-500 mt-1">
-      Rekapitulasi per tanggal dan ekspor data pencocokan mutasi bank vs Otomax.
-    </p>
+    <h1 class="page-title">Riwayat & Laporan Rekonsiliasi</h1>
+    <p class="page-sub">Rekapitulasi per tanggal dan ekspor data pencocokan mutasi bank vs Otomax.</p>
   </div>
-
-  <!-- Export Excel Button (PRD Section 9.6) -->
-  <a href="{% url 'reports-export' %}?start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}"
-     class="btn-secondary">
-    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-    Export ke Excel (.xlsx)
+  <a href="{% url 'reports-export' %}?start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}" class="btn-secondary">
+    <svg class="icon"><use href="#i-download"/></svg>Export ke Excel (.xlsx)
   </a>
 </div>
 
-<!-- Date Range Filter Form -->
-<div class="card mb-6 p-4">
-  <form method="get" class="flex flex-wrap items-end gap-4">
-    <div>
-      <label class="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Dari Tanggal</label>
-      <input type="date" name="start_date" value="{{ start_date|date:'Y-m-d' }}"
-             class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium dark:border-slate-600 dark:bg-slate-800">
-    </div>
+<!-- Rentang tanggal -->
+<form method="get" class="mb-4 flex flex-wrap items-center gap-2">
+  <label for="r-start" class="text-xs font-medium text-slate-600 dark:text-slate-400">Periode</label>
+  <input id="r-start" type="date" name="start_date" value="{{ start_date|date:'Y-m-d' }}" class="field-input" aria-label="Dari tanggal">
+  <span class="text-xs text-slate-400">–</span>
+  <input type="date" name="end_date" value="{{ end_date|date:'Y-m-d' }}" class="field-input" aria-label="Sampai tanggal">
+  <button type="submit" class="btn-primary px-3 py-1.5 text-xs">Terapkan</button>
+</form>
 
-    <div>
-      <label class="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Sampai Tanggal</label>
-      <input type="date" name="end_date" value="{{ end_date|date:'Y-m-d' }}"
-             class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium dark:border-slate-600 dark:bg-slate-800">
-    </div>
-
-    <button type="submit" class="btn-primary py-1.5 text-xs">Terapkan Filter Rentang</button>
-  </form>
-</div>
-
-<!-- Aggregated Summary for the Range -->
-<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-6">
-  <div class="card border-l-4 border-l-blue-500">
-    <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Total Masuk Bank (Periode)</div>
-    <div class="money mt-1 text-xl font-bold text-slate-900 dark:text-white">Rp {{ summary.total_bank|rupiah }}</div>
+<!-- Ringkasan periode -->
+<div class="card mb-6 grid grid-cols-1 divide-y divide-slate-200 p-0 sm:grid-cols-2 sm:divide-y-0 lg:grid-cols-4 lg:divide-x dark:divide-slate-800">
+  <div class="p-4">
+    <div class="kpi-label"><span class="h-2 w-2 rounded-sm bg-indigo-600"></span>Total masuk bank</div>
+    <div class="money mt-1 text-xl font-semibold text-slate-900 dark:text-white">Rp {{ summary.total_bank|rupiah }}</div>
   </div>
-  <div class="card border-l-4 border-l-indigo-500">
-    <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Total Otomax (Periode)</div>
-    <div class="money mt-1 text-xl font-bold text-slate-900 dark:text-white">Rp {{ summary.total_otomax|rupiah }}</div>
+  <div class="p-4">
+    <div class="kpi-label"><span class="h-2 w-2 rounded-sm bg-violet-600"></span>Total Otomax</div>
+    <div class="money mt-1 text-xl font-semibold text-slate-900 dark:text-white">Rp {{ summary.total_otomax|rupiah }}</div>
   </div>
-  <div class="card border-l-4 border-l-emerald-500">
-    <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Total Matched (Auto + Manual)</div>
-    <div class="money mt-1 text-xl font-bold text-emerald-600">
-      {{ summary.matched_auto_count|add:summary.matched_manual_count }} transaksi
-    </div>
+  <div class="p-4">
+    <div class="kpi-label"><span class="h-2 w-2 rounded-sm bg-emerald-500"></span>Total matched (auto + manual)</div>
+    <div class="money mt-1 text-xl font-semibold text-slate-900 dark:text-white">{{ summary.matched_auto_count|add:summary.matched_manual_count }} <span class="text-sm font-medium text-slate-500">transaksi</span></div>
   </div>
-  <div class="card border-l-4 {% if summary.selisih == 0 %}border-l-emerald-500{% else %}border-l-rose-500{% endif %}">
-    <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Selisih Bersih Periode</div>
-    <div class="money mt-1 text-xl font-bold {% if summary.selisih == 0 %}text-emerald-600{% else %}text-rose-600{% endif %}">
-      Rp {{ summary.selisih|rupiah }}
-    </div>
+  <div class="p-4">
+    <div class="kpi-label"><span class="h-2 w-2 rounded-sm {% if summary.selisih == 0 %}bg-emerald-500{% else %}bg-rose-500{% endif %}"></span>Selisih bersih periode</div>
+    <div class="money mt-1 text-xl font-semibold {% if summary.selisih == 0 %}text-emerald-600 dark:text-emerald-400{% else %}text-rose-600 dark:text-rose-400{% endif %}">Rp {{ summary.selisih|rupiah }}</div>
   </div>
 </div>
 
 <!-- Rekapitulasi Per Bank (Periode) -->
 <div class="card overflow-hidden p-0 mb-6">
-  <div class="px-5 py-4 border-b border-slate-100 dark:border-slate-700 font-bold text-slate-900 dark:text-white">
+  <div class="border-b border-slate-200 px-4 py-3 text-sm font-semibold text-slate-900 dark:border-slate-800 dark:text-white">
     Rekapitulasi Per Bank ({{ start_date|date:"d M Y" }} — {{ end_date|date:"d M Y" }})
   </div>
   <div class="overflow-x-auto">
     <table class="w-full text-sm">
       <thead>
         <tr>
-          <th class="whitespace-nowrap">Channel Bank</th>
+          <th class="whitespace-nowrap">Bank</th>
           <th class="text-right whitespace-nowrap">Masuk Bank</th>
           <th class="text-right whitespace-nowrap">Total Otomax</th>
           <th class="text-right whitespace-nowrap">Matched Auto</th>
@@ -82,17 +62,17 @@
       <tbody>
         {% for ch, d in summary.per_bank.items %}
         <tr>
-          <td class="font-semibold text-slate-800 dark:text-slate-200 whitespace-nowrap">{{ ch }}</td>
+          <td class="whitespace-nowrap font-medium text-slate-900 dark:text-slate-100">{{ ch|channel_label }}</td>
           <td class="money text-right whitespace-nowrap">Rp {{ d.total|rupiah }}</td>
-          <td class="money text-right text-purple-600 dark:text-purple-400 font-medium whitespace-nowrap">
+          <td class="money whitespace-nowrap text-right text-slate-600 dark:text-slate-300">
             Rp {{ d.otomax_total|rupiah }}
             {% if d.otomax_count > 0 %}
             <span class="text-[11px] font-normal text-slate-400">({{ d.otomax_count }})</span>
             {% endif %}
           </td>
-          <td class="money text-right text-emerald-600 font-medium whitespace-nowrap">Rp {{ d.matched_auto|rupiah }}</td>
-          <td class="money text-right text-slate-600 whitespace-nowrap">Rp {{ d.matched_manual|rupiah }}</td>
-          <td class="money text-right font-semibold whitespace-nowrap {% if d.unmatched > 0 %}text-amber-600{% else %}text-slate-400{% endif %}">
+          <td class="money whitespace-nowrap text-right">Rp {{ d.matched_auto|rupiah }}</td>
+          <td class="money whitespace-nowrap text-right text-slate-600 dark:text-slate-300">Rp {{ d.matched_manual|rupiah }}</td>
+          <td class="money whitespace-nowrap text-right font-semibold {% if d.unmatched > 0 %}text-amber-700 dark:text-amber-400{% else %}text-slate-400{% endif %}">
             Rp {{ d.unmatched|rupiah }}
             {% if d.unmatched_count > 0 %}
             <span class="text-[11px] font-normal text-slate-400">({{ d.unmatched_count }})</span>
@@ -104,7 +84,7 @@
         <tr class="bg-slate-50/60 dark:bg-slate-800/40">
           <td class="font-semibold text-slate-500 dark:text-slate-400 italic whitespace-nowrap">Lain-lain (Tanpa Channel)</td>
           <td class="money text-right text-slate-400">—</td>
-          <td class="money text-right text-purple-600 dark:text-purple-400 font-medium whitespace-nowrap">
+          <td class="money whitespace-nowrap text-right text-slate-600 dark:text-slate-300">
             Rp {{ summary.otomax_lain_lain.otomax_total|rupiah }}
             <span class="text-[11px] font-normal text-slate-400">({{ summary.otomax_lain_lain.otomax_count }})</span>
           </td>
@@ -117,7 +97,7 @@
     </table>
   </div>
   {% if summary.otomax_lain_lain.otomax_count > 0 %}
-  <p class="text-[11px] text-slate-400 px-5 py-3">
+  <p class="border-t border-slate-200 px-4 py-2.5 text-[11px] text-slate-500 dark:border-slate-800">
     "Lain-lain" = entri Otomax tanpa keterangan channel bank yang jelas (mis. biaya admin, setor/ambil setoran) — tidak masuk kategori BRI/BCA/Mandiri/Merchant BCA manapun.
   </p>
   {% endif %}
@@ -125,7 +105,7 @@
 
 <!-- Rekapitulasi Harian Table -->
 <div class="card overflow-hidden p-0 mb-6">
-  <div class="px-5 py-4 border-b border-slate-100 dark:border-slate-700 font-bold text-slate-900 dark:text-white">
+  <div class="border-b border-slate-200 px-4 py-3 text-sm font-semibold text-slate-900 dark:border-slate-800 dark:text-white">
     Rekapitulasi Harian ({{ start_date|date:"d M Y" }} — {{ end_date|date:"d M Y" }})
   </div>
   <div class="overflow-x-auto">
@@ -147,33 +127,33 @@
       <tbody>
         {% for row in daily_rows %}
         <tr>
-          <td class="font-bold text-xs">{{ row.book_date|date:"d M Y" }}</td>
+          <td class="money whitespace-nowrap text-[13px] font-medium">{{ row.book_date|date:"d M Y" }}</td>
           <td>
-            {% if row.day_locked %}<span class="badge-mute text-[10px]">DITUTUP</span>
-            {% elif row.day_status == 'IN_REVIEW' %}<span class="badge-warn text-[10px]">REVIEW</span>
-            {% else %}<span class="badge-mute text-[10px]">{{ row.day_status }}</span>{% endif %}
+            {% if row.day_locked %}<span class="badge-mute"><svg class="icon h-3 w-3"><use href="#i-lock"/></svg>Ditutup</span>
+            {% elif row.day_status == 'IN_REVIEW' %}<span class="badge-warn">Review</span>
+            {% else %}<span class="badge-mute">{{ row.day_status|title }}</span>{% endif %}
           </td>
-          <td class="money text-right font-medium">Rp {{ row.total_bank|rupiah }}</td>
-          <td class="money text-right font-medium">Rp {{ row.total_otomax|rupiah }}</td>
-          <td class="money text-right font-bold {% if row.selisih != 0 %}text-rose-600{% else %}text-emerald-600{% endif %}">
+          <td class="money whitespace-nowrap text-right">Rp {{ row.total_bank|rupiah }}</td>
+          <td class="money whitespace-nowrap text-right">Rp {{ row.total_otomax|rupiah }}</td>
+          <td class="money whitespace-nowrap text-right font-semibold {% if row.selisih != 0 %}text-rose-600 dark:text-rose-400{% else %}text-emerald-600 dark:text-emerald-400{% endif %}">
             Rp {{ row.selisih|rupiah }}
           </td>
-          <td class="text-center font-mono text-xs text-emerald-600">{{ row.matched_auto_count }}</td>
-          <td class="text-center font-mono text-xs text-slate-600">{{ row.matched_manual_count }}</td>
-          <td class="text-center font-mono text-xs {% if row.unmatched_bank_count > 0 %}text-amber-600 font-bold{% else %}text-slate-400{% endif %}">
+          <td class="money text-center text-xs">{{ row.matched_auto_count }}</td>
+          <td class="money text-center text-xs text-slate-600 dark:text-slate-300">{{ row.matched_manual_count }}</td>
+          <td class="money text-center text-xs {% if row.unmatched_bank_count > 0 %}font-semibold text-amber-700 dark:text-amber-400{% else %}text-slate-400{% endif %}">
             {{ row.unmatched_bank_count }}
           </td>
-          <td class="text-center font-mono text-xs {% if row.pending_settle_count > 0 %}text-purple-600 font-bold{% else %}text-slate-400{% endif %}">
+          <td class="money text-center text-xs {% if row.pending_settle_count > 0 %}font-semibold text-amber-700 dark:text-amber-400{% else %}text-slate-400{% endif %}">
             {{ row.pending_settle_count }}
           </td>
           <td class="text-right">
-            <a href="{% url 'day' %}?d={{ row.book_date|date:'Y-m-d' }}" class="text-xs text-indigo-600 hover:underline font-medium">
+            <a href="{% url 'day' %}?d={{ row.book_date|date:'Y-m-d' }}" class="whitespace-nowrap text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400">
               Buka Dashboard &rarr;
             </a>
           </td>
         </tr>
         {% empty %}
-        <tr><td colspan="10" class="text-center py-8 text-slate-400">Tidak ada tanggal dalam rentang ini.</td></tr>
+        <tr><td colspan="10" class="py-8 text-center text-sm text-slate-500">Tidak ada tanggal dalam rentang ini.</td></tr>
         {% endfor %}
       </tbody>
     </table>
