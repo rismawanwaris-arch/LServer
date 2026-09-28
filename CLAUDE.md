@@ -33,3 +33,4 @@ Rekonsiliasi harian mutasi bank (BRI / BCA / Merchant BCA QRIS / Mandiri) vs OTO
 - `.claude/skills/pytest-django-patterns/SKILL.md`: Pola pengujian pytest-django, TDD, database isolation, dan fixtures.
 - `.claude/skills/django-models/SKILL.md`: Desain model ORM, optimasi QuerySet (N+1 prevention), dan data integrity.
 - `.claude/skills/systematic-debugging/SKILL.md`: Metodologi debugging 4-fase (Reproduce -> Isolate -> Root Cause -> Fix & Verify).
+- `.claude/skills/ui-ux-pro-max/SKILL.md`: Panduan desain UI/UX + pencarian lokal gaya/warna/tipografi (`python3 .claude/skills/ui-ux-pro-max/scripts/search.py "<query>" --stack html-tailwind`). Diambil dari nextlevelbuilder/ui-ux-pro-max-skill @09170ee (MIT), sudah dipindai: stdlib saja, tanpa jaringan/subprocess.
