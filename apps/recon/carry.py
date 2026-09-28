@@ -105,6 +105,10 @@ def _find_otomax_for(bank: BankMutation, book_date: date) -> Match | None:
 
 
 def _find_bank_for(otomax: OtomaxEntry, book_date: date) -> Match | None:
+    # Selisih OTOMAX_ONLY juga dicatat untuk entri non-rekon (STOR, REV, lain-lain) supaya
+    # kelihatan di Daftar Selisih -- tapi yang dicarikan pasangan bank cuma kategori rekon.
+    if otomax.category not in _MATCHABLE_CATEGORIES:
+        return None
     # Lihat catatan di _find_otomax_for soal kenapa ini harus dicek fresh dari DB.
     if not OtomaxEntry.objects.filter(pk=otomax.pk, match_status__in=_OTOMAX_OPEN_STATUSES).exists():
         return None

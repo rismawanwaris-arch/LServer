@@ -120,13 +120,14 @@ def _match_ref(book_date: date, channel: str) -> RunStats:
             if o is not None:
                 review_reason = "Kemiripan teks (fuzzy)"
 
-        # 4. Tartun PLC vs Auto Deposit (Pencocokan Nominal Sesuai Instruksi)
-        if o is None and _is_tartun_plc(b):
+        # 4. Tartun PLC vs Auto Deposit -- cuma nominal + kata "DEPOSIT" (keterangan & reseller
+        # tidak dicek), jadi selalu usulan yang wajib dikonfirmasi operator.
+        if o is None and _is_tartun_plc(b) and not _proposal_rejected(b):
             o = _match_auto_deposit_candidate(b, otomax, used)
             if o is not None:
                 mtype = MatchType.AUTO_EXACT
                 match_note = f"Tartun PLC cocok nominal dengan Auto Deposit ({o.reseller_name_raw})"
-                o._fuzzy_score = 100
+                review_reason = "Tartun PLC ↔ Auto Deposit: cocok nominal saja, keterangan tidak dicek"
 
         if o is None:
             continue

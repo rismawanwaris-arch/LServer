@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from apps.core.enums import BANK_CHANNELS, Channel, DiscrepancyKind, MatchStatus
+from apps.core.enums import BANK_CHANNELS, Channel, DiscrepancyKind, MatchStatus, OtomaxCategory
 from apps.ingest.models import OtomaxEntry
 
 from .helpers import _MATCHABLE_CATEGORIES, _OPEN_STATUSES, RunStats, _make_discrepancy, _mark
@@ -19,13 +19,21 @@ def _classify_leftovers(book_date: date) -> RunStats:
             _make_discrepancy(book_date, channel, DiscrepancyKind.BANK_ONLY, amount=b.amount, bank=b)
             stats.discrepancies += 1
 
-    # _OPEN_STATUSES (bukan UNMATCHED saja): entri yang baru di-unpair jadi PENDING_SETTLE
-    # tanpa Discrepancy -- tanpa ini, carry_forward (yang bekerja dari Discrepancy) tidak
-    # akan pernah mencarikan pasangan susulan untuknya.
-    for o in OtomaxEntry.objects.filter(
-        book_date=book_date, category__in=_MATCHABLE_CATEGORIES, match_status__in=_OPEN_STATUSES
-    ).filter(discrepancies__isnull=True):
-        channel = o.channel_hint if o.channel_hint in BANK_CHANNELS else Channel.BRI
+    # Sisi Otomax: SEMUA entri yang masih terbuka selain potongan admin -- definisi yang sama
+    # persis dengan isi halaman Pending Settle, supaya setiap outstanding di sana juga muncul
+    # di Daftar Selisih. _OPEN_STATUSES (bukan UNMATCHED saja): entri yang baru di-unpair jadi
+    # PENDING_SETTLE tanpa Discrepancy -- tanpa ini carry_forward tidak pernah melihatnya.
+    for o in (
+        OtomaxEntry.objects.filter(book_date=book_date, match_status__in=_OPEN_STATUSES)
+        .exclude(category=OtomaxCategory.ADMIN)
+        .filter(discrepancies__isnull=True)
+    ):
+        if o.channel_hint in BANK_CHANNELS:
+            channel = o.channel_hint
+        elif o.category in _MATCHABLE_CATEGORIES:
+            channel = Channel.BRI
+        else:
+            channel = Channel.OTOMAX  # mis. STOR/REV/lain-lain: tidak jelas bank mana
         _mark(o, MatchStatus.PENDING_SETTLE)
         _make_discrepancy(book_date, channel, DiscrepancyKind.OTOMAX_ONLY, amount=-o.amount, otomax=o)
         stats.discrepancies += 1
