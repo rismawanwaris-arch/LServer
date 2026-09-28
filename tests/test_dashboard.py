@@ -801,3 +801,30 @@ def test_matches_filter_by_selisih_plus_minus(auth_client):
     assert banks("plus") == {plus.id}
     assert banks("minus") == {minus.id}
     assert banks("ngawur") == {pas.id, plus.id, minus.id}  # nilai tak dikenal diabaikan
+
+
+@pytest.mark.django_db
+def test_discrepancy_list_per_date_and_all_dates(auth_client):
+    d1, d2 = date(2026, 9, 1), date(2026, 9, 2)
+    a = Discrepancy.objects.create(
+        code="SLS-A", origin_book_date=d1, channel=Channel.BRI, kind=DiscrepancyKind.BANK_ONLY, amount=Decimal("1")
+    )
+    b = Discrepancy.objects.create(
+        code="SLS-B", origin_book_date=d2, channel=Channel.BRI, kind=DiscrepancyKind.BANK_ONLY, amount=Decimal("2")
+    )
+    Discrepancy.objects.create(
+        code="SLS-C", origin_book_date=d2, channel=Channel.BRI, kind=DiscrepancyKind.BANK_ONLY, amount=Decimal("3")
+    )
+
+    per_date = auth_client.get("/selisih/", {"d": d1.isoformat()})
+    assert [i.id for i in per_date.context["items"]] == [a.id]
+    assert per_date.context["book_date"] == d1
+    assert [(r["origin_book_date"], r["n"]) for r in per_date.context["open_dates"]] == [(d1, 1), (d2, 2)]
+
+    all_dates = auth_client.get("/selisih/")  # banner SLA Alarm di Dashboard: lintas tanggal
+    assert all_dates.context["book_date"] is None
+    assert {i.code for i in all_dates.context["items"]} == {"SLS-A", "SLS-B", "SLS-C"}
+
+    # Menu sidebar selalu membuka mode per tanggal.
+    assert f'/selisih/?d={d1.isoformat()}' in per_date.content.decode()
+    assert b.id not in [i.id for i in per_date.context["items"]]

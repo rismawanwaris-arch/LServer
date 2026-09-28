@@ -120,7 +120,7 @@
     </div>
     <div class="mt-2 text-xs text-slate-500">Pasangan sudah cocok tapi nominal bank &amp; Otomax beda</div>
     {% if summary.amount_diff_count > 0 %}
-    <a href="{% url 'discrepancy-list' %}?start_date={{ book_date|date:'Y-m-d' }}&end_date={{ book_date|date:'Y-m-d' }}"
+    <a href="{% url 'discrepancy-list' %}?d={{ book_date|date:'Y-m-d' }}"
        class="mt-2 inline-flex items-center text-xs font-medium text-rose-600 hover:underline">
       Lihat daftar selisih &rarr;
     </a>

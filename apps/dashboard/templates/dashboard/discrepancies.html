@@ -3,14 +3,47 @@
 {% block title %}Daftar Selisih — RekonMutasi{% endblock %}
 
 {% block content %}
-<div class="mb-6 flex flex-wrap items-center justify-between gap-4">
+<div class="mb-4 flex flex-wrap items-center justify-between gap-4">
   <div>
     <h1 class="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Daftar Selisih</h1>
     <p class="text-sm text-slate-500 mt-1">
+      {% if book_date %}
+      Selisih (bank only, otomax only, nominal beda) yang berasal dari tanggal buku <b>{{ book_date|date:"d F Y" }}</b>.
+      {% else %}
       Semua selisih (bank only, otomax only, nominal beda) lintas tanggal, urut dari yang paling lama.
+      {% endif %}
     </p>
   </div>
+
+  <div class="flex items-center gap-2">
+    <form method="get" class="flex items-center gap-2">
+      <input type="date" name="d" required value="{% if book_date %}{{ book_date|date:'Y-m-d' }}{% else %}{{ nav_book_date }}{% endif %}"
+             class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium shadow-xs dark:border-slate-600 dark:bg-slate-800">
+      <button class="btn-ghost">{% if book_date %}Ganti Tanggal{% else %}Lihat Per Tanggal{% endif %}</button>
+    </form>
+    {% if book_date %}
+    <a href="{% url 'discrepancy-list' %}" class="btn-ghost text-xs">Semua Tanggal</a>
+    {% endif %}
+  </div>
 </div>
+
+{% if open_dates %}
+<!-- Tanggal yang masih punya selisih terbuka: selesaikan satu per satu -->
+<div class="mb-6">
+  <div class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+    Tanggal yang masih ada selisih terbuka ({{ open_dates|length }})
+  </div>
+  <div class="flex gap-1.5 overflow-x-auto pb-1">
+    {% for od in open_dates %}
+    <a href="{% url 'discrepancy-list' %}?d={{ od.origin_book_date|date:'Y-m-d' }}"
+       class="whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-medium transition
+       {% if book_date == od.origin_book_date %}border-amber-500 bg-amber-500 text-white{% else %}border-slate-300 bg-white text-slate-700 hover:border-amber-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200{% endif %}">
+      {{ od.origin_book_date|date:"d M" }} <span class="font-bold">· {{ od.n }}</span>
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
 
 <!-- KPI Summary -->
 <div class="grid gap-4 sm:grid-cols-3 mb-6">
@@ -34,6 +67,7 @@
 <!-- Filter Bar -->
 <div class="card mb-6 p-4">
   <form method="get" class="flex flex-wrap items-end gap-3">
+    {% if book_date %}<input type="hidden" name="d" value="{{ book_date|date:'Y-m-d' }}">{% endif %}
     <div>
       <label class="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Status</label>
       <select name="status" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium dark:border-slate-600 dark:bg-slate-800">
@@ -52,6 +86,7 @@
         {% endfor %}
       </select>
     </div>
+    {% if not book_date %}
     <div>
       <label class="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Dari Tanggal</label>
       <input type="date" name="start_date" value="{{ start_date }}"
@@ -62,6 +97,7 @@
       <input type="date" name="end_date" value="{{ end_date }}"
              class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium dark:border-slate-600 dark:bg-slate-800">
     </div>
+    {% endif %}
     <div class="flex-1 min-w-[200px]">
       <label class="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1">Cari Reseller / Outlet / Keterangan</label>
       <input type="text" name="q" value="{{ q }}" placeholder="Nama reseller, outlet, no tiket..."
@@ -69,7 +105,7 @@
     </div>
     <button type="submit" class="btn-primary py-1.5 text-xs">Terapkan Filter</button>
     {% if selected_status != "OPEN" or selected_channel or start_date or end_date or q %}
-    <a href="{% url 'discrepancy-list' %}" class="btn-ghost py-1.5 text-xs">Reset</a>
+    <a href="{% url 'discrepancy-list' %}{% if book_date %}?d={{ book_date|date:'Y-m-d' }}{% endif %}" class="btn-ghost py-1.5 text-xs">Reset</a>
     {% endif %}
   </form>
 </div>
