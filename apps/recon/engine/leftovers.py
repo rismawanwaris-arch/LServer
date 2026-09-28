@@ -28,13 +28,19 @@ def _classify_leftovers(book_date: date) -> RunStats:
         .exclude(category=OtomaxCategory.ADMIN)
         .filter(discrepancies__isnull=True)
     ):
-        if o.channel_hint in BANK_CHANNELS:
-            channel = o.channel_hint
-        elif o.category in _MATCHABLE_CATEGORIES:
-            channel = Channel.BRI
-        else:
-            channel = Channel.OTOMAX  # mis. STOR/REV/lain-lain: tidak jelas bank mana
-        _mark(o, MatchStatus.PENDING_SETTLE)
-        _make_discrepancy(book_date, channel, DiscrepancyKind.OTOMAX_ONLY, amount=-o.amount, otomax=o)
+        make_otomax_only(o)
         stats.discrepancies += 1
     return stats
+
+
+def make_otomax_only(o: OtomaxEntry):
+    """Catat entri Otomax yang masih terbuka sebagai selisih OTOMAX_ONLY di tanggal bukunya
+    (juga dipakai saat netralkan dibatalkan, supaya entrinya muncul lagi di Daftar Selisih)."""
+    if o.channel_hint in BANK_CHANNELS:
+        channel = o.channel_hint
+    elif o.category in _MATCHABLE_CATEGORIES:
+        channel = Channel.BRI
+    else:
+        channel = Channel.OTOMAX  # mis. STOR/REV/lain-lain: tidak jelas bank mana
+    _mark(o, MatchStatus.PENDING_SETTLE)
+    return _make_discrepancy(o.book_date, channel, DiscrepancyKind.OTOMAX_ONLY, amount=-o.amount, otomax=o)

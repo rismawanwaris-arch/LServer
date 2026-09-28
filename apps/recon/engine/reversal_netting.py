@@ -3,6 +3,8 @@ pencocokan ref/nominal biasa berjalan."""
 
 from __future__ import annotations
 
+from datetime import date
+
 from django.db import models
 
 from apps.core.enums import MatchStatus, OtomaxCategory
@@ -11,7 +13,7 @@ from apps.ingest.models import OtomaxEntry
 from .helpers import _OPEN_STATUSES
 
 
-def _net_reversals() -> int:
+def _net_reversals(book_date: date | None = None) -> int:
     """Netkan baris REVERSAL dgn entri lawan (TOPUP_TARTUN atau REVERSAL lain) yang dibatalkannya.
 
     OTOMAX kadang mencatat topup ke reseller yang salah, membalikkannya lewat baris
@@ -27,6 +29,8 @@ def _net_reversals() -> int:
     reversals = OtomaxEntry.objects.filter(category=OtomaxCategory.REVERSAL, match_status__in=_OPEN_STATUSES).order_by(
         "entry_datetime"
     )
+    from apps.recon.resolve import settle_netted_discrepancies  # hindari import melingkar
+
     for rev in reversals:
         base = OtomaxEntry.objects.filter(
             category__in=[OtomaxCategory.TOPUP_TARTUN, OtomaxCategory.REVERSAL],
@@ -57,5 +61,6 @@ def _net_reversals() -> int:
         original.net_pair = rev
         original.note = f"Dibatalkan oleh REV OtomaxEntry #{rev.id}"
         original.save(update_fields=["match_status", "net_pair", "note"])
+        settle_netted_discrepancies([rev, original], on_date=book_date)
         netted += 1
     return netted

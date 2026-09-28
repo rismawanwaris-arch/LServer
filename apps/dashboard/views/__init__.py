@@ -35,7 +35,7 @@ from .resellers import (
     reseller_view,
     toggle_reseller_action,
 )
-from .reversal import manual_net_reversal_action, reversal_view
+from .reversal import manual_net_reversal_action, reversal_view, unnet_otomax_action
 from .upload import delete_batch_action, upload, upload_view
 
 __all__ = [
@@ -59,6 +59,7 @@ __all__ = [
     "manual_match_action",
     "manual_review_view",
     "manual_net_reversal_action",
+    "unnet_otomax_action",
     "manual_tag_action",
     "manual_tag_otomax_action",
     "matches_view",

@@ -31,7 +31,7 @@ __all__ = ["RunStats", "run_match"]
 @transaction.atomic
 def run_match(book_date: date) -> RunStats:
     stats = RunStats()
-    stats.netted = _net_reversals()
+    stats.netted = _net_reversals(book_date)
     for channel in BANK_CHANNELS:
         if channel == Channel.MERCHANT_BCA:
             stats.merge(_match_qris(book_date))

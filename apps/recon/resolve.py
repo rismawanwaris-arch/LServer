@@ -64,7 +64,9 @@ def resolve_discrepancy(
     return adj
 
 
-def retire_leftover_discrepancies(qs, match: Match, user, on_date: date) -> None:
+def retire_leftover_discrepancies(
+    qs, match: Match | None, user, on_date: date, *, resolution_type: str = "LATE_MATCH", reason: str = ""
+) -> None:
     """Selisih BANK_ONLY/OTOMAX_ONLY yang usang begitu barisnya dapat pasangan (mis.
     OTOMAX_ONLY yang dibuat leftovers untuk entri Otomax 3 Sep sesaat sebelum carry_forward
     memasangkannya ke mutasi bank 30 Agu) -- tanpa ini ia tetap OPEN jadi selisih "hantu"
@@ -75,9 +77,34 @@ def retire_leftover_discrepancies(qs, match: Match, user, on_date: date) -> None
         status=DiscrepancyStatus.OPEN, kind__in=[DiscrepancyKind.BANK_ONLY, DiscrepancyKind.OTOMAX_ONLY]
     ):
         if ReconDay.objects.filter(book_date=disc.origin_book_date, locked=True).exists():
-            resolve_discrepancy(disc, match=match, resolution_type="LATE_MATCH", user=user, on_date=on_date)
+            resolve_discrepancy(
+                disc, match=match, resolution_type=resolution_type, reason=reason, user=user, on_date=on_date
+            )
         else:
             disc.delete()
+
+
+def _recompute_days(book_dates) -> None:
+    for book_date in set(book_dates):
+        day, _ = ReconDay.objects.select_for_update().get_or_create(book_date=book_date)
+        day.recompute_selisih()
+        day.save(update_fields=["selisih_adjustments", "selisih_current", "updated_at"])
+
+
+@transaction.atomic
+def settle_netted_discrepancies(entries: list[OtomaxEntry], user=None, on_date: date | None = None, reason="") -> None:
+    """Sepasang entri Otomax yang baru dinetralkan (otomatis maupun manual) sudah tidak
+    outstanding -- selisih OTOMAX_ONLY-nya ikut ditutup, supaya tidak jadi selisih hantu di
+    Daftar Selisih (mis. entri asli tgl 15 sudah tercatat, REV-nya baru dinetralkan tgl 16)."""
+    retire_leftover_discrepancies(
+        Discrepancy.objects.filter(otomax_entry__in=entries),
+        None,
+        user,
+        on_date or timezone.localdate(),
+        resolution_type="DATA_FIX",
+        reason=reason or "Dinetralkan dengan entri Otomax lawannya",
+    )
+    _recompute_days(e.book_date for e in entries)
 
 
 @transaction.atomic
@@ -503,11 +530,12 @@ def manual_net_reversal(
     note: str = "",
     user=None,
 ) -> None:
-    """Netralkan manual sepasang entri Otomax (REV vs entri yang dibatalkannya) yang gagal
-    dinetralkan otomatis oleh reversal_netting — mis. nama reseller beda teks persis, atau
-    ref_core/ref_normalized-nya tidak identik. Efeknya sama seperti netting otomatis:
-    keduanya jadi IGNORED dan saling menunjuk net_pair, TANPA membuat Match (tidak ada uang
-    bank yang bergerak, murni koreksi internal Otomax).
+    """Netralkan manual sepasang entri Otomax yang nominalnya persis berlawanan dan gagal
+    (atau sengaja tidak) dinetralkan otomatis oleh reversal_netting — mis. REV vs entri
+    yang dibatalkannya dengan nama reseller beda, atau koreksi salah tembak saldo (REV dari
+    reseller A lalu REFUND ke reseller B). Efeknya sama seperti netting otomatis: keduanya
+    jadi IGNORED dan saling menunjuk net_pair, TANPA membuat Match (tidak ada uang bank yang
+    bergerak, murni koreksi internal Otomax). Selisih OTOMAX_ONLY keduanya ikut ditutup.
     """
     r = OtomaxEntry.objects.select_for_update().get(pk=rev.pk)
     o = OtomaxEntry.objects.select_for_update().get(pk=original.pk)
@@ -535,6 +563,46 @@ def manual_net_reversal(
     o.net_pair = r
     o.note = tag_note
     o.save(update_fields=["match_status", "net_pair", "note", "updated_at"])
+
+    # `user` kadang cuma label teks (lihat `who` di atas) -- resolved_by butuh User asli.
+    actor = user if getattr(user, "pk", None) else None
+    settle_netted_discrepancies([r, o], user=actor, reason=tag_note)
+
+
+@transaction.atomic
+def unnet_otomax_pair(entry: OtomaxEntry, user=None) -> tuple[OtomaxEntry, OtomaxEntry]:
+    """Batalkan netralkan (otomatis maupun manual) -- mis. operator salah memilih lawan.
+    Keduanya kembali PENDING_SETTLE dan tercatat lagi di Daftar Selisih (OTOMAX_ONLY).
+
+    Ditolak kalau salah satu tanggal bukunya sudah ditutup: selisihnya sudah diselesaikan
+    lewat Adjustment (append-only) yang tidak bisa ditarik kembali -- buka hari itu dulu."""
+    from .engine.leftovers import make_otomax_only
+
+    a = OtomaxEntry.objects.select_for_update().get(pk=entry.pk)
+    if a.match_status != MatchStatus.IGNORED or not a.net_pair_id:
+        raise ValueError(f"Entri Otomax #{a.id} tidak sedang dinetralkan.")
+    b = OtomaxEntry.objects.select_for_update().get(pk=a.net_pair_id)
+    pair = [a] if b.pk == a.pk else [a, b]
+
+    locked = ReconDay.objects.filter(book_date__in={e.book_date for e in pair}, locked=True)
+    if locked.exists():
+        tgl = ", ".join(d.book_date.strftime("%d %b %Y") for d in locked)
+        raise ValueError(f"Tanggal {tgl} sudah ditutup — buka kembali hari itu dulu sebelum membatalkan netralkan.")
+
+    who = str(user) if user else "sistem"
+    for e in pair:
+        # Pasangan lawan cuma ikut dibuka kalau memang masih menunjuk balik ke entri ini.
+        if e.pk != a.pk and (e.net_pair_id != a.pk or e.match_status != MatchStatus.IGNORED):
+            continue
+        e.match_status = MatchStatus.PENDING_SETTLE
+        e.net_pair = None
+        e.note = f"Netralkan dibatalkan oleh {who}"
+        e.save(update_fields=["match_status", "net_pair", "note", "updated_at"])
+        if not Discrepancy.objects.filter(otomax_entry=e, status=DiscrepancyStatus.OPEN).exists():
+            make_otomax_only(e)
+
+    _recompute_days(e.book_date for e in pair)
+    return a, b
 
 
 @transaction.atomic

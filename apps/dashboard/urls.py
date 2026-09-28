@@ -24,6 +24,7 @@ urlpatterns = [
     # 5b. Monitor Reversal Otomax
     path("reversal/", views.reversal_view, name="reversal"),
     path("reversal/net/", views.manual_net_reversal_action, name="manual-net-reversal"),
+    path("reversal/unnet/<int:pk>/", views.unnet_otomax_action, name="unnet-otomax"),
     # 5c. Daftar Selisih (dipindahkan keluar dari Dashboard)
     path("selisih/", views.discrepancy_list_view, name="discrepancy-list"),
     # 6. Riwayat & Laporan

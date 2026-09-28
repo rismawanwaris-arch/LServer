@@ -15,7 +15,7 @@ from django.views.decorators.http import require_POST
 from apps.core.enums import MatchStatus, OtomaxCategory
 from apps.ingest.models import BankMutation, OtomaxEntry
 from apps.recon.models import Match
-from apps.recon.resolve import manual_net_reversal
+from apps.recon.resolve import manual_net_reversal, unnet_otomax_pair
 
 from ._shared import _parse_date
 
@@ -40,12 +40,13 @@ def _candidates_for_reversal(rev: OtomaxEntry) -> list[tuple[OtomaxEntry, Match 
     status terbuka saja — entri yang sudah MATCHED juga ditampilkan (lengkap dengan Match
     aktifnya) supaya kelihatan kenapa auto-netting gagal (mis. originalnya sudah lanjut
     dicocokkan ke bank duluan sebelum REV-nya diproses), dan bisa dibatalkan langsung dari
-    halaman ini kalau memang pencocokannya keliru."""
+    halaman ini kalau memang pencocokannya keliru.
+
+    Semua kategori selain potongan admin: koreksi salah tembak saldo sering dibalik lewat
+    "REFUND FROM ..." (kategori lain-lain), bukan topup."""
     qs = (
-        OtomaxEntry.objects.filter(
-            category__in=[OtomaxCategory.TOPUP_TARTUN, OtomaxCategory.REVERSAL],
-            amount=-rev.amount,
-        )
+        OtomaxEntry.objects.filter(amount=-rev.amount)
+        .exclude(category=OtomaxCategory.ADMIN)
         .exclude(pk=rev.pk)
         .exclude(match_status=MatchStatus.IGNORED)
     )
@@ -59,7 +60,16 @@ def _candidates_for_reversal(rev: OtomaxEntry) -> list[tuple[OtomaxEntry, Match 
             return 1
         return 0
 
-    scored = sorted(qs, key=lambda o: (-score(o), o.id))[:_MAX_CANDIDATES]
+    # Seri skor: yang masih terbuka (bisa langsung dinetralkan) dan tanggalnya terdekat dulu.
+    scored = sorted(
+        qs,
+        key=lambda o: (
+            -score(o),
+            o.match_status not in _OPEN_STATUSES,
+            abs((o.book_date - rev.book_date).days),
+            o.id,
+        ),
+    )[:_MAX_CANDIDATES]
     matched_statuses = (MatchStatus.MATCHED, MatchStatus.MANUAL)
     return [(o, _active_match_for(o) if o.match_status in matched_statuses else None) for o in scored]
 
@@ -137,10 +147,26 @@ def manual_net_reversal_action(request):
         manual_net_reversal(rev, original, note=note, user=request.user)
         messages.success(
             request,
-            f"Berhasil menetralkan REV '{rev.reseller_name_raw}' (Rp {rev.amount:,.0f}) "
-            f"dengan entri #{original.id} (Rp {original.amount:,.0f}).",
+            f"Berhasil menetralkan #{rev.id} '{rev.reseller_name_raw}' (Rp {rev.amount:,.0f}) "
+            f"dengan #{original.id} '{original.reseller_name_raw}' (Rp {original.amount:,.0f}).",
         )
     except ValueError as e:
         messages.error(request, str(e))
 
+    return redirect(next_url)
+
+
+@login_required
+@require_POST
+def unnet_otomax_action(request, pk: int):
+    entry = get_object_or_404(OtomaxEntry, pk=pk)
+    next_url = request.POST.get("next_url") or request.META.get("HTTP_REFERER") or "/reversal/?tab=netted"
+    try:
+        a, b = unnet_otomax_pair(entry, user=request.user)
+        messages.success(
+            request,
+            f"Netralkan #{a.id} ↔ #{b.id} dibatalkan. Keduanya kembali ke Pending Settle & Daftar Selisih.",
+        )
+    except ValueError as e:
+        messages.error(request, str(e))
     return redirect(next_url)

@@ -73,8 +73,11 @@
 <div x-data="{
   modalOpen: false,
   tagModalOpen: false,
+  netModalOpen: false,
   activeOtomax: null,
   tagOtomax: null,
+  netOtomax: null,
+  netPick: null,
   selectedKeys: [],
   filterChannel: '',
   candidateType: 'all',
@@ -134,6 +137,11 @@
   openTag(o) {
     this.tagOtomax = o;
     this.tagModalOpen = true;
+  },
+  openNet(o) {
+    this.netOtomax = o;
+    this.netPick = o.candidates.length === 1 ? o.candidates[0].id : null;
+    this.netModalOpen = true;
   },
   bankKey(b) { return b.is_diff ? 'm_' + b.match_id : 'b_' + b.id; },
   isSelected(b) { return this.selectedKeys.includes(this.bankKey(b)); },
@@ -307,6 +315,33 @@
                         class="btn-ghost py-1 px-2.5 text-xs font-semibold text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/40">
                   Beri Tag
                 </button>
+                {% if o.net_candidates %}
+                <button type="button"
+                        title="Koreksi internal Otomax: netralkan dengan entri Otomax lain yang nominalnya persis berlawanan"
+                        @click="openNet({
+                          id: {{ o.id }},
+                          reseller: '{{ o.reseller_name_raw|escapejs }}',
+                          amount_formatted: 'Rp {{ o.amount|rupiah }}',
+                          date: '{{ o.entry_datetime|date:'d M H:i'|default:o.book_date }}',
+                          desc: '{{ o.description_raw|escapejs }}',
+                          candidates: [
+                            {% for c in o.net_candidates %}
+                            {
+                              id: {{ c.id }},
+                              reseller: '{{ c.reseller_name_raw|escapejs }}',
+                              same_reseller: {% if c.reseller_name_raw == o.reseller_name_raw %}true{% else %}false{% endif %},
+                              same_day: {% if c.book_date == o.book_date %}true{% else %}false{% endif %},
+                              amount_formatted: 'Rp {{ c.amount|rupiah }}',
+                              date: '{{ c.entry_datetime|date:'d M Y H:i'|default:c.book_date }}',
+                              desc: '{{ c.description_raw|escapejs }}'
+                            }{% if not forloop.last %},{% endif %}
+                            {% endfor %}
+                          ]
+                        })"
+                        class="btn-ghost py-1 px-2.5 text-xs font-semibold text-teal-600 hover:text-teal-700 hover:bg-teal-50 dark:hover:bg-teal-950/40">
+                  Netralkan dgn Otomax ({{ o.net_candidates|length }})
+                </button>
+                {% endif %}
               </div>
             </td>
           </tr>
@@ -358,7 +393,16 @@
               Rp {{ o.amount|rupiah }}
             </td>
             <td>
-              {% if m and m.bank_mutation %}
+              {% if o.match_status == 'IGNORED' and o.net_pair %}
+              <div class="space-y-0.5">
+                <span class="badge bg-teal-100 text-teal-800 dark:bg-teal-950/60 dark:text-teal-300 font-bold text-[11px]">
+                  Dinetralkan: #{{ o.net_pair.id }} {{ o.net_pair.reseller_name_raw }} (Rp {{ o.net_pair.amount|rupiah }})
+                </span>
+                <div class="font-mono text-[10px] text-slate-500 truncate max-w-xs" title="{{ o.net_pair.description_raw }}">
+                  {{ o.net_pair.description_raw }}{% if o.net_pair.book_date != o.book_date %} &middot; tgl {{ o.net_pair.book_date|date:"d M" }}{% endif %}
+                </div>
+              </div>
+              {% elif m and m.bank_mutation %}
               <div class="space-y-0.5">
                 <span class="badge bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 font-bold text-[11px]">
                   Lawan: {{ m.bank_mutation.channel }} (Rp {{ m.bank_mutation.amount|rupiah }})
@@ -374,7 +418,9 @@
               {% endif %}
             </td>
             <td class="text-xs text-slate-600 dark:text-slate-300">
-              {% if m and m.bank_mutation %}
+              {% if o.match_status == 'IGNORED' %}
+                {{ o.note|default:"Koreksi internal Otomax" }}
+              {% elif m and m.bank_mutation %}
                 {{ m.note|default:"Pencocokan manual" }}
               {% elif m %}
                 {{ m.note|default:"—" }}
@@ -383,7 +429,17 @@
               {% endif %}
             </td>
             <td class="text-center whitespace-nowrap">
-              {% if m %}
+              {% if o.match_status == 'IGNORED' %}
+              <form method="post" action="{% url 'unnet-otomax' o.id %}" class="inline">
+                {% csrf_token %}
+                <input type="hidden" name="next_url" value="{{ request.get_full_path }}">
+                <button type="submit"
+                        onclick="return confirm('Batalkan netralkan #{{ o.id }} ↔ #{{ o.net_pair.id }}? Keduanya kembali ke Belum Settle dan Daftar Selisih.');"
+                        class="btn-ghost py-1 px-2.5 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 font-semibold">
+                  Batalkan Netralkan
+                </button>
+              </form>
+              {% elif m %}
               <form method="post" action="{% url 'unpair-match' m.id %}" class="inline">
                 {% csrf_token %}
                 <input type="hidden" name="next_url" value="{{ request.get_full_path }}">
@@ -402,7 +458,7 @@
           {% empty %}
           <tr>
             <td colspan="8" class="text-center py-12 text-slate-400">
-              Belum ada transaksi Otomax yang diselesaikan secara manual untuk tanggal ini.
+              Belum ada transaksi Otomax yang diselesaikan secara manual atau dinetralkan untuk tanggal ini.
             </td>
           </tr>
           {% endfor %}
@@ -731,6 +787,115 @@
             </button>
             <button type="submit" class="btn-primary text-xs font-bold px-4 py-2">
               Simpan Tag & Selesaikan
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Netralkan dengan entri Otomax lain (koreksi internal Otomax) -->
+  <div x-show="netModalOpen"
+       x-cloak
+       class="fixed inset-0 z-50 overflow-y-auto"
+       aria-labelledby="net-modal-title" role="dialog" aria-modal="true">
+    <div x-show="netModalOpen"
+         x-transition:enter="ease-out duration-200"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="ease-in duration-150"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs transition-opacity"
+         @click="netModalOpen = false"></div>
+
+    <div class="flex min-h-full items-center justify-center p-4 text-center sm:p-0">
+      <div x-show="netModalOpen"
+           x-transition:enter="ease-out duration-200"
+           x-transition:enter-start="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95"
+           x-transition:enter-end="opacity-100 translate-y-0 sm:scale-100"
+           x-transition:leave="ease-in duration-150"
+           x-transition:leave-start="opacity-100 translate-y-0 sm:scale-100"
+           x-transition:leave-end="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95"
+           class="relative transform overflow-hidden rounded-2xl bg-white text-left shadow-2xl transition-all sm:my-8 sm:w-full sm:max-w-2xl dark:bg-slate-800 dark:border dark:border-slate-700">
+
+        <form method="post" action="{% url 'manual-net-reversal' %}">
+          {% csrf_token %}
+          <input type="hidden" name="rev_id" :value="netOtomax ? netOtomax.id : ''">
+          <input type="hidden" name="book_date" value="{{ book_date|date:'Y-m-d' }}">
+          <input type="hidden" name="next_url" value="{{ request.get_full_path }}">
+
+          <div class="px-6 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between bg-slate-50 dark:bg-slate-800/80">
+            <div>
+              <h3 class="text-base font-bold text-slate-900 dark:text-white" id="net-modal-title">
+                Netralkan dengan Entri Otomax Lain
+              </h3>
+              <p class="text-xs text-slate-500 mt-0.5">
+                Untuk koreksi internal Otomax (mis. salah tembak saldo lalu di-REV / REFUND). Tidak ada mutasi bank yang dipakai.
+              </p>
+            </div>
+            <button type="button" @click="netModalOpen = false" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+              <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </div>
+
+          <div class="p-6 space-y-4">
+            <template x-if="netOtomax">
+              <div class="rounded-xl border border-purple-200 bg-purple-50/50 p-3.5 dark:border-purple-900/50 dark:bg-purple-950/20">
+                <div class="flex items-center justify-between gap-2 mb-1">
+                  <span class="font-bold text-slate-900 dark:text-white text-sm">
+                    <span x-text="netOtomax.reseller"></span>
+                    <span class="font-mono text-[11px] font-normal text-slate-500 ml-1" x-text="'#' + netOtomax.id + ' · ' + netOtomax.date"></span>
+                  </span>
+                  <span class="money font-black text-sm text-purple-700 dark:text-purple-300" x-text="netOtomax.amount_formatted"></span>
+                </div>
+                <div class="font-mono text-xs text-slate-600 dark:text-slate-400 truncate" x-text="netOtomax.desc"></div>
+              </div>
+            </template>
+
+            <div>
+              <div class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
+                Pilih lawan (nominal persis berlawanan, masih terbuka)
+              </div>
+              <div class="space-y-2 max-h-72 overflow-y-auto">
+                <template x-for="c in (netOtomax ? netOtomax.candidates : [])" :key="c.id">
+                  <label class="flex items-start gap-3 rounded-xl border p-3 cursor-pointer transition"
+                         :class="netPick === c.id ? 'border-teal-500 bg-teal-50/60 dark:bg-teal-950/30' : 'border-slate-200 hover:border-teal-300 dark:border-slate-700'">
+                    <input type="radio" name="original_id" :value="c.id" x-model.number="netPick" class="mt-1" required>
+                    <div class="min-w-0 flex-1">
+                      <div class="flex items-center gap-2 flex-wrap">
+                        <span class="font-bold text-xs text-slate-900 dark:text-white" x-text="c.reseller"></span>
+                        <span x-show="c.same_reseller" class="badge-good text-[10px] font-bold">Reseller Sama</span>
+                        <span x-show="!c.same_reseller" class="badge-mute text-[10px]">Reseller Beda</span>
+                        <span x-show="!c.same_day" class="badge-warn text-[10px]">Beda Tanggal</span>
+                      </div>
+                      <div class="font-mono text-[11px] text-slate-500 truncate mt-0.5" x-text="c.desc"></div>
+                      <div class="text-[10px] text-slate-400 mt-0.5" x-text="'#' + c.id + ' · ' + c.date"></div>
+                    </div>
+                    <span class="money font-black text-sm text-emerald-600 dark:text-emerald-400 shrink-0" x-text="c.amount_formatted"></span>
+                  </label>
+                </template>
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                Catatan (Opsional)
+              </label>
+              <input type="text" name="note" placeholder="Misal: salah tembak saldo, langsung dikoreksi operator..."
+                     class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
+            </div>
+            <p class="text-[11px] text-slate-500">
+              Keduanya ditandai selesai dan hilang dari Daftar Selisih. Bisa dibatalkan lagi di tab <b>Sudah Selesai</b>.
+            </p>
+          </div>
+
+          <div class="px-6 py-3 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 flex items-center justify-end gap-3 rounded-b-2xl">
+            <button type="button" @click="netModalOpen = false" class="btn-ghost text-xs">
+              Batal
+            </button>
+            <button type="submit" :disabled="!netPick" class="btn-primary text-xs font-bold px-4 py-2 disabled:opacity-50">
+              Netralkan Keduanya
             </button>
           </div>
         </form>

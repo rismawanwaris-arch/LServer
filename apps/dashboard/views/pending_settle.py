@@ -20,6 +20,8 @@ from apps.recon.resolve import tag_manual_otomax
 
 from ._shared import _CANDIDATE_WINDOW, _EXTENDED_WINDOW_DAYS, _find_auto_pairs, _parse_date
 
+_MAX_NET_CANDIDATES = 10
+
 
 @login_required
 def pending_settle_view(request):
@@ -36,13 +38,20 @@ def pending_settle_view(request):
     pending_qs = base_qs.filter(
         match_status__in=[MatchStatus.PENDING_SETTLE, MatchStatus.UNMATCHED],
     )
-    resolved_qs = base_qs.filter(
-        match_status=MatchStatus.MANUAL,
-    ).prefetch_related(
-        models.Prefetch(
-            "matches",
-            queryset=Match.objects.filter(voided_at__isnull=True).select_related("bank_mutation"),
-            to_attr="active_matches",
+    # Sudah Selesai: di-tag/dicocokkan manual, atau dinetralkan dengan entri Otomax lawannya
+    # (koreksi internal Otomax, mis. salah tembak saldo lalu di-REV/REFUND).
+    resolved_qs = (
+        base_qs.filter(
+            models.Q(match_status=MatchStatus.MANUAL)
+            | models.Q(match_status=MatchStatus.IGNORED, net_pair__isnull=False),
+        )
+        .select_related("net_pair")
+        .prefetch_related(
+            models.Prefetch(
+                "matches",
+                queryset=Match.objects.filter(voided_at__isnull=True).select_related("bank_mutation"),
+                to_attr="active_matches",
+            )
         )
     )
 
@@ -125,6 +134,8 @@ def pending_settle_view(request):
             m.is_extended = True
             diff_matches.append(m)
 
+    _attach_net_candidates(items if tab != "resolved" else [], book_date)
+
     otomax_tags = [
         ("revisi", "Revisi / Koreksi Kasir"),
         ("retur", "Retur / Tarik Tunai"),
@@ -152,6 +163,39 @@ def pending_settle_view(request):
             "otomax_tags": otomax_tags,
         },
     )
+
+
+def _attach_net_candidates(items: list[OtomaxEntry], book_date) -> None:
+    """Lawan untuk "Netralkan dgn Otomax": entri Otomax lain yang masih terbuka dengan
+    nominal PERSIS berlawanan (mis. REV -450.000 dari reseller A <-> REFUND +450.000 ke
+    reseller B), kategori apa saja selain potongan admin, dalam jendela ±14 hari. Cuma
+    ditawarkan -- keputusan tetap di tangan operator, mesin tidak pernah menetralkan
+    otomatis kalau resellernya beda."""
+    for o in items:
+        o.net_candidates = []
+    if not items:
+        return
+    wide = (book_date - timedelta(days=_EXTENDED_WINDOW_DAYS), book_date + timedelta(days=_EXTENDED_WINDOW_DAYS))
+    pool = list(
+        OtomaxEntry.objects.filter(
+            book_date__range=wide,
+            match_status__in=[MatchStatus.PENDING_SETTLE, MatchStatus.UNMATCHED],
+            amount__in={-o.amount for o in items},
+        ).exclude(category=OtomaxCategory.ADMIN)
+    )
+    for o in items:
+        cands = [c for c in pool if c.amount == -o.amount and c.pk != o.pk]
+        # Yang paling mungkin di atas: tanggal buku sama, lalu waktu entri terdekat.
+        cands.sort(
+            key=lambda c: (
+                c.book_date != o.book_date,
+                abs((c.entry_datetime - o.entry_datetime).total_seconds())
+                if c.entry_datetime and o.entry_datetime
+                else float("inf"),
+                c.id,
+            )
+        )
+        o.net_candidates = cands[:_MAX_NET_CANDIDATES]
 
 
 @login_required
