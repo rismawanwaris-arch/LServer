@@ -96,10 +96,12 @@ class Command(BaseCommand):
             # Kumpulkan ID mutasi bank & otomax yang terlibat
             bank_ids = set(match_qs.filter(bank_mutation__isnull=False).values_list("bank_mutation_id", flat=True))
             otomax_ids = set(match_qs.filter(otomax_entry__isnull=False).values_list("otomax_entry_id", flat=True))
-            # Tambahkan juga relasi ManyToMany otomax_entries (misal AGGREGATE QRIS)
-            for m in match_qs.prefetch_related("otomax_entries"):
+            # Tambahkan juga relasi ManyToMany (AGGREGATE QRIS / gabungan manual dua arah)
+            for m in match_qs.prefetch_related("otomax_entries", "bank_mutations"):
                 for oe in m.otomax_entries.all():
                     otomax_ids.add(oe.pk)
+                for bm in m.bank_mutations.all():
+                    bank_ids.add(bm.pk)
 
             # Hapus match lama
             deleted_count, _ = match_qs.delete()
@@ -107,7 +109,8 @@ class Command(BaseCommand):
             # 2. Kembalikan status mutasi bank ke UNMATCHED jika tidak ada match lain
             if bank_ids:
                 BankMutation.objects.filter(id__in=bank_ids).filter(
-                    matches__isnull=True
+                    matches__isnull=True,
+                    aggregate_bank_matches__isnull=True,
                 ).update(
                     match_status=MatchStatus.UNMATCHED,
                     tag_manual="",

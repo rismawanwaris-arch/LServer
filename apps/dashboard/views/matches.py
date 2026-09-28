@@ -42,7 +42,7 @@ def matches_view(request):
 
     qs = Match.objects.filter(book_date=book_date, voided_at__isnull=True).select_related(
         "bank_mutation", "otomax_entry"
-    ).prefetch_related("otomax_entries")
+    ).prefetch_related("otomax_entries", "bank_mutations")
     review_count = qs.filter(needs_review=True).count()
     if tab == "review":
         qs = qs.filter(needs_review=True)

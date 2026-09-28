@@ -75,7 +75,7 @@
   tagModalOpen: false,
   activeOtomax: null,
   tagOtomax: null,
-  selectedBankId: null,
+  selectedKeys: [],
   filterChannel: '',
   candidateType: 'all',
   searchQuery: '',
@@ -122,17 +122,37 @@
   ],
   openMatch(o) {
     this.activeOtomax = o;
-    this.selectedBankId = null;
+    this.selectedKeys = [];
     this.filterChannel = o.channel || '';
     this.candidateType = 'all';
     this.searchQuery = '';
-    this.onlyExactAmount = true;
+    // Kalau tidak ada yang nominalnya sama persis, kemungkinan besar ini gabungan beberapa
+    // mutasi -- langsung tampilkan semua kandidat supaya operator bisa mencentang lebih dari satu.
+    this.onlyExactAmount = this.exactCount() > 0;
     this.modalOpen = true;
   },
   openTag(o) {
     this.tagOtomax = o;
     this.tagModalOpen = true;
   },
+  bankKey(b) { return b.is_diff ? 'm_' + b.match_id : 'b_' + b.id; },
+  isSelected(b) { return this.selectedKeys.includes(this.bankKey(b)); },
+  selectedBanks() { return this.banks.filter(b => this.isSelected(b)); },
+  toggleBank(b) {
+    const key = this.bankKey(b);
+    if (this.isSelected(b)) {
+      this.selectedKeys = this.selectedKeys.filter(k => k !== key);
+    } else if (b.is_diff || this.selectedBanks().some(s => s.is_diff)) {
+      // Menambah ke pasangan 'Masih Selisih' selalu 1 mutasi saja -- tidak dicampur.
+      this.selectedKeys = [key];
+    } else {
+      this.selectedKeys = [...this.selectedKeys, key];
+    }
+  },
+  cents(v) { return Math.round(parseFloat(v) * 100); },
+  fmtCents(c) { return 'Rp ' + (c / 100).toLocaleString('id-ID', { maximumFractionDigits: 2 }); },
+  totalCents() { return this.selectedBanks().reduce((s, b) => s + this.cents(b.amount), 0); },
+  diffCents() { return this.totalCents() - (this.activeOtomax ? this.cents(this.activeOtomax.amount) : 0); },
   dayGap(b) {
     if (!this.activeOtomax || !b.book_date) return 0;
     return Math.round((Date.parse(b.book_date) - Date.parse(this.activeOtomax.book_date)) / 86400000);
@@ -423,7 +443,9 @@
           <input type="hidden" name="book_date" value="{{ book_date|date:'Y-m-d' }}">
           <input type="hidden" name="next_url" value="{{ request.get_full_path }}">
           <input type="hidden" name="otomax_id" :value="activeOtomax ? activeOtomax.id : ''">
-          <input type="hidden" name="bank_id" :value="selectedBankId">
+          <template x-for="b in selectedBanks()" :key="bankKey(b)">
+            <input type="hidden" name="bank_ids" :value="b.id">
+          </template>
 
           <!-- Modal Header -->
           <div class="px-6 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between bg-slate-50 dark:bg-slate-800/80">
@@ -494,14 +516,14 @@
 
               <div class="max-h-64 overflow-y-auto space-y-2 pr-1">
                 <template x-for="b in filteredBanks()" :key="b.is_diff ? 'm_' + b.match_id : 'b_' + b.id">
-                  <div @click="selectedBankId = b.id"
-                       :class="selectedBankId === b.id
+                  <div @click="toggleBank(b)"
+                       :class="isSelected(b)
                          ? 'border-indigo-600 bg-indigo-50/70 dark:bg-indigo-950/40 dark:border-indigo-400 ring-2 ring-indigo-500'
                          : 'border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-600'"
                        class="cursor-pointer rounded-xl border p-3 transition flex items-start justify-between gap-3 shadow-2xs">
                     <div class="flex items-start gap-3">
-                      <input type="radio" name="_bank_select" :checked="selectedBankId === b.id"
-                             class="mt-1 text-indigo-600 focus:ring-indigo-500 cursor-pointer">
+                      <input type="checkbox" :checked="isSelected(b)" @click.stop="toggleBank(b)"
+                             class="mt-1 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer">
                       <div>
                         <div class="flex flex-wrap items-center gap-2">
                           <span class="badge-mute font-bold text-[10px]" x-text="b.channel"></span>
@@ -581,6 +603,20 @@
                   </div>
                 </template>
               </div>
+
+              <!-- Ringkasan gabungan beberapa mutasi -->
+              <div x-show="selectedBanks().length > 1" class="mt-3 rounded-lg px-3 py-2 text-xs"
+                   :class="diffCents() === 0 ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300' : 'bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300'">
+                <div class="flex justify-between">
+                  <span x-text="selectedBanks().length + ' mutasi bank dipilih'"></span>
+                  <span class="money font-bold" x-text="'Total ' + fmtCents(totalCents())"></span>
+                </div>
+                <div class="flex justify-between">
+                  <span>Selisih vs nominal Otomax</span>
+                  <span class="money font-bold" x-text="fmtCents(diffCents())"></span>
+                </div>
+                <p x-show="diffCents() !== 0" class="mt-0.5">Sisa selisih akan tercatat di Daftar Selisih.</p>
+              </div>
             </div>
 
             <!-- Catatan Tambahan -->
@@ -599,9 +635,9 @@
               Batal
             </button>
             <button type="submit"
-                    :disabled="!selectedBankId"
+                    :disabled="selectedBanks().length === 0"
                     class="btn-primary text-xs font-bold px-4 py-2 disabled:opacity-50">
-              Pasangkan Sekarang (Match Manual)
+              <span x-text="selectedBanks().length > 1 ? 'Gabungkan & Pasangkan (' + selectedBanks().length + ' mutasi)' : 'Pasangkan Sekarang (Match Manual)'"></span>
             </button>
           </div>
         </form>

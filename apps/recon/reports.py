@@ -296,6 +296,7 @@ def generate_excel_report(start_date: date, end_date: date) -> bytes:
     matches_qs = (
         Match.objects.filter(book_date__range=(start_date, end_date), voided_at__isnull=True)
         .select_related("bank_mutation", "otomax_entry")
+        .prefetch_related("bank_mutations")
         .order_by("-book_date")
     )
 
@@ -306,7 +307,11 @@ def generate_excel_report(start_date: date, end_date: date) -> bytes:
         ws_matched.cell(row=row_num, column=1, value=str(m.book_date))
         ws_matched.cell(row=row_num, column=2, value=m.channel)
         ws_matched.cell(row=row_num, column=3, value=m.get_match_type_display())
-        ws_matched.cell(row=row_num, column=4, value=bm.description_raw if bm else "-")
+        bank_desc = bm.description_raw if bm else "-"
+        extra_banks = len(m.bank_mutations.all()) - 1
+        if extra_banks > 0:
+            bank_desc = f"{bank_desc} (+{extra_banks} mutasi)"
+        ws_matched.cell(row=row_num, column=4, value=bank_desc)
         c5 = ws_matched.cell(row=row_num, column=5, value=float(m.amount_bank))
         c5.number_format = money_format
         ws_matched.cell(row=row_num, column=6, value=oe.reseller_name_raw if oe else "-")

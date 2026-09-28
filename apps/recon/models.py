@@ -30,6 +30,14 @@ class Match(TimeStampedModel):
     otomax_entry = models.ForeignKey(
         OtomaxEntry, null=True, blank=True, on_delete=models.PROTECT, related_name="matches"
     )
+    bank_mutations = models.ManyToManyField(
+        BankMutation,
+        blank=True,
+        related_name="aggregate_bank_matches",
+        help_text="Semua mutasi bank dalam gabungan manual BEBERAPA mutasi <-> 1 entri Otomax "
+        "(mis. satu Tartun QR Bulk menutup settlement 2 outlet QRIS). bank_mutation di atas "
+        "tetap menunjuk mutasi utama untuk tampilan.",
+    )
     otomax_entries = models.ManyToManyField(
         OtomaxEntry,
         blank=True,

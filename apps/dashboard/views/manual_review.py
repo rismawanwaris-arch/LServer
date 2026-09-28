@@ -16,7 +16,13 @@ from apps.core.enums import Channel, ManualTag, MatchStatus, OtomaxCategory
 from apps.core.normalize import parse_tgl_date
 from apps.ingest.models import BankMutation, OtomaxEntry
 from apps.recon.models import Match
-from apps.recon.resolve import manual_pair_many, manual_pair_transactions, tag_manual_mutation, unpair_match
+from apps.recon.resolve import (
+    manual_pair_many,
+    manual_pair_many_banks,
+    manual_pair_transactions,
+    tag_manual_mutation,
+    unpair_match,
+)
 
 from ._shared import _CANDIDATE_WINDOW, _EXTENDED_WINDOW_DAYS, _find_auto_pairs, _parse_date
 
@@ -46,12 +52,11 @@ def manual_review_view(request):
         qs = qs.filter(channel=channel)
 
     unmatched_qs = qs.filter(match_status=MatchStatus.UNMATCHED)
+    active = Match.objects.filter(voided_at__isnull=True).select_related("otomax_entry")
     tagged_qs = qs.filter(match_status=MatchStatus.MANUAL).prefetch_related(
-        models.Prefetch(
-            "matches",
-            queryset=Match.objects.filter(voided_at__isnull=True).select_related("otomax_entry"),
-            to_attr="active_matches",
-        )
+        models.Prefetch("matches", queryset=active, to_attr="active_matches"),
+        # Mutasi anggota gabungan beberapa mutasi (bukan mutasi utamanya).
+        models.Prefetch("aggregate_bank_matches", queryset=active, to_attr="active_aggregate_matches"),
     )
 
     unmatched_count = unmatched_qs.count()
@@ -70,6 +75,8 @@ def manual_review_view(request):
 
     if tab == "tagged":
         items = list(tagged_qs.order_by("-updated_at"))
+        for b in items:
+            b.active_match = next(iter(b.active_matches or b.active_aggregate_matches), None)
     else:
         items = list(unmatched_qs.order_by("-amount"))
 
@@ -131,29 +138,53 @@ def manual_tag_action(request, pk: int):
     return redirect(next_url)
 
 
+def _post_ids(request, many: str, single: str) -> list[int]:
+    raw = [i for i in request.POST.getlist(many) if i] or [i for i in [request.POST.get(single)] if i]
+    try:
+        return [int(i) for i in raw]
+    except ValueError:
+        return []
+
+
 @login_required
 @require_POST
 def manual_match_action(request):
-    # otomax_ids (daftar centang Review Manual, bisa >1) atau otomax_id tunggal
-    # (Pending Settle, Reversal).
-    raw_ids = [i for i in request.POST.getlist("otomax_ids") if i] or [
-        i for i in [request.POST.get("otomax_id")] if i
-    ]
-    bank_id = request.POST.get("bank_id")
+    # otomax_ids (daftar centang Review Manual) / bank_ids (daftar centang Pending Settle)
+    # bisa >1; otomax_id / bank_id tunggal tetap diterima (Reversal, form lama).
+    otomax_ids = _post_ids(request, "otomax_ids", "otomax_id")
+    bank_ids = _post_ids(request, "bank_ids", "bank_id")
     note = request.POST.get("note", "").strip()
     book_date = request.POST.get("book_date")
     fallback_url = f"/pending-settle/?d={book_date}" if book_date else "/"
     next_url = request.POST.get("next_url") or request.META.get("HTTP_REFERER") or fallback_url
 
-    try:
-        otomax_ids = [int(i) for i in raw_ids]
-    except ValueError:
-        otomax_ids = []
-    if not otomax_ids or not bank_id:
+    if not otomax_ids or not bank_ids:
         messages.error(request, "Pilih transaksi Otomax dan mutasi Bank yang akan dicocokkan.")
         return redirect(next_url)
+    if len(otomax_ids) > 1 and len(bank_ids) > 1:
+        messages.error(request, "Pilih beberapa entri Otomax ATAU beberapa mutasi bank, tidak keduanya sekaligus.")
+        return redirect(next_url)
 
-    bm = get_object_or_404(BankMutation, pk=bank_id)
+    if len(bank_ids) > 1:
+        o = get_object_or_404(OtomaxEntry, pk=otomax_ids[0])
+        try:
+            banks = list(BankMutation.objects.filter(pk__in=bank_ids))
+            match = manual_pair_many_banks(banks, o, note=note, user=request.user)
+            msg = (
+                f"Berhasil menggabungkan {len(banks)} mutasi bank (total Rp {match.amount_bank:,.0f}) "
+                f"dengan Otomax '{o.reseller_name_raw}' (Rp {o.amount:,.0f})."
+            )
+            if match.amount_diff:
+                messages.warning(
+                    request, f"{msg} Sisa selisih Rp {match.amount_diff:,.0f} tercatat di Daftar Selisih."
+                )
+            else:
+                messages.success(request, msg)
+        except ValueError as e:
+            messages.error(request, str(e))
+        return redirect(next_url)
+
+    bm = get_object_or_404(BankMutation, pk=bank_ids[0])
 
     try:
         if len(otomax_ids) == 1:

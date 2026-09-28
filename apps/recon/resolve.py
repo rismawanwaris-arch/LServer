@@ -209,6 +209,12 @@ def tag_manual_otomax(
     return o
 
 
+def _active_matches_for_bank(bm):
+    """Match aktif yang melibatkan mutasi ini -- sebagai mutasi utama maupun anggota
+    gabungan beberapa mutasi (bank_mutations)."""
+    return Match.objects.filter(Q(bank_mutation=bm) | Q(bank_mutations=bm), voided_at__isnull=True).distinct()
+
+
 @transaction.atomic
 def manual_pair_transactions(
     bank_mutation: BankMutation,
@@ -225,10 +231,14 @@ def manual_pair_transactions(
         raise ValueError(f"Entri Otomax #{o.id} sudah memiliki pasangan aktif.")
 
     # Cek apakah mutasi bank ini sudah memiliki match aktif
-    existing_match = Match.objects.select_for_update().filter(bank_mutation=bm, voided_at__isnull=True).first()
+    existing_id = _active_matches_for_bank(bm).values_list("id", flat=True).first()
+    existing_match = Match.objects.select_for_update().get(pk=existing_id) if existing_id else None
 
     if existing_match:
-        # KASUS: Menggabungkan transaksi Otomax ke mutasi bank yang sudah cocok tapi masih ada selisih
+        # KASUS: Menggabungkan transaksi Otomax ke mutasi bank yang sudah cocok tapi masih ada selisih.
+        # Selisih & ReconDay selalu dicatat di mutasi UTAMA pasangan itu (bisa beda dari `bm`
+        # kalau bm cuma anggota gabungan beberapa mutasi).
+        bm = existing_match.bank_mutation
         o.match_status = MatchStatus.MANUAL
         o.save(update_fields=["match_status", "updated_at"])
 
@@ -264,7 +274,7 @@ def manual_pair_transactions(
             if existing_disc:
                 existing_disc.amount = diff
                 existing_disc.note = (
-                    f"Selisih nominal gabungan: Bank Rp {bm.amount:,.2f} vs "
+                    f"Selisih nominal gabungan: Bank Rp {existing_match.amount_bank:,.2f} vs "
                     f"Otomax Rp {existing_match.amount_otomax:,.2f}"
                 )
                 existing_disc.save(update_fields=["amount", "note", "updated_at"])
@@ -277,7 +287,7 @@ def manual_pair_transactions(
                     bank=bm,
                     otomax=o,
                     note=(
-                        f"Selisih nominal gabungan: Bank Rp {bm.amount:,.2f} vs "
+                        f"Selisih nominal gabungan: Bank Rp {existing_match.amount_bank:,.2f} vs "
                         f"Otomax Rp {existing_match.amount_otomax:,.2f}"
                     ),
                 )
@@ -308,7 +318,7 @@ def manual_pair_transactions(
         note=match_note,
         matched_by=user,
     )
-    _settle_manual_pair(bm, [o], match, match_note, user)
+    _settle_manual_pair([bm], [o], match, match_note, user)
     return match
 
 
@@ -331,7 +341,7 @@ def manual_pair_many(
     if len(entries) != len(ids):
         raise ValueError("Sebagian entri Otomax yang dipilih tidak ditemukan.")
 
-    if Match.objects.filter(bank_mutation=bm, voided_at__isnull=True).exists():
+    if _active_matches_for_bank(bm).exists():
         raise ValueError(
             f"Mutasi bank #{bm.id} sudah punya pasangan aktif. Batalkan dulu pasangannya, atau "
             "tambahkan entri lewat daftar 'Masih Selisih' di Pending Settle."
@@ -368,19 +378,80 @@ def manual_pair_many(
         matched_by=user,
     )
     match.otomax_entries.set(entries)
-    _settle_manual_pair(bm, entries, match, match_note, user)
+    _settle_manual_pair([bm], entries, match, match_note, user)
     return match
 
 
-def _settle_manual_pair(bm: BankMutation, entries: list[OtomaxEntry], match: Match, match_note: str, user) -> None:
-    """Rapikan Discrepancy setelah pencocokan manual baru (1:1 maupun gabungan)."""
+@transaction.atomic
+def manual_pair_many_banks(
+    bank_mutations: list[BankMutation],
+    otomax_entry: OtomaxEntry,
+    note: str = "",
+    user=None,
+) -> Match:
+    """Pasangkan BEBERAPA mutasi bank dengan SATU entri Otomax -- mis. satu Tartun QR Bulk
+    Rp 3.329.000 yang menutup settlement dua outlet QRIS (2.488.000 + 841.000), boleh beda
+    tanggal. Dipilih operator, jadi langsung final."""
+    ids = sorted({b.pk for b in bank_mutations})
+    if len(ids) < 2:
+        raise ValueError("Pilih minimal 2 mutasi bank untuk digabungkan.")
+
+    banks = list(BankMutation.objects.select_for_update().filter(pk__in=ids).order_by("pk"))
+    if len(banks) != len(ids):
+        raise ValueError("Sebagian mutasi bank yang dipilih tidak ditemukan.")
+    o = OtomaxEntry.objects.select_for_update().get(pk=otomax_entry.pk)
+
+    open_statuses = {MatchStatus.UNMATCHED, MatchStatus.PENDING_SETTLE}
+    if o.match_status not in open_statuses or Match.objects.filter(
+        Q(otomax_entry=o) | Q(otomax_entries=o), voided_at__isnull=True
+    ).exists():
+        raise ValueError(f"Entri Otomax #{o.id} sudah tidak terbuka atau sudah punya pasangan aktif.")
+    for b in banks:
+        if b.match_status != MatchStatus.UNMATCHED or _active_matches_for_bank(b).exists():
+            raise ValueError(
+                f"Mutasi bank #{b.id} (Rp {b.amount:,.0f}) sudah tidak terbuka atau sudah punya pasangan aktif."
+            )
+
+    for b in banks:
+        b.match_status = MatchStatus.MANUAL
+        b.save(update_fields=["match_status", "updated_at"])
+    o.match_status = MatchStatus.MANUAL
+    o.save(update_fields=["match_status", "updated_at"])
+
+    primary = max(banks, key=lambda b: abs(b.amount))
+    match_note = note.strip() or (
+        f"Pencocokan manual gabungan {len(banks)} mutasi bank vs Otomax ({o.reseller_name_raw})"
+    )
+    match = Match.objects.create(
+        book_date=primary.book_date,
+        channel=primary.channel,
+        bank_mutation=primary,
+        otomax_entry=o,
+        match_type=MatchType.MANUAL,
+        amount_bank=sum((b.amount for b in banks), ZERO),
+        amount_otomax=o.amount,
+        confidence=100,
+        note=match_note,
+        matched_by=user,
+    )
+    match.bank_mutations.set(banks)
+    _settle_manual_pair(banks, [o], match, match_note, user)
+    return match
+
+
+def _settle_manual_pair(
+    banks: list[BankMutation], entries: list[OtomaxEntry], match: Match, match_note: str, user
+) -> None:
+    """Rapikan Discrepancy setelah pencocokan manual baru (1:1 maupun gabungan dua arah)."""
     diff = match.amount_diff  # = amount_bank - amount_otomax, dihitung otomatis di Match.save()
     otomax_refs = ", ".join(f"#{o.id}" for o in entries)
+    bank_refs = ", ".join(f"#{b.id}" for b in banks)
+    primary_bank = match.bank_mutation
 
     if diff == ZERO:
         # Nominal pas sama -- kedua sisi benar-benar sudah sepenuhnya terjelaskan,
         # selesaikan discrepancy leftover asal (BANK_ONLY/OTOMAX_ONLY) seperti biasa.
-        for disc in Discrepancy.objects.filter(bank_mutation=bm, status=DiscrepancyStatus.OPEN):
+        for disc in Discrepancy.objects.filter(bank_mutation__in=banks, status=DiscrepancyStatus.OPEN):
             resolve_discrepancy(
                 disc,
                 match=match,
@@ -393,7 +464,7 @@ def _settle_manual_pair(bm: BankMutation, entries: list[OtomaxEntry], match: Mat
                 disc,
                 match=match,
                 resolution_type="DATA_FIX",
-                reason=f"Cocok manual dengan Mutasi Bank #{bm.id}: {match_note}",
+                reason=f"Cocok manual dengan Mutasi Bank {bank_refs}: {match_note}",
                 user=user,
             )
     else:
@@ -403,25 +474,26 @@ def _settle_manual_pair(bm: BankMutation, entries: list[OtomaxEntry], match: Mat
         # sudah usang begitu kedua sisi dapat pasangan -- ganti dengan SATU discrepancy
         # AMOUNT_DIFF baru senilai sisa selisih riil, tetap OPEN, supaya kelihatan di
         # Daftar Selisih & Dashboard sampai ada yang menyelesaikan/write-off terpisah.
-        Discrepancy.objects.filter(bank_mutation=bm, status=DiscrepancyStatus.OPEN).delete()
+        Discrepancy.objects.filter(bank_mutation__in=banks, status=DiscrepancyStatus.OPEN).delete()
         Discrepancy.objects.filter(otomax_entry__in=entries, status=DiscrepancyStatus.OPEN).delete()
         diff_note = (
-            f"Selisih nominal pencocokan manual: Bank Rp {bm.amount:,.2f} vs "
+            f"Selisih nominal pencocokan manual: Bank Rp {match.amount_bank:,.2f} vs "
             f"Otomax Rp {match.amount_otomax:,.2f} ({match_note})"
         )
         _make_discrepancy(
-            bm.book_date,
-            bm.channel,
+            primary_bank.book_date,
+            primary_bank.channel,
             DiscrepancyKind.AMOUNT_DIFF,
             amount=diff,
-            bank=bm,
+            bank=primary_bank,
             otomax=match.otomax_entry,
             note=diff_note,
         )
 
-    day, _ = ReconDay.objects.select_for_update().get_or_create(book_date=bm.book_date)
-    day.recompute_selisih()
-    day.save(update_fields=["selisih_adjustments", "selisih_current", "updated_at"])
+    for book_date in {b.book_date for b in banks}:
+        day, _ = ReconDay.objects.select_for_update().get_or_create(book_date=book_date)
+        day.recompute_selisih()
+        day.save(update_fields=["selisih_adjustments", "selisih_current", "updated_at"])
 
 
 @transaction.atomic
@@ -477,14 +549,16 @@ def unpair_match(match: Match, user=None) -> None:
     otomax_ids = set(m.otomax_entries.values_list("id", flat=True))
     if m.otomax_entry_id:
         otomax_ids.add(m.otomax_entry_id)
+    bank_ids = set(m.bank_mutations.values_list("id", flat=True))
+    if m.bank_mutation_id:
+        bank_ids.add(m.bank_mutation_id)
 
     m.voided_at = timezone.now()
     m.voided_by = user
     m.save(update_fields=["voided_at", "voided_by", "updated_at"])
 
-    if m.bank_mutation:
-        bm = BankMutation.objects.select_for_update().get(pk=m.bank_mutation_id)
-        if not Match.objects.filter(bank_mutation=bm, voided_at__isnull=True).exists():
+    for bm in BankMutation.objects.select_for_update().filter(pk__in=bank_ids):
+        if not _active_matches_for_bank(bm).exists():
             bm.match_status = MatchStatus.UNMATCHED
             bm.tag_manual = ""
             bm.manual_note = ""

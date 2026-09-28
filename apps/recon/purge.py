@@ -108,6 +108,7 @@ def delete_import_batch(batch_id: int, *, include_closed: bool = False) -> dict:
     # 2. Cari semua pasangan Match yang melibatkan mutasi / entri di batch ini (termasuk M2M QRIS AGGREGATE)
     matches = Match.objects.filter(
         models.Q(bank_mutation_id__in=bank_ids)
+        | models.Q(bank_mutations__in=bank_ids)
         | models.Q(otomax_entry_id__in=otomax_ids)
         | models.Q(otomax_entries__in=otomax_ids)
     ).distinct()
@@ -115,9 +116,12 @@ def delete_import_batch(batch_id: int, *, include_closed: bool = False) -> dict:
     # Catat ID pasangan dari batch lain yang selamat agar statusnya direset ke UNMATCHED
     surviving_bank_ids = set()
     surviving_otomax_ids = set()
-    for m in matches.prefetch_related("otomax_entries"):
+    for m in matches.prefetch_related("otomax_entries", "bank_mutations"):
         if m.bank_mutation_id and m.bank_mutation_id not in bank_ids:
             surviving_bank_ids.add(m.bank_mutation_id)
+        for b in m.bank_mutations.all():
+            if b.id not in bank_ids:
+                surviving_bank_ids.add(b.id)
         if m.otomax_entry_id and m.otomax_entry_id not in otomax_ids:
             surviving_otomax_ids.add(m.otomax_entry_id)
         for o in m.otomax_entries.all():
@@ -139,7 +143,10 @@ def delete_import_batch(batch_id: int, *, include_closed: bool = False) -> dict:
 
     # 6. Reset status pasangan yang masih ada ke UNMATCHED jika sudah tidak punya match aktif lain
     for b_id in surviving_bank_ids:
-        if not Match.objects.filter(bank_mutation_id=b_id, voided_at__isnull=True).exists():
+        if not Match.objects.filter(
+            models.Q(bank_mutation_id=b_id) | models.Q(bank_mutations__id=b_id),
+            voided_at__isnull=True,
+        ).exists():
             BankMutation.objects.filter(id=b_id).update(match_status=MatchStatus.UNMATCHED)
     for o_id in surviving_otomax_ids:
         if not Match.objects.filter(

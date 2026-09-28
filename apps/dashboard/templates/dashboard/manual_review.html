@@ -346,7 +346,7 @@
       </thead>
       <tbody>
         {% for b in items %}
-        {% with m=b.active_matches.0 %}
+        {% with m=b.active_match %}
         <tr>
           <td class="font-mono text-xs text-slate-500 whitespace-nowrap">{{ b.txn_datetime|date:"d M H:i"|default:b.book_date }}</td>
           <td class="font-bold text-xs">{{ b.channel }}</td>
