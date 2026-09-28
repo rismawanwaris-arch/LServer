@@ -9,7 +9,7 @@ from django.http import HttpResponse
 from django.shortcuts import render
 from django.utils import timezone
 
-from apps.recon.reports import generate_excel_report, get_daily_summary, get_range_summary
+from apps.recon.reports import generate_excel_report, get_daily_rows, get_range_summary
 
 from ._shared import _parse_date
 
@@ -25,14 +25,9 @@ def reports_view(request):
 
     summary = get_range_summary(start_date, end_date)
 
-    # Breakdown per day in range
-    curr = start_date
-    daily_rows = []
-    while curr <= end_date:
-        d_sum = get_daily_summary(curr)
-        daily_rows.append(d_sum)
-        curr += timedelta(days=1)
-    daily_rows.reverse()
+    # Rincian per tanggal: satu set query GROUP BY untuk seluruh rentang (dulu
+    # get_daily_summary() dipanggil per tanggal -> 1.381 query untuk sebulan).
+    daily_rows = get_daily_rows(start_date, end_date)
 
     return render(
         request,

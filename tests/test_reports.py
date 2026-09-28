@@ -146,3 +146,63 @@ def test_otomax_lain_lain_excludes_ignored_entries():
     summary = get_daily_summary(BD)
     assert summary["otomax_lain_lain"]["otomax_count"] == 0
     assert summary["otomax_lain_lain"]["otomax_total"] == Decimal("0.00")
+
+
+@pytest.mark.django_db
+def test_get_daily_rows_identik_dengan_get_daily_summary_per_tanggal():
+    """Optimasi Laporan (1.381 -> ±6 query): rumus agregat per rentang HARUS menghasilkan
+    angka yang sama persis dengan get_daily_summary() untuk setiap tanggal & kolom."""
+    from apps.recon.models import ReconDay
+    from apps.recon.reports import DAILY_ROW_KEYS, get_daily_rows
+    from apps.recon.resolve import manual_pair_transactions, tag_manual_mutation
+
+    d1, d2, d3 = BD, BD_NEXT, BD_NEXT + timedelta(days=1)
+    # Hari 1: cocok otomatis (ref sama), sisa bank & Otomax tanpa pasangan, debit negatif.
+    _bank("ATMLTRPRM 01884 000001039 21540100059656", "550000", book_date=d1)
+    _otomax("TARTUN EDC BRI ATMLTRPRM 01884 000001039 21540100059656", "550000", book_date=d1)
+    _bank("TRF MASUK TANPA PASANGAN 111", "125000", book_date=d1)
+    _bank("DEBIT BIAYA", "-6500", book_date=d1)
+    _otomax("TARTUN TF BRI TIDAK ADA DI BANK 222", "300000", book_date=d1)
+    _otomax_other("STOR KAS", "90000", OtomaxCategory.OTHER, book_date=d1)
+    run_match(d1)
+    # Hari 2: cocok manual dengan nominal beda (AMOUNT_DIFF OPEN) + tag manual + REV netral.
+    b_diff = _bank("QRIS CILENGKRANG 3 CELL 004769151", "2778000", channel=Channel.BCA, book_date=d2)
+    o_diff = _otomax("TARTUN TF BCA CILENGKRANG 3", "2788000", channel=Channel.BCA, book_date=d2)
+    manual_pair_transactions(b_diff, o_diff)
+    tag_manual_mutation(_bank("SETOR TUNAI KASIR", "400000", book_date=d2), tag="setor_tunai")
+    _otomax_other("TARTUN SALAH", "75000", OtomaxCategory.TOPUP_TARTUN, "BRI", d2, MatchStatus.IGNORED)
+    _otomax("TARTUN TF BRI MASIH PENDING 333", "80000", book_date=d2)
+    run_match(d2)
+    # Hari 3: tutup buku; hari 4 (di luar data) kosong.
+    _bank("MUTASI HARI TIGA 444", "10000", book_date=d3)
+    run_match(d3)
+    ReconDay.objects.update_or_create(book_date=d3, defaults={"locked": True, "status": "CLOSED"})
+
+    start, end = BD - timedelta(days=1), d3 + timedelta(days=1)
+    rows = get_daily_rows(start, end)
+
+    assert [r["book_date"] for r in rows] == [end - timedelta(days=i) for i in range((end - start).days + 1)]
+    for row in rows:
+        expected = get_daily_summary(row["book_date"])
+        for key in DAILY_ROW_KEYS:
+            assert row[key] == expected[key], (row["book_date"], key, row[key], expected[key])
+    # Sanity: data uji memang mengisi kolom-kolom yang dibandingkan.
+    by_date = {r["book_date"]: r for r in rows}
+    assert by_date[d1]["matched_auto_count"] >= 1
+    assert by_date[d2]["amount_diff_count"] == 1
+    assert by_date[d2]["matched_manual_count"] >= 1
+    assert by_date[d3]["day_locked"] is True
+
+
+@pytest.mark.django_db
+def test_laporan_satu_bulan_tidak_lagi_ribuan_query(client):
+    from django.contrib.auth import get_user_model
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    client.force_login(get_user_model().objects.create_user(username="op", password="password123"))
+    with CaptureQueriesContext(connection) as q:
+        res = client.get("/reports/", {"start_date": "2026-08-29", "end_date": "2026-09-28"})
+    assert res.status_code == 200
+    assert len(res.context["daily_rows"]) == 31
+    assert len(q) < 80, len(q)  # dulu ±1.381 query untuk 31 hari

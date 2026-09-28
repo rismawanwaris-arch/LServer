@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import io
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 import openpyxl
-from django.db.models import Sum
+from django.db.models import Count, Q, Sum
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
@@ -107,6 +107,108 @@ def get_daily_summary(book_date: date) -> dict:
         "per_bank": per_bank,
         "otomax_lain_lain": otomax_lain_lain,
     }
+
+
+# Kolom yang dihitung get_daily_rows() -- subset get_daily_summary() tanpa per_bank.
+DAILY_ROW_KEYS = (
+    "day_status",
+    "day_locked",
+    "total_bank",
+    "total_otomax",
+    "selisih",
+    "matched_auto_count",
+    "matched_auto_amount",
+    "matched_manual_count",
+    "matched_manual_amount",
+    "unmatched_bank_count",
+    "unmatched_bank_amount",
+    "pending_settle_count",
+    "pending_settle_amount",
+    "amount_diff_count",
+    "amount_diff_amount",
+)
+
+
+def get_daily_rows(start_date: date, end_date: date) -> list[dict]:
+    """Ringkasan per tanggal untuk seluruh rentang dalam 6 query GROUP BY, alih-alih
+    memanggil get_daily_summary() sekali per tanggal (±43 query per tanggal; sebulan =
+    1.381 query). Rumusnya HARUS identik dengan get_daily_summary() -- dijaga test
+    pembanding di tests/test_reports.py. Urut dari tanggal terbaru."""
+    rng = (start_date, end_date)
+    open_otomax = [MatchStatus.PENDING_SETTLE, MatchStatus.UNMATCHED]
+
+    bank = {
+        r["book_date"]: r
+        for r in BankMutation.objects.filter(book_date__range=rng)
+        .values("book_date")
+        .annotate(
+            total_bank=Sum("amount", filter=Q(amount__gt=0)),
+            matched_manual_count=Count("id", filter=Q(match_status=MatchStatus.MANUAL)),
+            matched_manual_amount=Sum("amount", filter=Q(match_status=MatchStatus.MANUAL)),
+            unmatched_bank_count=Count("id", filter=Q(match_status=MatchStatus.UNMATCHED)),
+            unmatched_bank_amount=Sum("amount", filter=Q(match_status=MatchStatus.UNMATCHED)),
+        )
+    }
+    otomax = {
+        r["book_date"]: r
+        for r in OtomaxEntry.objects.filter(book_date__range=rng, category=OtomaxCategory.TOPUP_TARTUN)
+        .values("book_date")
+        .annotate(
+            total_otomax=Sum("amount", filter=~Q(match_status=MatchStatus.IGNORED)),
+            pending_settle_count=Count("id", filter=Q(match_status__in=open_otomax)),
+            pending_settle_amount=Sum("amount", filter=Q(match_status__in=open_otomax)),
+        )
+    }
+    matched = {
+        r["book_date"]: r
+        for r in Match.objects.filter(book_date__range=rng, voided_at__isnull=True)
+        .exclude(match_type=MatchType.MANUAL)
+        .values("book_date")
+        .annotate(matched_auto_count=Count("id"), matched_auto_amount=Sum("amount_bank"))
+    }
+    amount_diff = {
+        r["origin_book_date"]: r
+        for r in Discrepancy.objects.filter(
+            origin_book_date__range=rng, kind=DiscrepancyKind.AMOUNT_DIFF, status=DiscrepancyStatus.OPEN
+        )
+        .values("origin_book_date")
+        .annotate(amount_diff_count=Count("id"), amount_diff_amount=Sum("amount"))
+    }
+    days = {d.book_date: d for d in ReconDay.objects.filter(book_date__range=rng)}
+
+    def val(src, key, zero=ZERO):
+        v = (src or {}).get(key)
+        return zero if v is None else v
+
+    rows = []
+    d = end_date
+    while d >= start_date:
+        b, o, m, a, day = bank.get(d), otomax.get(d), matched.get(d), amount_diff.get(d), days.get(d)
+        unmatched_bank_amount = val(b, "unmatched_bank_amount")
+        pending_settle_amount = val(o, "pending_settle_amount")
+        amount_diff_amount = val(a, "amount_diff_amount")
+        rows.append(
+            {
+                "book_date": d,
+                "day_status": day.status if day else "DRAFT",
+                "day_locked": day.locked if day else False,
+                "total_bank": val(b, "total_bank"),
+                "total_otomax": val(o, "total_otomax"),
+                "selisih": unmatched_bank_amount - pending_settle_amount + amount_diff_amount,
+                "matched_auto_count": val(m, "matched_auto_count", 0),
+                "matched_auto_amount": val(m, "matched_auto_amount"),
+                "matched_manual_count": val(b, "matched_manual_count", 0),
+                "matched_manual_amount": val(b, "matched_manual_amount"),
+                "unmatched_bank_count": val(b, "unmatched_bank_count", 0),
+                "unmatched_bank_amount": unmatched_bank_amount,
+                "pending_settle_count": val(o, "pending_settle_count", 0),
+                "pending_settle_amount": pending_settle_amount,
+                "amount_diff_count": val(a, "amount_diff_count", 0),
+                "amount_diff_amount": amount_diff_amount,
+            }
+        )
+        d -= timedelta(days=1)
+    return rows
 
 
 def get_range_summary(start_date: date, end_date: date) -> dict:
