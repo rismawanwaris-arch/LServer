@@ -106,7 +106,7 @@
       match_id: {{ m.id }},
       is_diff: true,
       book_date: '{{ m.bank_mutation.book_date|date:'Y-m-d' }}',
-      extended: false,
+      extended: {{ m.is_extended|yesno:'true,false' }},
       channel: '{{ m.bank_mutation.channel }}',
       amount: {{ m.bank_mutation.amount|stringformat:'.2f' }},
       amount_formatted: 'Rp {{ m.bank_mutation.amount|rupiah }}',

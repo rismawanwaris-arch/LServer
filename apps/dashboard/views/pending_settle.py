@@ -105,6 +105,26 @@ def pending_settle_view(request):
             b.is_extended = True
             unmatched_banks.append(b)
 
+        # "Masih Selisih" dari luar jendela normal: koreksi Otomax sering baru ditembak
+        # beberapa hari kemudian (mis. -10.000 untuk pasangan 1 Sep yang salah nominal).
+        # Cuma yang sisa selisihnya PERSIS sama dengan nominal entri di halaman ini --
+        # yang kalau digabung, selisihnya jadi Rp 0.
+        extended_diffs = (
+            Match.objects.filter(
+                book_date__range=wide,
+                voided_at__isnull=True,
+                bank_mutation__isnull=False,
+                amount_diff__in={o.amount for o in items},
+            )
+            .exclude(book_date__range=window)
+            .exclude(amount_diff=Decimal("0.00"))
+            .select_related("bank_mutation", "otomax_entry")
+            .order_by("-amount_diff")
+        )
+        for m in extended_diffs:
+            m.is_extended = True
+            diff_matches.append(m)
+
     otomax_tags = [
         ("revisi", "Revisi / Koreksi Kasir"),
         ("retur", "Retur / Tarik Tunai"),

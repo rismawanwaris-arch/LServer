@@ -310,3 +310,33 @@ def test_reclassify_otomax_dry_run_then_apply():
         untouched.refresh_from_db()
         assert untouched.category == OtomaxCategory.OTHER
     assert "2026-09-03" in out.getvalue()
+
+
+@pytest.mark.django_db
+def test_late_correction_can_still_be_merged_via_masih_selisih(auth_client):
+    """Kasus nyata: QRIS CILENGKRANG 3 1 Sep, bank 2.778.000 dipasangkan manual dengan Otomax
+    2.788.000 (salah nominal, selisih -10.000). Koreksi -10.000 baru ditembak 8 Sep -- di luar
+    jendela ±2 hari, tapi harus tetap bisa digabung lewat daftar "Masih Selisih"."""
+    sep1, sep8 = date(2026, 9, 1), date(2026, 9, 8)
+    bm = _bank("QRIS CILENGKRANG 3 CELL 004769151", "2778000", channel=Channel.BRI, book_date=sep1)
+    wrong = _otomax("TARTUN TF BRI CILENGKRANG 3 TGL 01-SEP-2026", "2788000", channel=Channel.BRI, book_date=sep1)
+    match = manual_pair_transactions(bank_mutation=bm, otomax_entry=wrong, note="salah nominal")
+    assert match.amount_diff == Decimal("-10000.00")
+    other_bank = _bank("TRANSFER LAIN", "500000", channel=Channel.BRI, book_date=sep1)
+    other = manual_pair_transactions(
+        bank_mutation=other_bank,
+        otomax_entry=_otomax("TARTUN TF BRI LAIN", "505000", channel=Channel.BRI, book_date=sep1),
+    )
+    fix = _otomax("TARTUN TF BRI KOREKSI CILENGKRANG 3", "-10000", channel=Channel.BRI, book_date=sep8)
+
+    res = auth_client.get("/pending-settle/", {"d": sep8.isoformat()})
+    offered = {m.id: m for m in res.context["diff_matches"]}
+    assert match.id in offered and offered[match.id].is_extended is True
+    assert other.id not in offered  # sisa selisih -5.000 != -10.000 -> tidak ditawarkan
+
+    auth_client.post(
+        "/manual-match/", {"bank_id": bm.pk, "otomax_id": fix.pk, "book_date": sep8.isoformat(), "next_url": "/"}
+    )
+    match.refresh_from_db()
+    assert match.amount_diff == Decimal("0.00")
+    assert not _open_discs(bank_mutation=bm).exists()
