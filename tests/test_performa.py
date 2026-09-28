@@ -207,3 +207,20 @@ def test_review_manual_kartu_dimuat_bertahap(client_op):
     assert html.count('x-data="otomaxPicker(') == 5
     assert 'id="otomax-candidates"' not in html
     assert f'value="/review-manual/?d={bd.isoformat()}"' in html  # form kembali ke daftar, bukan ?page=2
+
+
+@pytest.mark.django_db
+def test_server_timing_untuk_pengguna_login(client_op):
+    import re
+
+    res = client_op.get("/")
+    header = res["Server-Timing"]
+    m = re.fullmatch(r'db;desc="(\d+) query";dur=[\d.]+, app;desc="Django";dur=[\d.]+', header)
+    assert m, header
+    assert int(m.group(1)) > 0
+
+
+@pytest.mark.django_db
+def test_server_timing_tidak_bocor_ke_pengunjung_anonim():
+    res = Client().get("/login/")
+    assert not res.has_header("Server-Timing")
