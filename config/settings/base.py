@@ -29,6 +29,10 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    # Kompres HTML/JSON dari view (WhiteNoise cuma mengompres file statis). Tabel mutasi
+    # sangat berulang: Daftar Selisih 2 MB -> ~42 KB. Django >= 4.2 sudah menambahkan
+    # mitigasi BREACH bawaan (panjang respons diacak) di middleware ini.
+    "django.middleware.gzip.GZipMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
