@@ -30,6 +30,22 @@ _CANDIDATE_WINDOW = (-2, 1)
 _EXTENDED_WINDOW_DAYS = 14
 
 
+def _paginate_rows(request, rows, per_page: int):
+    """Daftar panjang dirender bertahap (infinite scroll HTMX): halaman pertama ikut
+    halaman penuh, halaman berikutnya diambil sebagai partial saat baris terakhir
+    terlihat. Return (page_obj, is_more, list_url) -- list_url = URL daftar tanpa nomor
+    halaman, dipakai sebagai tujuan kembali form di baris & dasar URL halaman berikut."""
+    from django.core.paginator import Paginator
+
+    paginator = Paginator(rows, per_page)
+    is_more = bool(request.headers.get("HX-Request") and request.GET.get("page"))
+    page_obj = paginator.get_page(request.GET.get("page") if is_more else 1)
+    params = request.GET.copy()
+    params.pop("page", None)
+    list_url = request.path + (f"?{params.urlencode()}" if params else "")
+    return page_obj, is_more, list_url
+
+
 def _parse_date(raw: str | None, default=None) -> date:
     if raw:
         try:

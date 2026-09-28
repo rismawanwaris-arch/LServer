@@ -18,9 +18,10 @@ from apps.ingest.models import BankMutation, OtomaxEntry
 from apps.recon.models import Match
 from apps.recon.resolve import tag_manual_otomax
 
-from ._shared import _CANDIDATE_WINDOW, _EXTENDED_WINDOW_DAYS, _find_auto_pairs, _parse_date
+from ._shared import _CANDIDATE_WINDOW, _EXTENDED_WINDOW_DAYS, _find_auto_pairs, _paginate_rows, _parse_date
 
 _MAX_NET_CANDIDATES = 10
+PENDING_PAGE_SIZE = 50
 
 
 @login_required
@@ -134,7 +135,19 @@ def pending_settle_view(request):
             m.is_extended = True
             diff_matches.append(m)
 
+    # Baris Belum Settle dirender bertahap (50 per halaman). Kandidat bank (jendela lebar)
+    # di atas sengaja tetap dihitung dari SEMUA entri, karena modal di halaman ini dipakai
+    # juga oleh baris yang baru dimuat belakangan.
+    page_obj, is_more, list_url = _paginate_rows(request, items, PENDING_PAGE_SIZE)
+    if tab != "resolved":
+        items = list(page_obj.object_list)
     _attach_net_candidates(items if tab != "resolved" else [], book_date)
+    if is_more and tab != "resolved":
+        return render(
+            request,
+            "dashboard/_pending_rows.html",
+            {"page_obj": page_obj, "items": items, "list_url": list_url, "book_date": book_date},
+        )
 
     otomax_tags = [
         ("revisi", "Revisi / Koreksi Kasir"),
@@ -153,6 +166,8 @@ def pending_settle_view(request):
             "channels": Channel.choices,
             "tab": tab,
             "items": items,
+            "page_obj": page_obj,
+            "list_url": list_url,
             "pending_count": pending_count,
             "pending_total": pending_total,
             "resolved_count": resolved_count,

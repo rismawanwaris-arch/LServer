@@ -24,7 +24,7 @@ from apps.recon.resolve import (
     unpair_match,
 )
 
-from ._shared import _CANDIDATE_WINDOW, _EXTENDED_WINDOW_DAYS, _find_auto_pairs, _parse_date
+from ._shared import _CANDIDATE_WINDOW, _EXTENDED_WINDOW_DAYS, _find_auto_pairs, _paginate_rows, _parse_date
 
 
 def _otomax_candidate(o: OtomaxEntry, book_date, *, extended: bool) -> dict:
@@ -39,6 +39,9 @@ def _otomax_candidate(o: OtomaxEntry, book_date, *, extended: bool) -> dict:
         "tgl_match": parse_tgl_date(o.description_raw) == book_date,
         "extended": extended,
     }
+
+
+REVIEW_PAGE_SIZE = 20
 
 
 @login_required
@@ -99,6 +102,16 @@ def manual_review_view(request):
     for b in items:
         b.amount_cents = int(b.amount * 100)
 
+    # Kartu dirender bertahap (20 per halaman) -- tiap kartu ~9 KB berisi komponen
+    # pencari lawan Otomax. Jumlah, total, Pencocokan Cepat & kandidat tetap dari SEMUA.
+    page_obj, is_more, list_url = _paginate_rows(request, items, REVIEW_PAGE_SIZE)
+    if is_more and tab != "tagged":
+        return render(
+            request,
+            "dashboard/_review_cards.html",
+            {"page_obj": page_obj, "list_url": list_url, "book_date": book_date, "manual_tags": ManualTag.choices},
+        )
+
     return render(
         request,
         "dashboard/manual_review.html",
@@ -107,7 +120,9 @@ def manual_review_view(request):
             "tab": tab,
             "selected_channel": channel,
             "channels": Channel.choices,
-            "items": items,
+            "items": items if tab == "tagged" else list(page_obj.object_list),
+            "page_obj": page_obj,
+            "list_url": list_url,
             "unmatched_count": unmatched_count,
             "unmatched_total": unmatched_total,
             "tagged_count": tagged_count,

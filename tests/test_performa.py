@@ -115,3 +115,95 @@ def test_detail_selisih_kembali_hanya_ke_daftar_selisih(client_op):
     assert 'value="/selisih/?d=2026-09-12"' in html
     evil = client_op.get(f"/selisih/{pk}/detail/", {"next": "https://jahat.example/"}).content.decode()
     assert "jahat.example" not in evil
+
+
+def _batch(channel, bd, tag):
+    import hashlib
+
+    from apps.ingest.models import ImportBatch
+
+    return ImportBatch.objects.create(
+        channel=channel, book_date=bd, source_filename="t", file_hash=hashlib.sha256(tag.encode()).hexdigest()
+    )
+
+
+@pytest.mark.django_db
+def test_pending_settle_baris_dimuat_bertahap_total_tetap_semua(client_op):
+    """Langkah 5: 70 entri -> 50 baris pertama + pemicu muat; jumlah & total tab tetap
+    menghitung ke-70 entri, dan halaman 2 berisi 20 sisanya (lengkap dengan lawan netral)."""
+    from datetime import date
+    from decimal import Decimal
+
+    from apps.core.enums import Channel, MatchStatus, OtomaxCategory
+    from apps.ingest.models import OtomaxEntry
+
+    bd = date(2026, 9, 12)
+    batch = _batch(Channel.OTOMAX, bd, "otomax-70")
+    for i in range(70):
+        OtomaxEntry.objects.create(
+            import_batch=batch,
+            book_date=bd,
+            reseller_name_raw=f"R{i}",
+            amount=Decimal(100000 + i * 1000),
+            description_raw=f"TARTUN TF BRI {i}",
+            category=OtomaxCategory.TOPUP_TARTUN,
+            match_status=MatchStatus.PENDING_SETTLE,
+            row_hash=f"o{i}",
+        )
+    # Lawan netral untuk entri terkecil (muncul di halaman 2 karena urut nominal turun).
+    OtomaxEntry.objects.create(
+        import_batch=batch,
+        book_date=bd,
+        reseller_name_raw="REV",
+        amount=Decimal("-100000"),
+        description_raw="REV TARTUN",
+        category=OtomaxCategory.REVERSAL,
+        match_status=MatchStatus.PENDING_SETTLE,
+        row_hash="rev",
+    )
+
+    res = client_op.get("/pending-settle/", {"d": bd.isoformat()})
+    assert res.context["pending_count"] == 71
+    assert len(res.context["items"]) == 50
+    assert 'hx-trigger="revealed"' in res.content.decode()
+
+    more = client_op.get("/pending-settle/", {"d": bd.isoformat(), "page": 2}, HTTP_HX_REQUEST="true")
+    html = more.content.decode()
+    assert "<html" not in html
+    assert len(more.context["items"]) == 21
+    smallest = next(o for o in more.context["items"] if o.amount == Decimal("100000"))
+    assert [c.reseller_name_raw for c in smallest.net_candidates] == ["REV"]
+    assert "Semua 71 entri sudah ditampilkan" in html
+
+
+@pytest.mark.django_db
+def test_review_manual_kartu_dimuat_bertahap(client_op):
+    from datetime import date
+    from decimal import Decimal
+
+    from apps.core.enums import Channel
+    from apps.ingest.models import BankMutation
+
+    bd = date(2026, 9, 12)
+    batch = _batch(Channel.BRI, bd, "bri-25")
+    for i in range(25):
+        BankMutation.objects.create(
+            import_batch=batch,
+            channel=Channel.BRI,
+            book_date=bd,
+            description_raw=f"TRF MASUK {i:02d}",
+            ref_normalized=f"TRF {i}",
+            amount=Decimal(50000 + i),
+            row_hash=f"b{i}",
+        )
+
+    res = client_op.get("/review-manual/", {"d": bd.isoformat()})
+    assert res.context["unmatched_count"] == 25
+    assert len(res.context["items"]) == 20
+    assert 'id="otomax-candidates"' in res.content.decode()  # kandidat dikirim sekali
+
+    more = client_op.get("/review-manual/", {"d": bd.isoformat(), "page": 2}, HTTP_HX_REQUEST="true")
+    html = more.content.decode()
+    assert html.count('x-data="otomaxPicker(') == 5
+    assert 'id="otomax-candidates"' not in html
+    assert f'value="/review-manual/?d={bd.isoformat()}"' in html  # form kembali ke daftar, bukan ?page=2

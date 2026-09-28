@@ -1,0 +1,177 @@
+{% load money %}
+{% for b in page_obj.object_list %}
+  <div class="card p-4">
+    <div class="grid gap-4 md:grid-cols-12 items-start">
+      <!-- Info Mutasi (Col 1-7) -->
+      <div class="md:col-span-7 space-y-2">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="badge-info">{{ b.get_channel_display }}</span>
+            <span class="font-mono text-xs text-slate-500">{{ b.txn_datetime|date:"d M Y H:i"|default:b.book_date }}</span>
+            {% if b.outlet_name %}
+            <span class="text-xs text-slate-500">· Outlet <b class="font-medium text-slate-700 dark:text-slate-300">{{ b.outlet_name }}</b></span>
+            {% endif %}
+          </div>
+          <span class="money text-lg font-semibold text-slate-900 dark:text-white">Rp {{ b.amount|rupiah }}</span>
+        </div>
+
+        <div class="break-words font-mono text-[13px] font-medium leading-relaxed text-slate-800 dark:text-slate-100">
+          {{ b.description_raw }}
+        </div>
+
+        {% if b.extracted_tokens %}
+        <div class="flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
+          <span>Token</span>
+          {% for tk in b.extracted_tokens %}
+          <span class="badge-mute font-mono text-[11px]">{{ tk }}</span>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+
+      <!-- Nominal & Form Tagging / Matching (Col 8-12) -->
+      <div class="md:col-span-5 rounded-xl border border-slate-200 bg-slate-50 p-3.5 dark:border-slate-800 dark:bg-slate-950/40"
+           x-data="otomaxPicker({{ b.amount_cents }})">
+        <div class="flex items-baseline justify-between mb-2.5 pb-2 border-b border-slate-200 dark:border-slate-700">
+          <span class="text-xs text-slate-600 dark:text-slate-400 font-semibold">Nominal Bank:</span>
+          <span class="money text-base font-semibold text-slate-900 dark:text-white">
+            Rp {{ b.amount|rupiah }}
+          </span>
+        </div>
+
+        <!-- Mode Toggle -->
+        <div class="seg mb-2.5 flex w-full" role="group" aria-label="Cara menyelesaikan">
+          <button type="button" @click="mode = 'pair'" :class="mode === 'pair' && 'seg-item-active'" :aria-pressed="mode === 'pair'"
+                  class="seg-item flex-1 justify-center">
+            <svg class="icon h-3.5 w-3.5"><use href="#i-search"/></svg>Pilih Lawan Otomax
+          </button>
+          <button type="button" @click="mode = 'tag'" :class="mode === 'tag' && 'seg-item-active'" :aria-pressed="mode === 'tag'"
+                  class="seg-item flex-1 justify-center">
+            <svg class="icon h-3.5 w-3.5"><use href="#i-tag"/></svg>Beri Tag Kategori
+          </button>
+        </div>
+
+        <!-- 1. Pasangkan ke Otomax -->
+        <div x-show="mode === 'pair'">
+          <form method="post" action="{% url 'manual-match' %}" class="space-y-2">
+            {% csrf_token %}
+            <input type="hidden" name="book_date" value="{{ book_date|date:'Y-m-d' }}">
+            <input type="hidden" name="bank_id" value="{{ b.id }}">
+            <input type="hidden" name="next_url" value="{{ list_url }}">
+
+            <template x-for="id in selected" :key="id">
+              <input type="hidden" name="otomax_ids" :value="id">
+            </template>
+
+            <div>
+              <div class="flex items-baseline justify-between mb-0.5">
+                <label class="block text-[11px] font-semibold text-slate-600 dark:text-slate-400">Pilih Entri Otomax Lawan:</label>
+                <span class="text-[10px] text-slate-400">bisa lebih dari satu</span>
+              </div>
+              <input type="text" x-model="query" placeholder="Cari reseller / keterangan / nominal..."
+                     class="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
+              <div class="mt-1.5 max-h-56 overflow-y-auto rounded-lg border border-slate-200 bg-white divide-y divide-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:divide-slate-800">
+                <template x-for="c in visible()" :key="c.id">
+                  <label class="flex items-start gap-2 px-2 py-1.5 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800"
+                         :class="isSelected(c.id) ? 'bg-indigo-50 dark:bg-indigo-950/40' : ''"
+                         :title="c.reseller + ' — ' + fmt(c.cents) + ' — ' + c.when + '\n' + c.desc">
+                    <input type="checkbox" class="mt-0.5 rounded text-indigo-600 focus:ring-indigo-500"
+                           :checked="isSelected(c.id)" @change="toggle(c.id)">
+                    <div class="min-w-0 flex-1">
+                      <div class="flex flex-wrap items-center gap-1">
+                        <span class="money font-bold text-xs" :class="c.cents < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-900 dark:text-white'" x-text="fmt(c.cents)"></span>
+                        <span class="text-[11px] font-semibold text-slate-700 dark:text-slate-200" x-text="c.reseller"></span>
+                        <template x-if="c.cents === bankCents"><span class="badge-good text-[10px]">Nominal sama</span></template>
+                        <template x-if="c.tgl_match"><span class="badge-info text-[10px]">Sesuai TGL</span></template>
+                        <template x-if="c.day_gap !== 0"><span class="badge-warn text-[10px]" x-text="gapLabel(c)"></span></template>
+                      </div>
+                      <div class="font-mono text-[10px] text-slate-500 truncate" x-text="c.desc"></div>
+                    </div>
+                  </label>
+                </template>
+                <template x-if="visible().length === 0">
+                  <div class="px-2 py-3 text-center text-[11px] text-slate-400">Tidak ada entri Otomax yang cocok.</div>
+                </template>
+              </div>
+              <button type="button" x-show="hiddenCount() > 0" @click="showAll = true"
+                      class="mt-1 text-[11px] font-medium text-indigo-600 hover:underline"
+                      x-text="'Tampilkan ' + hiddenCount() + ' kandidat lainnya'"></button>
+            </div>
+
+            <div x-show="selected.length" class="rounded-lg px-2.5 py-1.5 text-[11px]"
+                 :class="diffCents() === 0 ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300' : 'bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300'">
+              <div class="flex justify-between">
+                <span x-text="selected.length + ' entri dipilih'"></span>
+                <span class="money font-bold" x-text="'Total ' + fmt(totalCents())"></span>
+              </div>
+              <div class="flex justify-between">
+                <span>Selisih vs bank</span>
+                <span class="money font-bold" x-text="fmt(diffCents())"></span>
+              </div>
+              <p x-show="diffCents() !== 0" class="mt-0.5">Sisa selisih akan tercatat di Daftar Selisih.</p>
+            </div>
+
+            <div>
+              <label class="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-0.5">Catatan (opsional)</label>
+              <input type="text" name="note" placeholder="Misal: Transfer BI-Fast atau setor tunai..."
+                     class="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
+            </div>
+
+            <button type="submit" :disabled="selected.length === 0"
+                    class="btn-primary w-full justify-center py-1.5 text-xs font-bold disabled:opacity-50">
+              <span x-text="selected.length > 1 ? 'Gabungkan & Pasangkan (' + selected.length + ' entri) →' : 'Pasangkan ke Otomax →'"></span>
+            </button>
+          </form>
+        </div>
+
+        <!-- 2. Tagging Form (PRD Section 5 & 9.4) -->
+        <div x-show="mode === 'tag'" style="display: none;">
+          <form method="post" action="{% url 'manual-tag-action' b.id %}" class="space-y-2">
+            {% csrf_token %}
+            <input type="hidden" name="book_date" value="{{ book_date|date:'Y-m-d' }}">
+            <input type="hidden" name="next_url" value="{{ list_url }}">
+
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-0.5">Tag Kategori</label>
+                <select name="tag" required class="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
+                  <option value="">-- Pilih Tag --</option>
+                  {% for tag_val, tag_label in manual_tags %}
+                  <option value="{{ tag_val }}">{{ tag_label }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              <div>
+                <label class="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-0.5">Catatan (opsional)</label>
+                <input type="text" name="note" placeholder="Catatan..."
+                       class="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
+              </div>
+            </div>
+
+            <button type="submit" class="btn-primary w-full justify-center py-1.5 text-xs font-bold">
+              Simpan Tag (Matched Manual)
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% empty %}
+  <div class="card py-12 text-center text-slate-400">
+    <span class="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400"><svg class="icon h-5 w-5"><use href="#i-check"/></svg></span>
+    <div class="font-semibold text-slate-700 dark:text-slate-200">Antrean Review Kosong!</div>
+    <p class="text-xs text-slate-500 mt-1">Semua mutasi bank pada tanggal ini telah cocok atau telah di-tag manual.</p>
+  </div>
+  {% endfor %}
+
+{% if page_obj.has_next %}
+<div hx-get="{{ list_url }}{% if '?' in list_url %}&{% else %}?{% endif %}page={{ page_obj.next_page_number }}"
+     hx-trigger="revealed" hx-swap="outerHTML"
+     class="flex items-center justify-center gap-2 py-4 text-xs text-slate-400">
+  <svg class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+  Memuat mutasi lainnya…
+</div>
+{% elif page_obj.paginator.count > page_obj.paginator.per_page %}
+<p class="py-3 text-center text-[11px] text-slate-400">Semua {{ page_obj.paginator.count }} mutasi sudah ditampilkan.</p>
+{% endif %}
