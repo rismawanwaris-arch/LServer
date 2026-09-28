@@ -3,242 +3,304 @@
 {% block title %}Dashboard {{ book_date }} — RekonMutasi{% endblock %}
 
 {% block content %}
-<!-- Top Header: Tanggal & Kontrol Buku -->
-<div class="mb-6 flex flex-wrap items-center justify-between gap-4">
+{% with d=book_date|date:'Y-m-d' %}
+<!-- Judul halaman -->
+<div class="mb-5 flex flex-wrap items-end justify-between gap-3">
   <div>
-    <div class="flex items-center gap-3">
-      <h1 class="text-2xl md:text-3xl font-bold tracking-tight">Rekonsiliasi {{ book_date|date:"d F Y" }}</h1>
+    <div class="flex flex-wrap items-center gap-2.5">
+      <h1 class="text-2xl font-semibold tracking-tight text-slate-900 dark:text-white">Rekonsiliasi {{ book_date|date:"d F Y" }}</h1>
       {% if day.locked %}
-      <span class="badge-mute">DITUTUP</span>
+      <span class="badge-mute"><svg class="icon h-3 w-3"><use href="#i-lock"/></svg>Ditutup</span>
       {% elif day %}
       <span class="badge-warn">{{ day.get_status_display }}</span>
       {% else %}
-      <span class="badge-mute">DRAFT (Belum Diproses)</span>
+      <span class="badge-mute">Draft · belum diproses</span>
       {% endif %}
     </div>
-    <p class="text-sm text-slate-500 mt-1">
-      Pencocokan mutasi rekening bank vs penambahan saldo Otomax.
+    <p class="mt-1 text-sm text-slate-500 money">
+      {{ bank_count }} mutasi bank · {{ otomax_count }} entri Otomax
     </p>
   </div>
-
-  <div class="flex items-center gap-2">
-    <form method="get" class="flex items-center gap-2">
-      <input type="date" name="d" value="{{ book_date|date:'Y-m-d' }}"
-             class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium shadow-xs focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
-      <button class="btn-ghost">Ganti Tanggal</button>
-    </form>
-  </div>
+  <a href="{% url 'reports' %}?start_date={{ d }}&end_date={{ d }}" class="btn-ghost">
+    <svg class="icon"><use href="#i-file"/></svg>Laporan
+  </a>
 </div>
 
-<!-- Aksi Rekonsiliasi: satu bilah tombol, berurutan sesuai alur kerja harian -->
-<div id="aksi-rekonsiliasi" class="mb-6 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/60">
-  <div class="flex flex-wrap items-center gap-2">
-    <span class="mr-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-500">
-      <svg class="h-4 w-4 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-      Aksi Rekonsiliasi
-    </span>
-    <a href="{% url 'upload' %}?d={{ book_date|date:'Y-m-d' }}" class="btn-ghost py-1.5 text-xs">1. Upload Mutasi / Otomax</a>
-    <form method="post" action="{% url 'run-engine' %}">
-      {% csrf_token %}
-      <input type="hidden" name="book_date" value="{{ book_date|date:'Y-m-d' }}">
-      <button class="btn-primary py-1.5 text-xs" {% if day.locked %}disabled{% endif %}>2. Jalankan Matching Engine</button>
-    </form>
-    {% if day.locked %}
-    <form method="post" action="{% url 'reopen-day' %}" onsubmit="return confirm('Buka kembali buku {{ book_date }}?')">
-      {% csrf_token %}
-      <input type="hidden" name="book_date" value="{{ book_date|date:'Y-m-d' }}">
-      <button class="btn-ghost py-1.5 text-xs text-rose-600 hover:bg-rose-50"
-              {% if not can_reopen %}disabled title="Sudah ada penyesuaian lanjutan"{% endif %}>Buka Kembali Buku</button>
-    </form>
-    {% else %}
-    <form method="post" action="{% url 'close-day' %}" onsubmit="return confirm('Tutup buku {{ book_date }}? Kunci data tanggal ini.')">
-      {% csrf_token %}
-      <input type="hidden" name="book_date" value="{{ book_date|date:'Y-m-d' }}">
-      <button class="btn-secondary py-1.5 text-xs">3. Tutup Buku Harian</button>
-    </form>
-    {% endif %}
-  </div>
+<!-- Aksi Rekonsiliasi: alur kerja harian, satu langkah per kolom -->
+<section id="aksi-rekonsiliasi" aria-label="Aksi Rekonsiliasi" class="card mb-6 p-0">
+  <h2 class="sr-only">Aksi Rekonsiliasi</h2>
+  <ol class="grid divide-y divide-slate-200 dark:divide-slate-800 md:grid-cols-4 md:divide-x md:divide-y-0">
+    <!-- 1. Upload -->
+    <li class="flex items-start gap-3 p-4">
+      {% if bank_count or otomax_count %}
+      <span class="step-dot step-done"><svg class="icon h-3.5 w-3.5"><use href="#i-check"/></svg></span>
+      {% else %}
+      <span class="step-dot step-now">1</span>
+      {% endif %}
+      <div class="min-w-0 flex-1">
+        <div class="text-sm font-semibold">Upload data</div>
+        <div class="text-xs text-slate-500 money">{% if bank_count or otomax_count %}{{ bank_count }} mutasi · {{ otomax_count }} Otomax{% else %}Mutasi bank &amp; Otomax{% endif %}</div>
+        <a href="{% url 'upload' %}?d={{ d }}" class="mt-2 inline-flex text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400">Upload Mutasi / Otomax &rarr;</a>
+      </div>
+    </li>
+
+    <!-- 2. Engine -->
+    <li class="flex items-start gap-3 p-4">
+      {% if engine_ran %}
+      <span class="step-dot step-done"><svg class="icon h-3.5 w-3.5"><use href="#i-check"/></svg></span>
+      {% else %}
+      <span class="step-dot {% if bank_count or otomax_count %}step-now{% endif %}">2</span>
+      {% endif %}
+      <div class="min-w-0 flex-1">
+        <div class="text-sm font-semibold">Matching engine</div>
+        <div class="text-xs text-slate-500 money">
+          {% if engine_ran %}{{ summary.matched_auto_count }} otomatis{% if proposal_count %} · {{ proposal_count }} usulan{% endif %}{% else %}Belum dijalankan{% endif %}
+        </div>
+        <form method="post" action="{% url 'run-engine' %}" class="mt-2">
+          {% csrf_token %}
+          <input type="hidden" name="book_date" value="{{ d }}">
+          <button class="{% if engine_ran %}btn-ghost{% else %}btn-primary{% endif %} px-2.5 py-1 text-xs" {% if day.locked %}disabled{% endif %}>
+            <svg class="icon h-3.5 w-3.5"><use href="#i-play"/></svg>{% if engine_ran %}Jalankan Ulang{% else %}Jalankan Matching Engine{% endif %}
+          </button>
+        </form>
+      </div>
+    </li>
+
+    <!-- 3. Tinjau -->
+    <li class="flex items-start gap-3 p-4">
+      {% if engine_ran and not remaining_count %}
+      <span class="step-dot step-done"><svg class="icon h-3.5 w-3.5"><use href="#i-check"/></svg></span>
+      {% else %}
+      <span class="step-dot {% if engine_ran and not day.locked %}step-now{% endif %}">3</span>
+      {% endif %}
+      <div class="min-w-0 flex-1">
+        <div class="text-sm font-semibold">Tinjau &amp; selesaikan</div>
+        <div class="text-xs text-slate-500 money">
+          {% if not engine_ran %}Setelah engine jalan{% elif remaining_count %}{{ remaining_count }} item tersisa{% else %}Semua beres{% endif %}
+        </div>
+        {% if engine_ran and remaining_count %}
+        <a href="{% if proposal_count %}{% url 'matches' %}?d={{ d }}&tab=review{% elif summary.unmatched_bank_count %}{% url 'manual-review' %}?d={{ d }}{% elif pending_settle_count %}{% url 'pending-settle' %}?d={{ d }}{% else %}{% url 'discrepancy-list' %}?d={{ d }}{% endif %}"
+           class="mt-2 inline-flex text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400">Mulai tinjau &rarr;</a>
+        {% endif %}
+      </div>
+    </li>
+
+    <!-- 4. Tutup buku -->
+    <li class="flex items-start gap-3 p-4">
+      {% if day.locked %}
+      <span class="step-dot step-done"><svg class="icon h-3.5 w-3.5"><use href="#i-lock"/></svg></span>
+      {% else %}
+      <span class="step-dot {% if engine_ran and not remaining_count %}step-now{% endif %}"><svg class="icon h-3.5 w-3.5"><use href="#i-lock"/></svg></span>
+      {% endif %}
+      <div class="min-w-0 flex-1">
+        <div class="text-sm font-semibold">Tutup buku</div>
+        <div class="text-xs text-slate-500">{% if day.locked %}Data tanggal ini terkunci{% else %}Kunci data tanggal ini{% endif %}</div>
+        {% if day.locked %}
+        <form method="post" action="{% url 'reopen-day' %}" class="mt-2" onsubmit="return confirm('Buka kembali buku {{ book_date }}?')">
+          {% csrf_token %}
+          <input type="hidden" name="book_date" value="{{ d }}">
+          <button class="btn-ghost px-2.5 py-1 text-xs text-rose-600 dark:text-rose-400"
+                  {% if not can_reopen %}disabled title="Sudah ada penyesuaian lanjutan"{% endif %}>Buka Kembali Buku</button>
+        </form>
+        {% else %}
+        <form method="post" action="{% url 'close-day' %}" class="mt-2" onsubmit="return confirm('Tutup buku {{ book_date }}? Kunci data tanggal ini.')">
+          {% csrf_token %}
+          <input type="hidden" name="book_date" value="{{ d }}">
+          <button class="{% if engine_ran and not remaining_count %}btn-secondary{% else %}btn-ghost{% endif %} px-2.5 py-1 text-xs">Tutup Buku Harian</button>
+        </form>
+        {% endif %}
+      </div>
+    </li>
+  </ol>
   {% if carried_open %}
-  <p class="mt-2 text-xs text-amber-700 dark:text-amber-300">
-    Ada <b>{{ carried_open|length }}</b> selisih OPEN dari hari sebelumnya yang ikut dicocokkan otomatis (carry-forward).
+  <p class="flex items-center gap-2 border-t border-slate-200 px-4 py-2.5 text-xs text-amber-700 dark:border-slate-800 dark:text-amber-400">
+    <svg class="icon h-3.5 w-3.5"><use href="#i-info"/></svg>
+    Ada <b class="money">{{ carried_open|length }}</b> selisih OPEN dari hari sebelumnya yang ikut dicocokkan otomatis (carry-forward).
   </p>
   {% endif %}
-</div>
+</section>
 
-<!-- Alarms if any -->
+<!-- Peringatan -->
 {% if alarms %}
-<div class="card mb-6 border-rose-300 bg-rose-50/90 dark:border-rose-900/60 dark:bg-rose-950/40 p-4">
-  <div class="flex flex-wrap items-center justify-between gap-3">
-    <div class="flex items-center gap-3">
-      <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-rose-100 text-rose-600 dark:bg-rose-900/50 dark:text-rose-300">
-        <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-      </div>
-      <div>
-        <div class="text-sm font-bold text-rose-900 dark:text-rose-200">
-          {{ alarms|length }} Transaksi Melewati Batas Waktu SLA Alarm
-        </div>
-        <div class="text-xs text-rose-700 dark:text-rose-400">
-          Terdapat mutasi atau penambahan saldo yang belum terselesaikan lebih dari 3 hari dari tanggal buku.
-        </div>
-      </div>
-    </div>
-    <div class="flex items-center gap-2">
-      <a href="{% url 'discrepancy-list' %}" class="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white shadow-xs hover:bg-rose-500">
-        Lihat Daftar Selisih &rarr;
-      </a>
-      <a href="/review-manual/?d={{ book_date|date:'Y-m-d' }}" class="btn-ghost text-xs py-1.5 border border-rose-300 dark:border-rose-800">
-        Review Manual
-      </a>
-    </div>
+<div class="callout callout-crit mb-4">
+  <svg class="icon mt-0.5 h-5 w-5"><use href="#i-alert"/></svg>
+  <div class="flex-1">
+    <div class="font-semibold">{{ alarms|length }} Transaksi Melewati Batas Waktu SLA Alarm</div>
+    <div class="text-xs opacity-90">Ada mutasi atau penambahan saldo yang belum terselesaikan lebih dari 3 hari dari tanggal buku.</div>
+  </div>
+  <div class="flex flex-wrap items-center gap-2">
+    <a href="{% url 'discrepancy-list' %}" class="btn-danger px-2.5 py-1 text-xs">Lihat Daftar Selisih &rarr;</a>
+    <a href="{% url 'manual-review' %}?d={{ d }}" class="btn-ghost px-2.5 py-1 text-xs">Review Manual</a>
   </div>
 </div>
 {% endif %}
 
 {% if proposal_count %}
-<div class="card mb-6 border-amber-300 bg-amber-50/90 dark:border-amber-900/60 dark:bg-amber-950/40 p-4">
-  <div class="flex flex-wrap items-center justify-between gap-3">
-    <div>
-      <div class="text-sm font-bold text-amber-900 dark:text-amber-200">
-        ⏳ {{ proposal_count }} usulan pencocokan menunggu konfirmasi
-      </div>
-      <div class="text-xs text-amber-700 dark:text-amber-400">
-        Pasangan dari mesin yang belum final (gabungan tiket, cocok nominal saja, atau teks mirip). Tutup buku ditolak sampai semuanya disetujui atau ditolak.
-      </div>
-    </div>
-    <a href="{% url 'matches' %}?d={{ book_date|date:'Y-m-d' }}&tab=review"
-       class="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white shadow-xs hover:bg-amber-500">
-      Cek Usulan &rarr;
-    </a>
+<div class="callout callout-warn mb-4">
+  <svg class="icon mt-0.5 h-5 w-5"><use href="#i-clock"/></svg>
+  <div class="flex-1">
+    <div class="font-semibold money">{{ proposal_count }} usulan pencocokan menunggu konfirmasi</div>
+    <div class="text-xs opacity-90">Pasangan dari mesin yang belum final (gabungan tiket, cocok nominal saja, atau teks mirip). Tutup buku ditolak sampai semuanya disetujui atau ditolak.</div>
   </div>
+  <a href="{% url 'matches' %}?d={{ d }}&tab=review" class="btn-primary px-2.5 py-1 text-xs">Cek Usulan &rarr;</a>
 </div>
 {% endif %}
 
-<!-- Ringkasan Hari Ini -->
-<h2 class="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">Ringkasan Hari Ini</h2>
-<div class="grid gap-4 sm:grid-cols-3 mb-6">
-  <div class="card border-l-4 border-l-blue-500">
-    <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Uang Masuk Bank</div>
-    <div class="money mt-2 text-2xl font-bold text-slate-900 dark:text-white">Rp {{ summary.total_bank|rupiah }}</div>
-    <div class="mt-2 text-xs text-slate-500">BRI, BCA, Mandiri &amp; Merchant BCA</div>
-  </div>
-
-  <div class="card border-l-4 border-l-indigo-500">
-    <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Transaksi Otomax</div>
-    <div class="money mt-2 text-2xl font-bold text-slate-900 dark:text-white">Rp {{ summary.total_otomax|rupiah }}</div>
-    <div class="mt-2 text-xs text-slate-500">Top-up tarik tunai reseller</div>
-  </div>
-
-  <div class="card border-l-4 border-l-emerald-500">
-    <div class="flex items-center justify-between">
-      <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Sudah Cocok</div>
-      <span class="badge-good">{{ matched_total_count }} pasangan</span>
+<!-- Ringkasan hari ini -->
+<h2 class="section-title mt-6">Ringkasan hari ini</h2>
+<div class="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+  <div class="card flex flex-col gap-2.5 p-4">
+    <div class="kpi-label"><span class="h-2 w-2 rounded-sm bg-indigo-600"></span>Uang masuk bank</div>
+    <div class="kpi-value money"><span class="kpi-unit">Rp</span>{{ summary.total_bank|rupiah }}</div>
+    <div class="flex h-1.5 gap-0.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800" aria-hidden="true">
+      {% for r in bank_rows %}{% if r.share %}<span style="width: {{ r.share }}%; background: {{ r.color }}"></span>{% endif %}{% endfor %}
     </div>
-    <div class="money mt-2 text-2xl font-bold text-emerald-600">Rp {{ matched_total_amount|rupiah }}</div>
-    <div class="mt-2 flex items-center justify-between gap-2 text-xs text-slate-500">
-      <span>Otomatis {{ summary.matched_auto_count }} · manual/tag {{ summary.matched_manual_count }}</span>
-      <a href="{% url 'matches' %}?d={{ book_date|date:'Y-m-d' }}" class="shrink-0 whitespace-nowrap font-medium text-indigo-600 hover:underline">Hasil Cocok &rarr;</a>
+    <div class="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500">
+      {% for r in bank_rows %}
+      <span class="inline-flex items-center gap-1.5 money"><span class="h-1.5 w-1.5 rounded-sm" style="background: {{ r.color }}"></span>{{ r.label }} {{ r.share }}%</span>
+      {% endfor %}
     </div>
   </div>
+
+  <div class="card flex flex-col gap-2.5 p-4">
+    <div class="kpi-label"><span class="h-2 w-2 rounded-sm bg-violet-600"></span>Transaksi Otomax</div>
+    <div class="kpi-value money"><span class="kpi-unit">Rp</span>{{ summary.total_otomax|rupiah }}</div>
+    <div class="mt-auto text-xs text-slate-500">Top-up tarik tunai reseller</div>
+  </div>
+
+  <a href="{% url 'matches' %}?d={{ d }}" class="card card-link flex flex-col gap-2.5 p-4 sm:col-span-2 lg:col-span-1">
+    <div class="kpi-label">
+      <span class="h-2 w-2 rounded-sm bg-emerald-500"></span>Sudah cocok
+      <span class="badge-good ml-auto money">{{ matched_total_count }} pasangan</span>
+    </div>
+    <div class="kpi-value money"><span class="kpi-unit">Rp</span>{{ matched_total_amount|rupiah }}</div>
+    {% if matched_rate is not None %}
+    <div class="h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800" aria-label="{{ matched_rate }}% uang masuk sudah cocok">
+      <span class="block h-full rounded-full bg-emerald-500" style="width: {{ matched_rate }}%"></span>
+    </div>
+    {% endif %}
+    <div class="flex items-center justify-between gap-2 text-xs text-slate-500">
+      <span class="money">Otomatis {{ summary.matched_auto_count }} · manual/tag {{ summary.matched_manual_count }}</span>
+      {% if matched_rate is not None %}<b class="money text-emerald-600 dark:text-emerald-400">{{ matched_rate }}%</b>{% endif %}
+    </div>
+  </a>
 </div>
 
-<!-- Belum Cocok: perlu tindakan operator -->
+<!-- Belum cocok -->
 <div class="mb-2 flex flex-wrap items-baseline justify-between gap-2">
-  <h2 class="text-xs font-bold uppercase tracking-wider text-slate-500">Belum Cocok — Perlu Tindakan</h2>
+  <h2 class="section-title mb-0">Belum Cocok — Perlu Tindakan</h2>
   <span class="text-xs text-slate-500">
     Selisih bersih (Bank − Otomax):
-    <b class="money {% if summary.selisih == 0 %}text-emerald-600{% else %}text-rose-600{% endif %}">Rp {{ summary.selisih|rupiah }}</b>
+    <b class="money {% if summary.selisih == 0 %}text-emerald-600 dark:text-emerald-400{% else %}text-rose-600 dark:text-rose-400{% endif %}">Rp {{ summary.selisih|rupiah }}</b>
   </span>
 </div>
-<div class="grid gap-4 sm:grid-cols-3 mb-6">
-  <div class="card border-l-4 {% if summary.unmatched_bank_count %}border-l-amber-500{% else %}border-l-emerald-500{% endif %}">
-    <div class="flex items-center justify-between">
-      <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Selisih Bank</div>
-      <span class="{% if summary.unmatched_bank_count %}badge-warn{% else %}badge-good{% endif %}">{{ summary.unmatched_bank_count }} mutasi</span>
+<div class="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+  <a href="{% url 'manual-review' %}?d={{ d }}" class="card card-link todo-card">
+    <span class="todo-icon {% if summary.unmatched_bank_count %}bg-indigo-50 text-indigo-600 dark:bg-indigo-500/15 dark:text-indigo-300{% else %}bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400{% endif %}">
+      <svg class="icon h-[18px] w-[18px]"><use href="#{% if summary.unmatched_bank_count %}i-search{% else %}i-check{% endif %}"/></svg>
+    </span>
+    <div class="min-w-0 flex-1">
+      <div class="flex items-center gap-2 text-sm font-semibold">Selisih bank
+        <span class="{% if summary.unmatched_bank_count %}badge-warn{% else %}badge-good{% endif %} money">{{ summary.unmatched_bank_count }} mutasi</span>
+      </div>
+      <div class="money mt-1 text-lg font-semibold {% if summary.unmatched_bank_count %}text-slate-900 dark:text-white{% else %}text-emerald-600 dark:text-emerald-400{% endif %}">Rp {{ summary.unmatched_bank_amount|rupiah }}</div>
+      <div class="text-xs text-slate-500">Uang masuk, belum ada pasangan Otomax · <span class="font-medium text-slate-700 dark:text-slate-300">Review Manual</span></div>
     </div>
-    <div class="money mt-2 text-2xl font-bold {% if summary.unmatched_bank_count %}text-amber-600{% else %}text-emerald-600{% endif %}">Rp {{ summary.unmatched_bank_amount|rupiah }}</div>
-    <div class="mt-2 flex items-center justify-between gap-2 text-xs text-slate-500">
-      <span>Uang masuk, belum ada pasangan Otomax</span>
-      <a href="{% url 'manual-review' %}?d={{ book_date|date:'Y-m-d' }}" class="shrink-0 whitespace-nowrap font-medium text-amber-600 hover:underline">Review Manual &rarr;</a>
-    </div>
-  </div>
+    <svg class="icon text-slate-400"><use href="#i-right"/></svg>
+  </a>
 
-  <div class="card border-l-4 {% if pending_settle_count %}border-l-purple-500{% else %}border-l-emerald-500{% endif %}">
-    <div class="flex items-center justify-between">
-      <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Selisih Otomax</div>
-      <span class="{% if pending_settle_count %}badge-mute{% else %}badge-good{% endif %}">{{ pending_settle_count }} entri</span>
+  <a href="{% url 'pending-settle' %}?d={{ d }}" class="card card-link todo-card">
+    <span class="todo-icon {% if pending_settle_count %}bg-violet-50 text-violet-600 dark:bg-violet-500/15 dark:text-violet-300{% else %}bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400{% endif %}">
+      <svg class="icon h-[18px] w-[18px]"><use href="#{% if pending_settle_count %}i-clock{% else %}i-check{% endif %}"/></svg>
+    </span>
+    <div class="min-w-0 flex-1">
+      <div class="flex items-center gap-2 text-sm font-semibold">Selisih Otomax
+        <span class="{% if pending_settle_count %}badge-warn{% else %}badge-good{% endif %} money">{{ pending_settle_count }} entri</span>
+      </div>
+      <div class="money mt-1 text-lg font-semibold {% if pending_settle_count %}text-slate-900 dark:text-white{% else %}text-emerald-600 dark:text-emerald-400{% endif %}">Rp {{ pending_settle_amount|rupiah }}</div>
+      <div class="text-xs text-slate-500">Otomax dientri, uang belum ditemukan · <span class="font-medium text-slate-700 dark:text-slate-300">Pending Settle</span></div>
     </div>
-    <div class="money mt-2 text-2xl font-bold {% if pending_settle_count %}text-purple-600{% else %}text-emerald-600{% endif %}">Rp {{ pending_settle_amount|rupiah }}</div>
-    <div class="mt-2 flex items-center justify-between gap-2 text-xs text-slate-500">
-      <span>Otomax dientri, uang belum ditemukan</span>
-      <a href="{% url 'pending-settle' %}?d={{ book_date|date:'Y-m-d' }}" class="shrink-0 whitespace-nowrap font-medium text-purple-600 hover:underline">Pending Settle &rarr;</a>
-    </div>
-  </div>
+    <svg class="icon text-slate-400"><use href="#i-right"/></svg>
+  </a>
 
-  <div class="card border-l-4 {% if summary.amount_diff_count %}border-l-rose-500{% else %}border-l-emerald-500{% endif %}">
-    <div class="flex items-center justify-between">
-      <div class="text-xs font-semibold uppercase tracking-wider text-slate-500">Selisih Nominal</div>
-      <span class="{% if summary.amount_diff_count %}badge-warn{% else %}badge-good{% endif %}">{{ summary.amount_diff_count }} pasangan</span>
+  <a href="{% url 'discrepancy-list' %}?d={{ d }}" class="card card-link todo-card sm:col-span-2 lg:col-span-1">
+    <span class="todo-icon {% if summary.amount_diff_count %}bg-rose-50 text-rose-600 dark:bg-rose-500/15 dark:text-rose-300{% else %}bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400{% endif %}">
+      <svg class="icon h-[18px] w-[18px]"><use href="#{% if summary.amount_diff_count %}i-alert{% else %}i-check{% endif %}"/></svg>
+    </span>
+    <div class="min-w-0 flex-1">
+      <div class="flex items-center gap-2 text-sm font-semibold">Selisih nominal
+        <span class="{% if summary.amount_diff_count %}badge-crit{% else %}badge-good{% endif %} money">{{ summary.amount_diff_count }} pasangan</span>
+      </div>
+      <div class="money mt-1 text-lg font-semibold {% if summary.amount_diff_count %}text-rose-600 dark:text-rose-400{% else %}text-emerald-600 dark:text-emerald-400{% endif %}">Rp {{ summary.amount_diff_amount|rupiah }}</div>
+      <div class="text-xs text-slate-500">Sudah dipasangkan, nominal beda · <span class="font-medium text-slate-700 dark:text-slate-300">Daftar Selisih</span></div>
     </div>
-    <div class="money mt-2 text-2xl font-bold {% if summary.amount_diff_count %}text-rose-600{% else %}text-emerald-600{% endif %}">Rp {{ summary.amount_diff_amount|rupiah }}</div>
-    <div class="mt-2 flex items-center justify-between gap-2 text-xs text-slate-500">
-      <span>Sudah dipasangkan, nominal beda</span>
-      <a href="{% url 'discrepancy-list' %}?d={{ book_date|date:'Y-m-d' }}" class="shrink-0 whitespace-nowrap font-medium text-rose-600 hover:underline">Daftar Selisih &rarr;</a>
-    </div>
-  </div>
+    <svg class="icon text-slate-400"><use href="#i-right"/></svg>
+  </a>
 </div>
 
-<!-- Rekap Per Bank Table -->
-<div class="card mb-6">
-  <div class="flex items-center justify-between mb-4">
-    <h2 class="font-bold text-slate-900 dark:text-white">Rekapitulasi Per Bank</h2>
-    <a href="{% url 'reports' %}?start_date={{ book_date|date:'Y-m-d' }}&end_date={{ book_date|date:'Y-m-d' }}" class="text-xs text-indigo-600 hover:underline">
-      Laporan Lengkap &rarr;
-    </a>
+<!-- Rekap per bank -->
+<div class="card mb-6 overflow-hidden p-0">
+  <div class="flex items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+    <h2 class="text-sm font-semibold">Rekapitulasi Per Bank</h2>
+    <a href="{% url 'reports' %}?start_date={{ d }}&end_date={{ d }}" class="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400">Laporan Lengkap &rarr;</a>
   </div>
-
   <div class="overflow-x-auto">
     <table class="w-full text-sm">
       <thead>
         <tr>
-          <th class="whitespace-nowrap">Channel Bank</th>
-          <th class="text-right whitespace-nowrap">Masuk Bank</th>
-          <th class="text-right whitespace-nowrap">Total Otomax</th>
-          <th class="text-right whitespace-nowrap">Matched Auto</th>
-          <th class="text-right whitespace-nowrap">Tag Manual</th>
-          <th class="text-right whitespace-nowrap">Selisih Belum Di-Tag</th>
+          <th>Bank</th>
+          <th class="text-right">Masuk Bank</th>
+          <th class="text-right">Total Otomax</th>
+          <th class="text-right">Cocok Otomatis</th>
+          <th class="text-right">Tag Manual</th>
+          <th>Tingkat Cocok</th>
+          <th class="text-right">Belum Cocok</th>
         </tr>
       </thead>
       <tbody>
-        {% for ch, d in summary.per_bank.items %}
+        {% for r in bank_rows %}
         <tr>
-          <td class="font-semibold text-slate-800 dark:text-slate-200 whitespace-nowrap">{{ ch }}</td>
-          <td class="money text-right whitespace-nowrap">Rp {{ d.total|rupiah }}</td>
-          <td class="money text-right text-purple-600 dark:text-purple-400 font-medium whitespace-nowrap">
-            Rp {{ d.otomax_total|rupiah }}
-            {% if d.otomax_count > 0 %}
-            <span class="text-[11px] font-normal text-slate-400">({{ d.otomax_count }})</span>
-            {% endif %}
+          <td class="whitespace-nowrap">
+            <span class="inline-flex items-center gap-2 font-medium text-slate-900 dark:text-slate-100">
+              <span class="h-2 w-2 rounded-sm" style="background: {{ r.color }}"></span>{{ r.label }}
+            </span>
           </td>
-          <td class="money text-right text-emerald-600 font-medium whitespace-nowrap">Rp {{ d.matched_auto|rupiah }}</td>
-          <td class="money text-right text-slate-600 whitespace-nowrap">Rp {{ d.matched_manual|rupiah }}</td>
-          <td class="money text-right font-semibold whitespace-nowrap {% if d.unmatched > 0 %}text-amber-600{% else %}text-slate-400{% endif %}">
-            Rp {{ d.unmatched|rupiah }}
-            {% if d.unmatched_count > 0 %}
-            <span class="text-[11px] font-normal text-slate-400">({{ d.unmatched_count }})</span>
-            {% endif %}
+          <td class="money whitespace-nowrap text-right">Rp {{ r.total|rupiah }}</td>
+          <td class="money whitespace-nowrap text-right text-slate-600 dark:text-slate-300">
+            Rp {{ r.otomax_total|rupiah }}{% if r.otomax_count %} <span class="text-[11px] text-slate-400">({{ r.otomax_count }})</span>{% endif %}
+          </td>
+          <td class="money whitespace-nowrap text-right">Rp {{ r.matched_auto|rupiah }}</td>
+          <td class="money whitespace-nowrap text-right text-slate-600 dark:text-slate-300">Rp {{ r.matched_manual|rupiah }}</td>
+          <td class="min-w-[150px]">
+            {% if r.rate is not None %}
+            <div class="flex items-center gap-2.5">
+              <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                <span class="block h-full rounded-full {% if r.rate == 100 %}bg-emerald-500{% elif r.rate >= 90 %}bg-emerald-400{% else %}bg-amber-500{% endif %}" style="width: {{ r.rate }}%"></span>
+              </div>
+              <span class="money w-9 text-right text-xs text-slate-600 dark:text-slate-300">{{ r.rate }}%</span>
+            </div>
+            {% else %}<span class="text-xs text-slate-400">—</span>{% endif %}
+          </td>
+          <td class="whitespace-nowrap text-right">
+            {% if r.unmatched_count %}
+            <span class="money font-medium text-amber-700 dark:text-amber-400">Rp {{ r.unmatched|rupiah }}</span>
+            <span class="badge-warn ml-1 money">{{ r.unmatched_count }}</span>
+            {% elif r.total %}
+            <span class="badge-good">Beres</span>
+            {% else %}<span class="text-xs text-slate-400">—</span>{% endif %}
           </td>
         </tr>
         {% endfor %}
         {% if summary.otomax_lain_lain.otomax_count > 0 %}
-        <tr class="bg-slate-50/60 dark:bg-slate-800/40">
-          <td class="font-semibold text-slate-500 dark:text-slate-400 italic whitespace-nowrap">Lain-lain (Tanpa Channel)</td>
-          <td class="money text-right text-slate-400">—</td>
-          <td class="money text-right text-purple-600 dark:text-purple-400 font-medium whitespace-nowrap">
-            Rp {{ summary.otomax_lain_lain.otomax_total|rupiah }}
-            <span class="text-[11px] font-normal text-slate-400">({{ summary.otomax_lain_lain.otomax_count }})</span>
+        <tr class="bg-slate-50/60 dark:bg-slate-800/30">
+          <td class="whitespace-nowrap italic text-slate-500">Lain-lain (Tanpa Channel)</td>
+          <td class="text-right text-slate-400">—</td>
+          <td class="money whitespace-nowrap text-right text-slate-600 dark:text-slate-300">
+            Rp {{ summary.otomax_lain_lain.otomax_total|rupiah }} <span class="text-[11px] text-slate-400">({{ summary.otomax_lain_lain.otomax_count }})</span>
           </td>
           <td class="text-right text-slate-400">—</td>
           <td class="text-right text-slate-400">—</td>
+          <td class="text-slate-400">—</td>
           <td class="text-right text-slate-400">—</td>
         </tr>
         {% endif %}
@@ -246,10 +308,10 @@
     </table>
   </div>
   {% if summary.otomax_lain_lain.otomax_count > 0 %}
-  <p class="text-[11px] text-slate-400 mt-2">
+  <p class="border-t border-slate-200 px-4 py-2.5 text-[11px] text-slate-500 dark:border-slate-800">
     "Lain-lain" = entri Otomax tanpa keterangan channel bank yang jelas (mis. biaya admin, setor/ambil setoran) — tidak masuk kategori BRI/BCA/Mandiri/Merchant BCA manapun.
   </p>
   {% endif %}
 </div>
-
+{% endwith %}
 {% endblock %}

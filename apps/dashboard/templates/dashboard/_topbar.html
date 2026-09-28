@@ -14,10 +14,15 @@
     <a href="{{ prev_url }}" class="date-stepper-btn" aria-label="Hari sebelumnya" title="Hari sebelumnya">
       <svg class="icon"><use href="#i-left"/></svg>
     </a>
-    <span class="date-stepper-label money">
+    <!-- Klik label untuk lompat ke tanggal mana pun -->
+    <label class="date-stepper-label money relative cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800" title="Pilih tanggal">
       <svg class="icon h-3.5 w-3.5 text-slate-400"><use href="#i-cal"/></svg>
       {{ work_date|date:"D, d M Y" }}
-    </span>
+      <input type="date" value="{{ work_date|date:'Y-m-d' }}" aria-label="Pilih tanggal buku"
+             class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+             onclick="try { this.showPicker(); } catch (e) {}"
+             onchange="if (this.value) { var u = new URL(location.href); u.searchParams.set('d', this.value); u.searchParams.delete('page'); location.href = u; }">
+    </label>
     <a href="{{ next_url }}" class="date-stepper-btn" aria-label="Hari berikutnya" title="Hari berikutnya">
       <svg class="icon"><use href="#i-right"/></svg>
     </a>

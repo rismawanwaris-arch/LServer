@@ -16,6 +16,12 @@
       try { t = localStorage.getItem('theme'); } catch (e) {}
       var dark = t === 'dark' || (t !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
       document.documentElement.classList.toggle('dark', dark);
+      // Mode "ikuti sistem": ikut berganti saat tema perangkat berubah.
+      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function (e) {
+        var cur = null;
+        try { cur = localStorage.getItem('theme'); } catch (err) {}
+        if (!cur) document.documentElement.classList.toggle('dark', e.matches);
+      });
     })();
     function themeToggle() {
       var read = function () { try { return localStorage.getItem('theme') || 'system'; } catch (e) { return 'system'; } };
@@ -143,6 +149,21 @@
       .date-stepper { @apply inline-flex h-8 items-center overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_1px_2px_rgba(16,24,40,0.05)] dark:border-slate-700 dark:bg-slate-900; }
       .date-stepper-btn { @apply flex h-full w-8 items-center justify-center text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus-visible:bg-slate-100 dark:hover:bg-slate-800 dark:hover:text-white dark:focus-visible:bg-slate-800; }
       .date-stepper-label { @apply flex h-full items-center gap-1.5 whitespace-nowrap border-x border-slate-200 px-2.5 text-[13px] font-semibold text-slate-900 dark:border-slate-700 dark:text-slate-100; }
+
+      /* Blok halaman */
+      .section-title { @apply mb-2 text-[13px] font-semibold text-slate-700 dark:text-slate-300; }
+      .card-link { @apply transition duration-150 hover:-translate-y-px hover:border-slate-300 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:hover:border-slate-700; }
+      .kpi-label { @apply flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400; }
+      .kpi-value { @apply text-2xl font-semibold tracking-tight text-slate-900 dark:text-white; }
+      .kpi-unit { @apply mr-1 text-sm font-medium text-slate-500; }
+      .todo-card { @apply flex items-center gap-3.5 p-4; }
+      .todo-icon { @apply flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg; }
+      .step-dot { @apply flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full border border-slate-300 text-xs font-semibold text-slate-500 dark:border-slate-700 dark:text-slate-400; }
+      .step-done { @apply border-transparent bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400; }
+      .step-now { @apply border-transparent bg-slate-900 text-white dark:bg-white dark:text-slate-900; }
+      .callout { @apply flex flex-wrap items-start gap-3 rounded-xl border px-4 py-3 text-sm sm:flex-nowrap sm:items-center; }
+      .callout-crit { @apply border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200; }
+      .callout-warn { @apply border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200; }
     }
   </style>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/htmx/2.0.3/htmx.min.js" defer></script>
