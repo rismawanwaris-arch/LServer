@@ -9,7 +9,7 @@ from .app_settings import app_settings_view, update_app_settings_action
 from .backup import backup_view, download_backup_action, restore_confirm_action, restore_preview_action
 from .data_admin import data_admin, purge_all_view, purge_day_view
 from .day import day_view
-from .discrepancies import discrepancy_list_view
+from .discrepancies import discrepancy_detail_view, discrepancy_list_view
 from .engine_control import close_view, reopen_view, resolve_view, run_engine
 from .exclusion_rules import (
     add_exclusion_rule_action,
@@ -52,6 +52,7 @@ __all__ = [
     "delete_batch_action",
     "delete_exclusion_rule_action",
     "delete_reseller_action",
+    "discrepancy_detail_view",
     "discrepancy_list_view",
     "download_backup_action",
     "edit_reseller_action",

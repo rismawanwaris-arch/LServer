@@ -1,0 +1,99 @@
+{% load money %}
+{% for d in page_obj.object_list %}
+        <!-- Main Row -->
+        <tr data-disc-id="{{ d.pk }}" @click="toggle('{{ d.pk }}')"
+            class="cursor-pointer select-none"
+            :class="isOpen('{{ d.pk }}') ? '!bg-slate-50 dark:!bg-slate-800/50' : ''">
+          <td class="w-8 px-2 text-center text-slate-400">
+            <svg class="icon transition-transform duration-200" :class="isOpen('{{ d.pk }}') ? 'rotate-90 text-slate-900 dark:text-white' : ''"><use href="#i-right"/></svg>
+          </td>
+          <td class="whitespace-nowrap font-mono text-xs font-medium text-slate-900 dark:text-slate-100">{{ d.code }}</td>
+          <td class="money whitespace-nowrap text-xs text-slate-600 dark:text-slate-300">{{ d.origin_book_date|date:"d M Y" }}</td>
+          <td><span class="badge-info">{{ d.get_channel_display }}</span></td>
+          <td>
+            <!-- Quick Glance: Reseller / Outlet -->
+            {% if d.otomax_entry and d.otomax_entry.reseller_name_raw %}
+              <div class="flex items-center gap-1.5 max-w-[240px] truncate" title="Reseller: {{ d.otomax_entry.reseller_name_raw }}">
+                <span class="badge shrink-0 bg-violet-50 px-1.5 text-[10px] text-violet-700 ring-violet-600/20 dark:bg-violet-500/10 dark:text-violet-300 dark:ring-violet-500/25">RSL</span>
+                <span class="text-xs font-medium text-slate-800 dark:text-slate-200 truncate">{{ d.otomax_entry.reseller_name_raw }}</span>
+              </div>
+            {% elif d.bank_mutation and d.bank_mutation.outlet_name %}
+              <div class="flex items-center gap-1.5 max-w-[240px] truncate" title="Outlet: {{ d.bank_mutation.outlet_name }}">
+                <span class="badge-info shrink-0 px-1.5 text-[10px]">OUTLET</span>
+                <span class="text-xs font-medium text-slate-800 dark:text-slate-200 truncate">{{ d.bank_mutation.outlet_name }}</span>
+              </div>
+            {% elif d.bank_mutation and d.bank_mutation.ref_core %}
+              <span class="text-xs font-mono text-slate-500 truncate max-w-[200px] block" title="{{ d.bank_mutation.ref_core }}">{{ d.bank_mutation.ref_core }}</span>
+            {% elif d.bank_mutation and d.bank_mutation.description_raw %}
+              <span class="text-xs text-slate-500 truncate max-w-[200px] block" title="{{ d.bank_mutation.description_raw }}">{{ d.bank_mutation.description_raw|truncatechars:35 }}</span>
+            {% else %}
+              <span class="text-xs text-slate-400 italic">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if d.kind == 'BANK_ONLY' %}<span class="badge-warn">bank only</span>
+            {% elif d.kind == 'OTOMAX_ONLY' %}<span class="badge-crit">otomax only</span>
+            {% elif d.kind == 'AMOUNT_DIFF' %}<span class="badge-warn" title="Sudah dipasangkan tapi nominal beda. Tutup lewat Pending Settle → Pilih Lawan Bank → 'Masih Selisih' begitu Otomax direvisi.">nominal beda · {% if d.amount < 0 %}Otomax lebih{% else %}Otomax kurang{% endif %}</span>
+            {% else %}<span class="badge-mute">{{ d.kind }}</span>{% endif %}
+          </td>
+          <td class="money whitespace-nowrap text-right font-semibold {% if d.amount < 0 %}text-rose-600 dark:text-rose-400{% else %}text-slate-900 dark:text-white{% endif %}">Rp&nbsp;{{ d.amount|rupiah }}</td>
+          <td class="whitespace-nowrap">
+            {% if d.status == 'OPEN' %}<span class="badge-warn"><span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>Terbuka</span>
+            {% elif d.status == 'RESOLVED' %}<span class="badge-good">Selesai</span>
+            {% else %}<span class="badge-mute">Write-off</span>{% endif %}
+            {% if d.resolved_book_date %}<span class="money text-xs text-slate-400">· {{ d.resolved_book_date|date:"d M" }}</span>{% endif %}
+          </td>
+          <td class="text-right whitespace-nowrap" @click.stop>
+            <div class="flex items-center justify-end gap-2">
+              <button type="button" @click="toggle('{{ d.pk }}')"
+                      class="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+                <span x-text="isOpen('{{ d.pk }}') ? 'Tutup' : 'Detail'"></span>
+              </button>
+              {% if d.status == 'OPEN' %}
+              <span class="text-slate-300 dark:text-slate-600">|</span>
+              <form method="post" action="{% url 'resolve' d.pk %}" class="inline"
+                    onsubmit="return confirm('Hapus buku {{ d.code }}?')">
+                {% csrf_token %}
+                <input type="hidden" name="book_date" value="{{ d.origin_book_date|date:'Y-m-d' }}">
+                <input type="hidden" name="action" value="write_off">
+                <input type="hidden" name="next_url" value="{{ list_url }}">
+                <button class="text-xs text-slate-500 hover:text-rose-600">hapus buku</button>
+              </form>
+              {% else %}
+              <span class="text-slate-400 text-xs">—</span>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+
+        <!-- Detail: diambil dari server hanya saat baris dibuka pertama kali (hemat DOM) -->
+        <tr x-show="isOpen('{{ d.pk }}')" x-cloak style="display: none;"
+            class="!bg-slate-50 dark:!bg-slate-950/40">
+          <td colspan="9" class="p-3 sm:p-5">
+            <div hx-get="{% url 'discrepancy-detail' d.pk %}?next={{ list_url|urlencode }}" hx-trigger="intersect once" hx-swap="outerHTML">
+              <div class="flex items-center gap-2 rounded-xl border border-slate-200 bg-white p-4 text-xs text-slate-500 dark:border-slate-800 dark:bg-slate-900">
+                <svg class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                Memuat detail {{ d.code }}…
+              </div>
+            </div>
+          </td>
+        </tr>
+{% empty %}
+        <tr><td colspan="9" class="py-12 text-center text-sm text-slate-500">Tidak ada selisih untuk filter ini.</td></tr>
+{% endfor %}
+
+{% if page_obj.has_next %}
+<tr hx-get="{{ list_url }}{% if '?' in list_url %}&{% else %}?{% endif %}page={{ page_obj.next_page_number }}"
+    hx-trigger="revealed" hx-swap="outerHTML" hx-target="this">
+  <td colspan="9" class="py-4 text-center text-xs text-slate-400">
+    <span class="inline-flex items-center gap-2">
+      <svg class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+      Memuat selisih lainnya…
+    </span>
+  </td>
+</tr>
+{% elif page_obj.paginator.count > page_obj.paginator.per_page %}
+<tr>
+  <td colspan="9" class="py-4 text-center text-[11px] text-slate-400">Semua {{ page_obj.paginator.count }} selisih sudah ditampilkan.</td>
+</tr>
+{% endif %}

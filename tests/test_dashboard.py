@@ -735,17 +735,22 @@ def test_discrepancy_list_displays_names_and_search_filter(auth_client):
         amount=Decimal("50000"),
     )
 
-    # 1. Base list view should render names and descriptions
+    # 1. Daftar menampilkan nama; detail lengkap (kode master, token, keterangan asli)
+    #    dimuat lewat HTMX saat baris dibuka -- tidak lagi ikut di HTML daftar.
     res = auth_client.get("/selisih/")
     assert res.status_code == 200
     html = res.content.decode()
     assert "BANDUNG CIKADUT 2" in html
     assert "AGUS CELLULAR" in html
-    assert "PLC999" in html
-    assert "CR QRIS CIKADUT REF 9988" in html
-    assert "Deposit Tiket #55123" in html
-    assert "TOK9988" in html
-    assert "55123" in html
+    assert f"/selisih/{disc_bank.pk}/detail/" in html
+
+    bank_detail = auth_client.get(f"/selisih/{disc_bank.pk}/detail/").content.decode()
+    assert "CR QRIS CIKADUT REF 9988" in bank_detail
+    assert "TOK9988" in bank_detail
+    otomax_detail = auth_client.get(f"/selisih/{disc_otomax.pk}/detail/").content.decode()
+    assert "PLC999" in otomax_detail
+    assert "Deposit Tiket #55123" in otomax_detail
+    assert "55123" in otomax_detail
 
     # 2. Search by outlet name
     res_outlet = auth_client.get("/selisih/", {"q": "CIKADUT"})

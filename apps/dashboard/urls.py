@@ -27,6 +27,7 @@ urlpatterns = [
     path("reversal/unnet/<int:pk>/", views.unnet_otomax_action, name="unnet-otomax"),
     # 5c. Daftar Selisih (dipindahkan keluar dari Dashboard)
     path("selisih/", views.discrepancy_list_view, name="discrepancy-list"),
+    path("selisih/<int:pk>/detail/", views.discrepancy_detail_view, name="discrepancy-detail"),
     # 6. Riwayat & Laporan
     path("reports/", views.reports_view, name="reports"),
     path("reports/export/", views.reports_export_action, name="reports-export"),
