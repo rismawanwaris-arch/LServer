@@ -15,7 +15,7 @@ from datetime import date
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from apps.core.enums import DayStatus, MatchStatus, MatchType
+from apps.core.enums import MatchStatus, MatchType
 from apps.ingest.models import BankMutation, ImportBatch, OtomaxEntry
 from apps.recon.carry import carry_forward
 from apps.recon.close import reopen_day
