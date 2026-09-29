@@ -122,9 +122,7 @@ class Command(BaseCommand):
                 OtomaxEntry.objects.filter(id__in=otomax_ids).filter(
                     matches__isnull=True,
                     aggregate_matches__isnull=True,
-                ).update(
-                    match_status=MatchStatus.PENDING_SETTLE
-                )
+                ).update(match_status=MatchStatus.PENDING_SETTLE)
 
             # 4. Hapus Discrepancy OPEN yang berasal dari tanggal ini
             deleted_disc, _ = Discrepancy.objects.filter(
