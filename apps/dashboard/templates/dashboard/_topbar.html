@@ -11,34 +11,189 @@
 
   {% if all_dates %}
   <!-- Mode semua tanggal: tidak ada tanggal kerja; klik untuk memilih satu tanggal -->
-  <label class="date-stepper relative cursor-pointer px-2.5 text-[13px] font-semibold text-slate-900 hover:bg-slate-50 dark:text-slate-100 dark:hover:bg-slate-800" title="Pilih satu tanggal">
-    <span class="flex items-center gap-1.5 money">
-      <svg class="icon h-3.5 w-3.5 text-slate-400"><use href="#i-cal"/></svg>
-      {% if range_start or range_end %}{{ range_start|date:"d M Y"|default:"…" }} – {{ range_end|date:"d M Y"|default:"…" }}{% else %}Semua tanggal{% endif %}
-    </span>
-    <input type="date" aria-label="Pilih tanggal buku"
-           class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-           onclick="try { this.showPicker(); } catch (e) {}"
-           onchange="if (this.value) { var u = new URL(location.href); ['start_date','end_date','page'].forEach(function (k) { u.searchParams.delete(k); }); u.searchParams.set('d', this.value); location.href = u; }">
-  </label>
-  {% elif work_date %}
-  <div class="date-stepper" aria-label="Tanggal buku">
-    <a href="{{ prev_url }}" class="date-stepper-btn" aria-label="Hari sebelumnya" title="Hari sebelumnya">
-      <svg class="icon"><use href="#i-left"/></svg>
-    </a>
-    <!-- Klik label untuk lompat ke tanggal mana pun -->
-    <label class="date-stepper-label money relative cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800" title="Pilih tanggal">
-      <svg class="icon h-3.5 w-3.5 text-slate-400"><use href="#i-cal"/></svg>
-      {{ work_date|date:"D, d M Y" }}
-      <input type="date" value="{{ work_date|date:'Y-m-d' }}" aria-label="Pilih tanggal buku"
-             class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-             onclick="try { this.showPicker(); } catch (e) {}"
-             onchange="if (this.value) { var u = new URL(location.href); u.searchParams.set('d', this.value); u.searchParams.delete('page'); location.href = u; }">
-    </label>
-    <a href="{{ next_url }}" class="date-stepper-btn" aria-label="Hari berikutnya" title="Hari berikutnya">
-      <svg class="icon"><use href="#i-right"/></svg>
-    </a>
+  <div class="relative inline-flex items-center"
+       x-data="topbarDatePicker('', true)"
+       @keydown.escape.window="open = false"
+       @keydown.enter.window="if (open) applyDate()">
+    <div class="date-stepper">
+      <button type="button" @click="toggle()"
+              class="date-stepper-label money hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+              title="Pilih satu tanggal">
+        <svg class="icon h-3.5 w-3.5 text-slate-400"><use href="#i-cal"/></svg>
+        <span>{% if range_start or range_end %}{{ range_start|date:"d M Y"|default:"…" }} – {{ range_end|date:"d M Y"|default:"…" }}{% else %}Semua tanggal{% endif %}</span>
+      </button>
+    </div>
+
+    <!-- Popover Kalender Kustom -->
+    <div x-show="open" x-cloak @click.outside="open = false"
+         class="absolute left-0 sm:left-1/2 sm:-translate-x-1/2 top-full mt-2 z-50 w-72 max-w-[calc(100vw-2rem)] rounded-xl border border-slate-200 bg-white p-3 shadow-2xl dark:border-slate-800 dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+      
+      <!-- Navigasi Bulan & Tahun -->
+      <div class="flex items-center justify-between gap-1 mb-2">
+        <button type="button" @click="prevMonth()" class="icon-btn h-7 w-7 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800" title="Bulan sebelumnya">
+          <svg class="icon h-3.5 w-3.5"><use href="#i-left"/></svg>
+        </button>
+        <div class="text-xs font-bold text-slate-900 dark:text-white" x-text="monthLabel"></div>
+        <button type="button" @click="nextMonth()" class="icon-btn h-7 w-7 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800" title="Bulan berikutnya">
+          <svg class="icon h-3.5 w-3.5"><use href="#i-right"/></svg>
+        </button>
+      </div>
+
+      <!-- Pintasan: Hari Ini, Kemarin -->
+      <div class="flex items-center gap-1.5 mb-2.5 pb-2 border-b border-slate-100 dark:border-slate-800 text-[11px]">
+        <span class="text-slate-400">Pintasan:</span>
+        <button type="button" @click="selectToday()" class="rounded px-2 py-0.5 font-medium bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition">
+          Hari Ini
+        </button>
+        <button type="button" @click="selectYesterday()" class="rounded px-2 py-0.5 font-medium bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition">
+          Kemarin
+        </button>
+      </div>
+
+      <!-- Nama Hari -->
+      <div class="grid grid-cols-7 gap-1 text-center text-[10px] font-semibold text-slate-400 mb-1">
+        <template x-for="name in dayNames" :key="name">
+          <div x-text="name"></div>
+        </template>
+      </div>
+
+      <!-- Kisi Tanggal -->
+      <div class="grid grid-cols-7 gap-1 text-center text-xs">
+        <template x-for="(cell, idx) in daysInMonth" :key="idx">
+          <button type="button"
+                  @click="selectDay(cell.iso)"
+                  @dblclick="selectDay(cell.iso); applyDate()"
+                  :disabled="!cell.isCurrentMonth"
+                  class="h-8 w-8 mx-auto flex items-center justify-center rounded-lg font-medium transition cursor-pointer"
+                  :class="{
+                    'opacity-20 cursor-default text-slate-400': !cell.isCurrentMonth,
+                    'bg-indigo-600 text-white font-bold ring-2 ring-indigo-600/30': cell.isCurrentMonth && cell.iso === selectedDate,
+                    'ring-1 ring-indigo-400 dark:ring-indigo-500 font-bold text-indigo-600 dark:text-indigo-400': cell.isCurrentMonth && cell.isToday && cell.iso !== selectedDate,
+                    'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800': cell.isCurrentMonth && cell.iso !== selectedDate && !cell.isToday
+                  }">
+            <span x-text="cell.day"></span>
+          </button>
+        </template>
+      </div>
+
+      <!-- Status Pilihan Tanggal -->
+      <div class="mt-3 pt-2.5 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px]">
+        <span class="text-slate-400">Pilihan:</span>
+        <b class="text-slate-900 dark:text-white" x-text="formattedSelected"></b>
+      </div>
+
+      <!-- Tombol Aksi: Batal vs Konfirmasi (OK) -->
+      <div class="mt-2.5 flex items-center gap-2">
+        <button type="button" @click="open = false"
+                class="btn-ghost flex-1 justify-center py-1.5 text-xs text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
+          Batal
+        </button>
+        <button type="button" @click="applyDate()"
+                class="btn-primary flex-1 justify-center py-1.5 text-xs font-semibold">
+          <svg class="icon h-3.5 w-3.5"><use href="#i-check"/></svg>
+          <span>Konfirmasi (OK)</span>
+        </button>
+      </div>
+    </div>
   </div>
+
+  {% elif work_date %}
+  <!-- Mode tanggal kerja dengan stepper ‹ Hari, Tanggal › -->
+  <div class="relative inline-flex items-center"
+       x-data="topbarDatePicker('{{ work_date|date:'Y-m-d' }}', false)"
+       @keydown.escape.window="open = false"
+       @keydown.enter.window="if (open) applyDate()">
+    <div class="date-stepper" aria-label="Tanggal buku">
+      <a href="{{ prev_url }}" class="date-stepper-btn" aria-label="Hari sebelumnya" title="Hari sebelumnya">
+        <svg class="icon"><use href="#i-left"/></svg>
+      </a>
+
+      <!-- Tombol pemilih tanggal -->
+      <button type="button" @click="toggle()"
+              class="date-stepper-label money hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+              title="Pilih tanggal buku">
+        <svg class="icon h-3.5 w-3.5 text-slate-400"><use href="#i-cal"/></svg>
+        <span>{{ work_date|date:"D, d M Y" }}</span>
+      </button>
+
+      <a href="{{ next_url }}" class="date-stepper-btn" aria-label="Hari berikutnya" title="Hari berikutnya">
+        <svg class="icon"><use href="#i-right"/></svg>
+      </a>
+    </div>
+
+    <!-- Popover Kalender Kustom (Alpine.js) -->
+    <div x-show="open" x-cloak @click.outside="open = false"
+         class="absolute left-0 sm:left-1/2 sm:-translate-x-1/2 top-full mt-2 z-50 w-72 max-w-[calc(100vw-2rem)] rounded-xl border border-slate-200 bg-white p-3 shadow-2xl dark:border-slate-800 dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+      
+      <!-- Navigasi Bulan & Tahun -->
+      <div class="flex items-center justify-between gap-1 mb-2">
+        <button type="button" @click="prevMonth()" class="icon-btn h-7 w-7 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800" title="Bulan sebelumnya">
+          <svg class="icon h-3.5 w-3.5"><use href="#i-left"/></svg>
+        </button>
+        <div class="text-xs font-bold text-slate-900 dark:text-white" x-text="monthLabel"></div>
+        <button type="button" @click="nextMonth()" class="icon-btn h-7 w-7 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800" title="Bulan berikutnya">
+          <svg class="icon h-3.5 w-3.5"><use href="#i-right"/></svg>
+        </button>
+      </div>
+
+      <!-- Pintasan: Hari Ini, Kemarin -->
+      <div class="flex items-center gap-1.5 mb-2.5 pb-2 border-b border-slate-100 dark:border-slate-800 text-[11px]">
+        <span class="text-slate-400">Pintasan:</span>
+        <button type="button" @click="selectToday()" class="rounded px-2 py-0.5 font-medium bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition">
+          Hari Ini
+        </button>
+        <button type="button" @click="selectYesterday()" class="rounded px-2 py-0.5 font-medium bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition">
+          Kemarin
+        </button>
+      </div>
+
+      <!-- Nama Hari -->
+      <div class="grid grid-cols-7 gap-1 text-center text-[10px] font-semibold text-slate-400 mb-1">
+        <template x-for="name in dayNames" :key="name">
+          <div x-text="name"></div>
+        </template>
+      </div>
+
+      <!-- Kisi Tanggal -->
+      <div class="grid grid-cols-7 gap-1 text-center text-xs">
+        <template x-for="(cell, idx) in daysInMonth" :key="idx">
+          <button type="button"
+                  @click="selectDay(cell.iso)"
+                  @dblclick="selectDay(cell.iso); applyDate()"
+                  :disabled="!cell.isCurrentMonth"
+                  class="h-8 w-8 mx-auto flex items-center justify-center rounded-lg font-medium transition cursor-pointer"
+                  :class="{
+                    'opacity-20 cursor-default text-slate-400': !cell.isCurrentMonth,
+                    'bg-indigo-600 text-white font-bold ring-2 ring-indigo-600/30': cell.isCurrentMonth && cell.iso === selectedDate,
+                    'ring-1 ring-indigo-400 dark:ring-indigo-500 font-bold text-indigo-600 dark:text-indigo-400': cell.isCurrentMonth && cell.isToday && cell.iso !== selectedDate,
+                    'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800': cell.isCurrentMonth && cell.iso !== selectedDate && !cell.isToday
+                  }">
+            <span x-text="cell.day"></span>
+          </button>
+        </template>
+      </div>
+
+      <!-- Status Pilihan Tanggal -->
+      <div class="mt-3 pt-2.5 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px]">
+        <span class="text-slate-400">Pilihan:</span>
+        <b class="text-slate-900 dark:text-white" x-text="formattedSelected"></b>
+      </div>
+
+      <!-- Tombol Aksi: Batal vs Konfirmasi (OK) -->
+      <div class="mt-2.5 flex items-center gap-2">
+        <button type="button" @click="open = false"
+                class="btn-ghost flex-1 justify-center py-1.5 text-xs text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
+          Batal
+        </button>
+        <button type="button" @click="applyDate()"
+                class="btn-primary flex-1 justify-center py-1.5 text-xs font-semibold">
+          <svg class="icon h-3.5 w-3.5"><use href="#i-check"/></svg>
+          <span>Konfirmasi (OK)</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
   {% if locked %}
   <span class="badge-mute hidden gap-1.5 sm:inline-flex"><svg class="icon h-3 w-3"><use href="#i-lock"/></svg>Sudah tutup buku</span>
   {% else %}
@@ -54,3 +209,142 @@
     <svg class="icon" x-show="mode === 'dark'" x-cloak><use href="#i-moon"/></svg>
   </button>
 </header>
+
+<script>
+  function topbarDatePicker(initialDate, isAllDates) {
+    function parseISO(s) {
+      if (!s) return new Date();
+      var parts = s.split('-').map(Number);
+      return new Date(parts[0], parts[1] - 1, parts[2]);
+    }
+    function formatISO(d) {
+      var y = d.getFullYear();
+      var m = String(d.getMonth() + 1).padStart(2, '0');
+      var day = String(d.getDate()).padStart(2, '0');
+      return y + '-' + m + '-' + day;
+    }
+
+    var init = initialDate ? parseISO(initialDate) : new Date();
+
+    return {
+      open: false,
+      selectedDate: initialDate || formatISO(new Date()),
+      viewYear: init.getFullYear(),
+      viewMonth: init.getMonth(),
+      months: [
+        'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+        'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+      ],
+      dayNames: ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'],
+
+      toggle() {
+        this.open = !this.open;
+        if (this.open && this.selectedDate) {
+          var d = parseISO(this.selectedDate);
+          this.viewYear = d.getFullYear();
+          this.viewMonth = d.getMonth();
+        }
+      },
+
+      get monthLabel() {
+        return this.months[this.viewMonth] + ' ' + this.viewYear;
+      },
+
+      get formattedSelected() {
+        if (!this.selectedDate) return 'Belum dipilih';
+        var d = parseISO(this.selectedDate);
+        var dayName = this.dayNames[d.getDay()];
+        return dayName + ', ' + d.getDate() + ' ' + this.months[d.getMonth()] + ' ' + d.getFullYear();
+      },
+
+      get daysInMonth() {
+        var year = this.viewYear;
+        var month = this.viewMonth;
+        var firstDayIndex = new Date(year, month, 1).getDay(); // 0 is Sunday
+        var totalDays = new Date(year, month + 1, 0).getDate();
+        var prevMonthTotalDays = new Date(year, month, 0).getDate();
+
+        var days = [];
+
+        // Leading days from previous month
+        for (var i = firstDayIndex - 1; i >= 0; i--) {
+          var d = prevMonthTotalDays - i;
+          var prevMonth = month === 0 ? 11 : month - 1;
+          var prevYear = month === 0 ? year - 1 : year;
+          var iso = formatISO(new Date(prevYear, prevMonth, d));
+          days.push({ day: d, isCurrentMonth: false, iso: iso });
+        }
+
+        // Days in current month
+        var todayISO = formatISO(new Date());
+        for (var j = 1; j <= totalDays; j++) {
+          var isoCur = formatISO(new Date(year, month, j));
+          days.push({
+            day: j,
+            isCurrentMonth: true,
+            iso: isoCur,
+            isToday: isoCur === todayISO,
+          });
+        }
+
+        // Trailing days to fill remaining week
+        var remaining = 7 - (days.length % 7);
+        if (remaining < 7) {
+          for (var k = 1; k <= remaining; k++) {
+            var nextMonth = month === 11 ? 0 : month + 1;
+            var nextYear = month === 11 ? year + 1 : year;
+            var isoNext = formatISO(new Date(nextYear, nextMonth, k));
+            days.push({ day: k, isCurrentMonth: false, iso: isoNext });
+          }
+        }
+
+        return days;
+      },
+
+      prevMonth() {
+        if (this.viewMonth === 0) {
+          this.viewMonth = 11;
+          this.viewYear--;
+        } else {
+          this.viewMonth--;
+        }
+      },
+
+      nextMonth() {
+        if (this.viewMonth === 11) {
+          this.viewMonth = 0;
+          this.viewYear++;
+        } else {
+          this.viewMonth++;
+        }
+      },
+
+      selectDay(iso) {
+        this.selectedDate = iso;
+      },
+
+      selectToday() {
+        var today = formatISO(new Date());
+        this.selectedDate = today;
+        this.applyDate();
+      },
+
+      selectYesterday() {
+        var yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+        this.selectedDate = formatISO(yesterday);
+        this.applyDate();
+      },
+
+      applyDate() {
+        if (!this.selectedDate) return;
+        var u = new URL(window.location.href);
+        ['start_date', 'end_date', 'page'].forEach(function (k) {
+          u.searchParams.delete(k);
+        });
+        u.searchParams.set('d', this.selectedDate);
+        window.location.href = u.toString();
+      }
+    };
+  }
+</script>

@@ -135,3 +135,14 @@ def test_daftar_selisih_per_tanggal_pakai_stepper(client_op):
     html = client_op.get("/selisih/", {"d": BD.isoformat()}).content.decode()
     assert "Hari sebelumnya" in html
     assert 'aria-current="page">\n      <svg class="icon h-3.5 w-3.5"><use href="#i-cal"/></svg>Per tanggal' in html
+
+
+@pytest.mark.django_db
+def test_topbar_datepicker_popover_rendered(client_op):
+    html = client_op.get(f"/review-manual/?d={BD}").content.decode()
+    assert "topbarDatePicker" in html
+    assert "Konfirmasi (OK)" in html
+    assert "Hari Ini" in html
+    assert "Kemarin" in html
+    assert "Bulan sebelumnya" in html
+
