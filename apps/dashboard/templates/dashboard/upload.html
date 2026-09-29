@@ -49,7 +49,7 @@
 
 <div class="grid gap-6 lg:grid-cols-3">
   <!-- Form Upload (Left 1 col) -->
-  <div class="card lg:col-span-1" x-data="{ selectedChannel: 'OTOMAX' }">
+  <div class="card lg:col-span-1" x-data="{ selectedChannel: '{{ selected_channel|default:"OTOMAX" }}' }">
     <h2 class="mb-3 text-sm font-semibold text-slate-900 dark:text-white">Pilih Sumber Data</h2>
 
     <form method="post" enctype="multipart/form-data" action="{% url 'upload' %}?d={{ book_date|date:'Y-m-d' }}" class="space-y-4">
@@ -95,98 +95,315 @@
                class="w-full cursor-pointer rounded-lg border border-dashed border-slate-300 bg-white p-2.5 text-xs text-slate-500 file:mr-3 file:cursor-pointer file:rounded-md file:border-0 file:bg-slate-900 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-white hover:border-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:file:bg-white dark:file:text-slate-900">
       </div>
 
-      <!-- Dual Action Buttons: Preview vs Confirm Save -->
+      <!-- Action Buttons -->
       <div class="pt-2 flex flex-col gap-2">
-        <button type="submit" name="action" value="preview" class="btn-ghost w-full justify-center">
+        <button type="submit" name="action" value="review" class="btn-primary w-full justify-center">
           <svg class="icon"><use href="#i-eye"/></svg>
-          Lihat Preview Sebelum Simpan
+          Periksa File Sebelum Simpan
         </button>
-        <button type="submit" name="action" value="import" class="btn-primary w-full justify-center">
+        <button type="submit" name="action" value="import" class="btn-ghost w-full justify-center text-xs text-slate-500">
           <svg class="icon"><use href="#i-upload"/></svg>
-          Konfirmasi Simpan ke Database
+          Langsung Simpan (Bypass Periksa)
         </button>
       </div>
     </form>
   </div>
 
-  <!-- Preview Panel or Batch List (Right 2 cols) -->
+  <!-- Review Panel or Batch List (Right 2 cols) -->
   <div class="lg:col-span-2 space-y-6">
-    {% if preview %}
-    <!-- Preview Box (PRD Section 9.2: "dengan preview sebelum konfirmasi simpan") -->
-    <div class="card ring-2 ring-indigo-500/30">
-      <div class="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-3 dark:border-slate-800">
+    {% if review %}
+    <!-- Layar Periksa Sebelum Simpan (Tartun V2 Blueprint) -->
+    <div class="card ring-2 ring-indigo-500/40"
+         x-data="{
+           currentFilter: 'all',
+           selectedMaybe: [],
+           baseNew: {{ review.counts.baru }},
+           matchesFilter(status) {
+             if (this.currentFilter === 'all') return true;
+             if (this.currentFilter === 'baru') return status === 'baru';
+             if (this.currentFilter === 'mungkin') return status === 'mungkin_ada';
+             if (this.currentFilter === 'sudah') return status === 'sudah_ada';
+             if (this.currentFilter === 'lainnya') return status === 'kembar_file' || status === 'ditutup';
+             return true;
+           },
+           toggleAllMaybe(event) {
+             if (event.target.checked) {
+               this.selectedMaybe = [{% for r in review.rows %}{% if r.status == 'mungkin_ada' %}'{{ r.row_hash }}',{% endif %}{% endfor %}];
+             } else {
+               this.selectedMaybe = [];
+             }
+           },
+           get totalToSave() {
+             return this.baseNew + this.selectedMaybe.length;
+           }
+         }">
+
+      <!-- Header Info File -->
+      <div class="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3 dark:border-slate-800">
         <div>
           <div class="flex items-center gap-2">
-            <span class="badge-info"><svg class="icon h-3 w-3"><use href="#i-eye"/></svg>Preview</span>
-            <h3 class="text-sm font-semibold text-slate-900 dark:text-white">{{ preview.channel }} — <span class="money">{{ preview.total_rows }}</span> Baris Terdeteksi</h3>
+            <span class="badge-info flex items-center gap-1">
+              <svg class="icon h-3 w-3"><use href="#i-eye"/></svg>Periksa File
+            </span>
+            <h3 class="text-sm font-semibold text-slate-900 dark:text-white">{{ review.filename }}</h3>
+            <span class="badge-mute">{{ review.channel }}</span>
           </div>
-          {% if preview.book_date %}
-          <div class="text-xs text-slate-500 mt-0.5">Tanggal terdeteksi dalam file: <b>{{ preview.book_date }}</b></div>
-          {% endif %}
+          <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+            <span>Tanggal buku: <b class="text-slate-700 dark:text-slate-300">{{ review.book_date|date:"d M Y" }}</b></span>
+            <span>·</span>
+            <span>Total baris: <b>{{ review.rows|length }}</b></span>
+            {% if review.total_new_amount %}
+            <span>·</span>
+            <span>Total nominal baru: <b class="text-emerald-600 dark:text-emerald-400">Rp {{ review.total_new_amount|rupiah }}</b></span>
+            {% endif %}
+          </div>
         </div>
-        <div class="text-xs text-slate-500">Menampilkan 20 baris pertama</div>
+
+        <div class="flex items-center gap-2">
+          <form method="post" action="{% url 'upload' %}?d={{ book_date|date:'Y-m-d' }}" class="inline">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="cancel">
+            <input type="hidden" name="token" value="{{ staging_token }}">
+            <button type="submit" class="btn-ghost px-3 py-1.5 text-xs text-rose-600 hover:bg-rose-50 dark:text-rose-400">
+              <svg class="icon h-3.5 w-3.5"><use href="#i-x"/></svg>Batal
+            </button>
+          </form>
+        </div>
       </div>
 
-      {% if preview.warnings %}
-      <div class="callout callout-warn mb-4 block text-xs">
+      <!-- Warning: Identical File Uploaded Previously -->
+      {% if review.same_file_batches %}
+      <div class="callout callout-warn mb-4 text-xs">
+        <div class="flex items-start gap-2">
+          <svg class="icon mt-0.5 h-4 w-4 shrink-0 text-amber-500"><use href="#i-alert"/></svg>
+          <div>
+            <b>Peringatan: File ini identik dengan file yang pernah di-upload sebelumnya</b>
+            <div class="mt-1 space-y-0.5 text-slate-600 dark:text-slate-300">
+              {% for b in review.same_file_batches %}
+              <div>• Batch #{{ b.id }} ({{ b.source_filename }}) pada {{ b.created_at|date:"d M Y H:i:s" }} — status: {{ b.status }}</div>
+              {% endfor %}
+            </div>
+            <div class="mt-1 text-slate-500">Baris yang sudah ada dari batch sebelumnya otomatis tidak akan dimasukkan dobel.</div>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Warning: Multi-day with Locked Dates -->
+      {% if review.dates %}
+        {% for d in review.dates %}
+          {% if d.locked %}
+          <div class="callout callout-crit mb-3 text-xs">
+            <div class="flex items-start gap-2">
+              <svg class="icon mt-0.5 h-4 w-4 shrink-0 text-rose-500"><use href="#i-lock"/></svg>
+              <div>
+                <b>Hari Tutup Buku:</b> Tanggal <b>{{ d.date|date:"d M Y" }}</b> ({{ d.rows }} baris) sudah tutup buku.
+                Baris-baris pada tanggal tersebut otomatis dilewati dan tidak akan disimpan ke database.
+              </div>
+            </div>
+          </div>
+          {% endif %}
+        {% endfor %}
+      {% endif %}
+
+      {% if review.result.warnings %}
+      <div class="callout callout-warn mb-4 text-xs">
         <b>Catatan parser:</b>
-        <ul class="list-disc pl-4 mt-1">
-          {% for w in preview.warnings %}<li>{{ w }}</li>{% endfor %}
+        <ul class="mt-1 list-disc pl-4 space-y-0.5">
+          {% for w in review.result.warnings %}<li>{{ w }}</li>{% endfor %}
         </ul>
       </div>
       {% endif %}
 
-      <div class="max-h-96 overflow-x-auto rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-        <table class="w-full text-xs">
-          <thead>
-            <tr>
-              <th>Waktu</th>
-              {% if preview.channel == 'OTOMAX' %}
-              <th>Reseller</th>
-              <th>Kategori</th>
-              {% else %}
-              <th>Outlet / Ref</th>
-              {% endif %}
-              <th>Keterangan</th>
-              <th>Token Terdeteksi</th>
-              <th class="text-right">Nominal</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for r in preview.rows %}
-            <tr>
-              <td class="font-mono text-slate-500 whitespace-nowrap">{{ r.datetime }}</td>
-              {% if preview.channel == 'OTOMAX' %}
-              <td class="font-semibold text-slate-800 dark:text-slate-200">{{ r.reseller }}</td>
-              <td><span class="badge-mute">{{ r.category }}</span></td>
-              {% else %}
-              <td class="font-semibold text-slate-800 dark:text-slate-200">{{ r.outlet|default:r.ref }}</td>
-              {% endif %}
-              <td class="max-w-xs truncate" title="{{ r.description }}">
-                {{ r.description }}
-                {% if r.excluded %}
-                <span class="badge-warn ml-1 text-[10px]">Dikecualikan: {{ r.rule_name }}</span>
-                {% endif %}
-              </td>
-              <td>
-                {% for tk in r.tokens %}
-                <span class="badge-mute font-mono text-[10px]">{{ tk }}</span>
-                {% empty %}<span class="text-slate-400">—</span>{% endfor %}
-              </td>
-              <td class="money whitespace-nowrap text-right font-semibold {% if r.amount < 0 %}text-rose-600 dark:text-rose-400{% endif %}">
-                Rp {{ r.amount|rupiah }}
-              </td>
-            </tr>
-            {% empty %}
-            <tr><td colspan="6" class="text-center py-4 text-slate-400">Tidak ada baris data.</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
+      <!-- Ringkasan Kartu Metrik (6 status) -->
+      <div class="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+        <div class="rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-center dark:border-slate-800 dark:bg-slate-900/60">
+          <div class="text-[11px] text-slate-500">Total Baris</div>
+          <div class="text-base font-bold text-slate-900 dark:text-white">{{ review.rows|length }}</div>
+        </div>
+        <div class="rounded-lg border border-emerald-200 bg-emerald-50/60 p-2.5 text-center dark:border-emerald-900/50 dark:bg-emerald-950/20">
+          <div class="text-[11px] font-medium text-emerald-700 dark:text-emerald-400">Baru</div>
+          <div class="text-base font-bold text-emerald-700 dark:text-emerald-400">{{ review.counts.baru }}</div>
+        </div>
+        <div class="rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-center dark:border-slate-800 dark:bg-slate-900/60">
+          <div class="text-[11px] text-slate-500">Sudah Ada</div>
+          <div class="text-base font-bold text-slate-600 dark:text-slate-400">{{ review.counts.sudah_ada }}</div>
+        </div>
+        <div class="rounded-lg border border-amber-200 bg-amber-50/60 p-2.5 text-center dark:border-amber-900/50 dark:bg-amber-950/20">
+          <div class="text-[11px] font-medium text-amber-700 dark:text-amber-400">Kemungkinan Ada</div>
+          <div class="text-base font-bold text-amber-700 dark:text-amber-400">{{ review.counts.mungkin_ada }}</div>
+        </div>
+        <div class="rounded-lg border border-rose-200 bg-rose-50/50 p-2.5 text-center dark:border-rose-900/40 dark:bg-rose-950/20">
+          <div class="text-[11px] font-medium text-rose-700 dark:text-rose-400">Kembar di File</div>
+          <div class="text-base font-bold text-rose-700 dark:text-rose-400">{{ review.counts.kembar_file }}</div>
+        </div>
+        <div class="rounded-lg border border-rose-200 bg-rose-50/50 p-2.5 text-center dark:border-rose-900/40 dark:bg-rose-950/20">
+          <div class="text-[11px] font-medium text-rose-700 dark:text-rose-400">Hari Ditutup</div>
+          <div class="text-base font-bold text-rose-700 dark:text-rose-400">{{ review.counts.ditutup }}</div>
+        </div>
       </div>
 
-      <div class="mt-4 flex items-center justify-end gap-3">
-        <p class="text-xs text-slate-500">Periksa sampel di atas. Jika data sudah rapi, klik Simpan di form sebelah kiri.</p>
-      </div>
+      <!-- Action Confirmation Form -->
+      <form method="post" action="{% url 'upload' %}?d={{ book_date|date:'Y-m-d' }}">
+        {% csrf_token %}
+        <input type="hidden" name="token" value="{{ staging_token }}">
+
+        <!-- Filter Tabs & Quick Actions -->
+        <div class="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2.5 dark:border-slate-800">
+          <!-- Filter Tabs -->
+          <div class="flex flex-wrap items-center gap-1 text-xs">
+            <button type="button" @click="currentFilter = 'all'"
+                    class="rounded-md px-2.5 py-1 font-medium transition"
+                    :class="currentFilter === 'all' ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'">
+              Semua ({{ review.rows|length }})
+            </button>
+            <button type="button" @click="currentFilter = 'baru'"
+                    class="rounded-md px-2.5 py-1 font-medium transition"
+                    :class="currentFilter === 'baru' ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'">
+              Baru ({{ review.counts.baru }})
+            </button>
+            {% if review.counts.mungkin_ada > 0 %}
+            <button type="button" @click="currentFilter = 'mungkin'"
+                    class="rounded-md px-2.5 py-1 font-medium transition"
+                    :class="currentFilter === 'mungkin' ? 'bg-amber-600 text-white' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'">
+              Kemungkinan Ada ({{ review.counts.mungkin_ada }})
+            </button>
+            {% endif %}
+            <button type="button" @click="currentFilter = 'sudah'"
+                    class="rounded-md px-2.5 py-1 font-medium transition"
+                    :class="currentFilter === 'sudah' ? 'bg-slate-600 text-white' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'">
+              Sudah Ada ({{ review.counts.sudah_ada }})
+            </button>
+            {% if review.counts.kembar_file > 0 or review.counts.ditutup > 0 %}
+            <button type="button" @click="currentFilter = 'lainnya'"
+                    class="rounded-md px-2.5 py-1 font-medium transition"
+                    :class="currentFilter === 'lainnya' ? 'bg-rose-600 text-white' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'">
+              Dilewati / Ditutup ({{ review.counts.kembar_file|add:review.counts.ditutup }})
+            </button>
+            {% endif %}
+          </div>
+
+          <!-- Total To Save Pill -->
+          <div class="text-xs text-slate-500">
+            Akan disimpan: <b class="text-slate-900 dark:text-white" x-text="totalToSave + ' baris'"></b>
+          </div>
+        </div>
+
+        {% if review.counts.mungkin_ada > 0 %}
+        <div class="mb-3 rounded-lg border border-amber-200 bg-amber-50/70 p-2.5 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300">
+          <div class="flex items-center justify-between gap-2">
+            <span>
+              <b>Catatan:</b> Ditemukan <b>{{ review.counts.mungkin_ada }}</b> baris dengan waktu & nominal sama tapi keterangan beda format.
+              Secara bawaan <b>tidak disimpan</b>. Centang kotak di bawah jika Anda yakin baris tersebut transaksi sah berbeda.
+            </span>
+            <label class="inline-flex shrink-0 items-center gap-1.5 cursor-pointer font-medium">
+              <input type="checkbox" @change="toggleAllMaybe($event)" class="rounded border-amber-400 text-amber-600 focus:ring-amber-500">
+              <span>Pilih Semua</span>
+            </label>
+          </div>
+        </div>
+        {% endif %}
+
+        <!-- Tabel Detail Seluruh Baris -->
+        <div class="max-h-[32rem] overflow-x-auto overflow-y-auto rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+          <table class="w-full text-xs">
+            <thead class="sticky top-0 bg-slate-50 dark:bg-slate-950/80 backdrop-blur z-10">
+              <tr>
+                <th class="w-8 text-center">#</th>
+                <th class="w-28">Waktu</th>
+                {% if review.channel == 'OTOMAX' %}
+                <th>Reseller</th>
+                {% else %}
+                <th>Outlet / Ref</th>
+                {% endif %}
+                <th>Keterangan</th>
+                <th class="text-right">Nominal</th>
+                <th>Status & Alasan</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for r in review.rows %}
+              <tr x-show="matchesFilter('{{ r.status }}')"
+                  class="border-b border-slate-100 transition hover:bg-slate-50/70 dark:border-slate-800/60 dark:hover:bg-slate-800/30
+                  {% if r.status == 'baru' %}bg-emerald-50/20 dark:bg-emerald-950/10
+                  {% elif r.status == 'mungkin_ada' %}bg-amber-50/20 dark:bg-amber-950/10
+                  {% elif r.status == 'ditutup' or r.status == 'kembar_file' %}bg-rose-50/20 dark:bg-rose-950/10
+                  {% endif %}">
+                <td class="text-center font-mono text-slate-400">
+                  {% if r.status == 'mungkin_ada' %}
+                  <input type="checkbox" name="include_maybe" value="{{ r.row_hash }}"
+                         x-model="selectedMaybe"
+                         title="Centang untuk tetap menyimpan baris ini"
+                         class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500">
+                  {% else %}
+                  {{ r.no }}
+                  {% endif %}
+                </td>
+                <td class="font-mono text-slate-500 whitespace-nowrap">
+                  {% if r.when %}{{ r.when|date:"d M H:i:s" }}{% else %}{{ r.row_bdate|date:"d M Y" }}{% endif %}
+                </td>
+                <td class="font-semibold text-slate-800 dark:text-slate-200">
+                  {{ r.party|default:"—" }}
+                </td>
+                <td class="max-w-xs truncate" title="{{ r.description }}">
+                  {{ r.description }}
+                </td>
+                <td class="money whitespace-nowrap text-right font-semibold {% if r.amount < 0 %}text-rose-600 dark:text-rose-400{% endif %}">
+                  Rp {{ r.amount|rupiah }}
+                </td>
+                <td class="whitespace-nowrap">
+                  {% if r.status == 'baru' %}
+                  <span class="badge-good">{{ r.status_label }}</span>
+                  {% elif r.status == 'sudah_ada' %}
+                  <span class="badge-mute">{{ r.status_label }}</span>
+                  {% elif r.status == 'mungkin_ada' %}
+                  <span class="badge-warn">{{ r.status_label }}</span>
+                  {% elif r.status == 'kembar_file' %}
+                  <span class="badge-crit">{{ r.status_label }}</span>
+                  {% elif r.status == 'ditutup' %}
+                  <span class="badge-crit">{{ r.status_label }}</span>
+                  {% else %}
+                  <span class="badge-mute">{{ r.status_label }}</span>
+                  {% endif %}
+                  {% if r.reason %}
+                  <div class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 truncate max-w-sm" title="{{ r.reason }}">
+                    {{ r.reason }}
+                  </div>
+                  {% endif %}
+                </td>
+              </tr>
+              {% empty %}
+              <tr><td colspan="6" class="text-center py-6 text-slate-400">Tidak ada baris data.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Action Buttons Footer -->
+        <div class="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-3 dark:border-slate-800">
+          <div>
+            <span class="text-xs text-slate-500" x-show="totalToSave > 0">
+              Siap menyimpan <b class="text-slate-900 dark:text-white" x-text="totalToSave + ' baris'"></b>. Baris yang sudah ada/ditutup akan otomatis dilewati.
+            </span>
+            <span class="text-xs text-rose-600 dark:text-rose-400" x-show="totalToSave === 0">
+              Tidak ada baris baru yang dapat disimpan. Batch kosong tidak akan dibuat.
+            </span>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <button type="submit" name="action" value="cancel" formnovalidate
+                    class="btn-ghost px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
+              Batal
+            </button>
+            <button type="submit" name="action" value="confirm"
+                    :disabled="totalToSave === 0"
+                    class="btn-primary px-4 py-1.5 text-xs disabled:opacity-50 disabled:cursor-not-allowed">
+              <svg class="icon"><use href="#i-check"/></svg>
+              <span x-text="totalToSave > 0 ? 'Simpan ' + totalToSave + ' Baris Baru' : 'Tidak Ada Baris Baru'"></span>
+            </button>
+          </div>
+        </div>
+      </form>
     </div>
     {% endif %}
 

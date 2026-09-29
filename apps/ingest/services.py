@@ -111,6 +111,10 @@ def preview_file(channel: str, content: str | bytes, book_date: date | None = No
     }
 
 
+class NothingToImport(ImportBlocked):
+    """Tidak ada satu pun baris baru -- jangan membuat batch kosong."""
+
+
 @transaction.atomic
 def import_file(
     *,
@@ -120,35 +124,58 @@ def import_file(
     book_date: date,
     filename: str,
     user=None,
+    include_maybe: set[str] | frozenset[str] = frozenset(),
 ) -> ImportBatch:
+    """Simpan isi file. Aturan pilih baris SAMA dengan layar Periksa (review.analyze_upload),
+    dihitung ulang di sini (server hakim terakhir): yang disimpan hanya baris berstatus
+    "baru", ditambah baris "kemungkinan sudah ada" yang dipilih operator (include_maybe =
+    row_hash-nya). Baris kembar/sudah ada/di hari yang sudah ditutup dilewati & dihitung
+    di batch.review. Tanpa baris baru -> NothingToImport (tidak ada batch kosong)."""
+    from .review import BARU, DEBIT, DIKECUALIKAN, MUNGKIN_ADA, OTOMAX, analyze_upload, file_fingerprint
+
     data = content if content is not None else text
     if data is None:
         raise ValueError("content or text is required")
+    content_bytes = data if isinstance(data, bytes) else data.encode("utf-8")
 
-    result = parse_file(channel, data)
-
-    # Otomatis deteksi tanggal buku dari isi file:
-    # Jika parser mendeteksi tanggal dominan di file, gunakan tanggal tersebut agar batch dan transaksi selalu sinkron.
-    effective_book_date = result.book_date or book_date
+    review = analyze_upload(channel, content_bytes, book_date, filename)
+    # Otomatis deteksi tanggal buku dari isi file: jika parser mendeteksi tanggal dominan
+    # di file, gunakan tanggal tersebut agar batch dan transaksi selalu sinkron.
+    effective_book_date = review.book_date
 
     day = ReconDay.objects.filter(book_date=effective_book_date).first()
     if day and day.locked:
         raise ImportBlocked(f"Tanggal {effective_book_date} sudah ditutup — impor ditolak.")
 
-    content_bytes = data if isinstance(data, bytes) else data.encode("utf-8")
+    to_save = [r for r in review.rows if r.status == BARU or (r.status == MUNGKIN_ADA and r.row_hash in include_maybe)]
+    counts = review.counts
+    summary = {
+        "saved": len(to_save),
+        "existing": counts["sudah_ada"],
+        "maybe_skipped": counts["mungkin_ada"] - sum(1 for r in to_save if r.status == MUNGKIN_ADA),
+        "dup_file": counts["kembar_file"],
+        "locked": counts["ditutup"],
+    }
+    if not to_save:
+        raise NothingToImport(
+            f"Tidak ada baris baru untuk disimpan dari {filename}: "
+            f"{summary['existing']} sudah ada, {summary['maybe_skipped']} kemungkinan sudah ada, "
+            f"{summary['dup_file']} kembar di file, {summary['locked']} di hari yang sudah ditutup."
+        )
+
     batch = ImportBatch.objects.create(
         channel=channel,
         book_date=effective_book_date,
         source_filename=filename,
-        file_hash=_hash(channel, hashlib.sha256(content_bytes).hexdigest()),
+        file_hash=file_fingerprint(channel, content_bytes),
         uploaded_by=user,
     )
 
     quarantined = 0
     if channel == Channel.OTOMAX:
-        quarantined = _persist_otomax(batch, result, effective_book_date)
+        _persist_otomax(batch, [r for r in to_save if r.kind in (OTOMAX, DIKECUALIKAN)])
     else:
-        quarantined = _persist_bank(batch, result, channel, effective_book_date)
+        quarantined = _persist_bank(batch, to_save, channel, debit_kind=DEBIT, excluded_kind=DIKECUALIKAN)
 
     batch.row_count = (
         batch.mutations.count()
@@ -159,22 +186,37 @@ def import_file(
     batch.quarantined_count = quarantined
     batch.excluded_count = batch.excluded_transactions.count()
     batch.status = ImportStatus.PARTIAL if quarantined else ImportStatus.PARSED
-    if result.warnings:
-        batch.notes = "\n".join(result.warnings)
+    notes = list(review.result.warnings)
+    skipped = {k: v for k, v in summary.items() if k != "saved" and v}
+    if skipped:
+        notes.append(
+            "Dilewati saat simpan: "
+            + ", ".join(
+                f"{v} {label}"
+                for k, v in skipped.items()
+                for label in [
+                    {
+                        "existing": "sudah ada",
+                        "maybe_skipped": "kemungkinan sudah ada",
+                        "dup_file": "kembar di file",
+                        "locked": "hari sudah ditutup",
+                    }[k]
+                ]
+            )
+        )
+    if notes:
+        batch.notes = "\n".join(notes)
     batch.save(update_fields=["row_count", "quarantined_count", "excluded_count", "status", "notes"])
+    batch.review = summary  # bukan kolom DB -- untuk pesan hasil ke operator
     return batch
 
 
-def _persist_bank(batch, result, channel, book_date) -> int:
+def _persist_bank(batch, rows, channel, *, debit_kind, excluded_kind) -> int:
     quarantined = 0
-    active_rules = list(ExclusionRule.objects.filter(active=True))
-    for row in result.bank_rows:
-        row_bdate = row.txn_datetime.date() if row.txn_datetime else book_date
-        rh = _hash(channel, row_bdate, row.description_raw, row.amount, row.txn_datetime, row.external_ref)
-
-        # Cek ExclusionRule
-        rule = find_matching_rule(row.description_raw, channel=channel, is_bank=True, rules=active_rules)
-        if rule:
+    for r in rows:
+        row, rh, row_bdate = r.parsed, r.row_hash, r.row_bdate
+        if r.kind == excluded_kind:
+            rule = r.rule
             ExcludedTransaction.objects.get_or_create(
                 row_hash=rh,
                 defaults=dict(
@@ -192,7 +234,7 @@ def _persist_bank(batch, result, channel, book_date) -> int:
             )
             continue
 
-        if row.amount is not None and row.amount < 0:
+        if r.kind == debit_kind:
             DebitIgnored.objects.get_or_create(
                 row_hash=rh,
                 defaults=dict(
@@ -230,16 +272,12 @@ def _persist_bank(batch, result, channel, book_date) -> int:
     return quarantined
 
 
-def _persist_otomax(batch, result, book_date) -> int:
-    active_rules = list(ExclusionRule.objects.filter(active=True))
+def _persist_otomax(batch, rows) -> int:
     alias_map = {a.alias_norm: a.reseller for a in ResellerAlias.objects.select_related("reseller")}
-    for row in result.otomax_rows:
-        row_bdate = row.entry_datetime.date() if row.entry_datetime else book_date
-        rh = _hash(Channel.OTOMAX, row.description_raw, row.amount, row.entry_datetime, row.reseller_name_raw)
-
-        # Cek ExclusionRule
-        rule = find_matching_rule(row.description_raw, channel="", is_bank=False, rules=active_rules)
-        if rule:
+    for r in rows:
+        row, rh, row_bdate = r.parsed, r.row_hash, r.row_bdate
+        if r.rule:
+            rule = r.rule
             ExcludedTransaction.objects.get_or_create(
                 row_hash=rh,
                 defaults=dict(
