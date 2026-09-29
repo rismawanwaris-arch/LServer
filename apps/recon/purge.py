@@ -94,16 +94,29 @@ def purge_all_transactions(*, include_history: bool = False) -> dict[str, int]:
 
 @transaction.atomic
 def delete_import_batch(batch_id: int, *, include_closed: bool = False) -> dict:
-    batch = ImportBatch.objects.select_for_update().get(id=batch_id)
-    day = ReconDay.objects.select_for_update().filter(book_date=batch.book_date).first()
-    if day and day.locked and not include_closed:
-        raise DayIsClosed(f"Tanggal {batch.book_date} sudah ditutup — penghapusan batch ditolak.")
+    from .raw_delete import SRC_BANK, SRC_OTOMAX, bulk_affected_dates, restore_net_partner
 
+    batch = ImportBatch.objects.select_for_update().get(id=batch_id)
     batch_date = batch.book_date
 
-    # 1. Kumpulkan ID bank mutation dan otomax entry milik batch ini
-    bank_ids = list(batch.mutations.values_list("id", flat=True))
-    otomax_ids = list(batch.otomax.values_list("id", flat=True))
+    # 1. Kumpulkan baris milik batch ini
+    bank_objs = list(batch.mutations.all())
+    otomax_objs = list(batch.otomax.select_related("net_pair"))
+    bank_ids = [b.id for b in bank_objs]
+    otomax_ids = [o.id for o in otomax_objs]
+
+    # Day-Lock: bukan cuma tanggal batch -- baris file multi-hari, pasangan cocoknya, dan
+    # lawan netralnya bisa ada di tanggal lain yang sudah tutup buku.
+    affected = {batch_date}
+    affected |= set(batch.debits.values_list("book_date", flat=True))
+    affected |= set(batch.excluded_transactions.values_list("book_date", flat=True))
+    for src, objs in ((SRC_BANK, bank_objs), (SRC_OTOMAX, otomax_objs)):
+        for dates in bulk_affected_dates(src, objs).values():
+            affected |= dates
+    locked = sorted(ReconDay.objects.filter(book_date__in=affected, locked=True).values_list("book_date", flat=True))
+    if locked and not include_closed:
+        tgl = ", ".join(d.strftime("%d %b %Y") for d in locked)
+        raise DayIsClosed(f"Tanggal {tgl} sudah ditutup — penghapusan batch ditolak.")
 
     # 2. Cari semua pasangan Match yang melibatkan mutasi / entri di batch ini (termasuk M2M QRIS AGGREGATE)
     matches = Match.objects.filter(
@@ -155,6 +168,14 @@ def delete_import_batch(batch_id: int, *, include_closed: bool = False) -> dict:
         ).exists():
             OtomaxEntry.objects.filter(id=o_id).update(match_status=MatchStatus.UNMATCHED)
 
+    # 6b. Lawan netral di batch lain dikembalikan ke Pending Settle -- dulu tetap IGNORED
+    #     (net_pair jadi NULL karena SET_NULL) dan hilang dari semua antrean.
+    in_batch = set(otomax_ids)
+    unnetted = 0
+    for o in otomax_objs:
+        if o.net_pair_id and o.net_pair_id not in in_batch:
+            unnetted += restore_net_partner(o.net_pair_id, o.pk, "Lawan netralnya ikut terhapus bersama batch")
+
     # 7. Hapus batch (cascade ke BankMutation, OtomaxEntry, DebitIgnored, ExcludedTransaction)
     actual_rows = len(bank_ids) + len(otomax_ids) + batch.debits.count()
     res = {
@@ -162,13 +183,13 @@ def delete_import_batch(batch_id: int, *, include_closed: bool = False) -> dict:
         "filename": batch.source_filename,
         "book_date": batch_date,
         "row_count": batch.row_count or actual_rows,
-        "matches_unlinked": len(surviving_bank_ids) + len(surviving_otomax_ids),
+        "matches_unlinked": len(surviving_bank_ids) + len(surviving_otomax_ids) + unnetted,
     }
     batch.delete()
 
-    # 8. Hitung ulang ReconDay jika belum dikunci
-    if day and not day.locked:
-        refresh_recon_day(batch_date)
+    # 8. Hitung ulang semua hari terdampak yang belum dikunci
+    for d in affected:
+        refresh_recon_day(d)
 
     return res
 

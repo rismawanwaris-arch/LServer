@@ -133,3 +133,80 @@ def test_delete_import_batch_resets_aggregate_qris_match():
     b.refresh_from_db()
     assert b.match_status == MatchStatus.UNMATCHED
 
+
+
+# --- Regresi: hapus batch vs lawan netral & tutup buku di tanggal lain -----------------
+
+
+def _otomax_in(batch, desc, amount, category, reseller, book_date=BD):
+    from apps.core.enums import OtomaxCategory
+    from apps.core.normalize import norm_ref, ref_core
+
+    return OtomaxEntry.objects.create(
+        import_batch=batch,
+        book_date=book_date,
+        reseller_name_raw=reseller,
+        amount=amount,
+        description_raw=desc,
+        category=getattr(OtomaxCategory, category),
+        ref_normalized=norm_ref(desc),
+        ref_core=ref_core(desc),
+        row_hash=f"{desc}|{amount}|{book_date}",
+    )
+
+
+@pytest.mark.django_db
+def test_delete_import_batch_restores_net_pair_partner_in_other_batch():
+    """Dulu: lawan netral di batch lain tetap IGNORED dengan net_pair=None (SET_NULL) --
+    hilang dari semua antrean selamanya."""
+    from apps.core.enums import DiscrepancyKind, DiscrepancyStatus
+    from apps.recon.resolve import manual_net_reversal
+
+    batch_a = ImportBatch.objects.create(channel=Channel.OTOMAX, book_date=BD, source_filename="a", file_hash="ha")
+    batch_b = ImportBatch.objects.create(channel=Channel.OTOMAX, book_date=BD, source_filename="b", file_hash="hb")
+    rev = _otomax_in(batch_a, "REV Transfer dari PLC128 - PLC PD3", -450000, "REVERSAL", "DANI")
+    refund = _otomax_in(batch_b, "REFUND FROM OTO3386 - DANI", 450000, "OTHER", "PLC PD3")
+    manual_net_reversal(rev, refund, note="salah tembak")
+
+    delete_import_batch(batch_a.id)
+
+    refund.refresh_from_db()
+    assert refund.net_pair_id is None
+    assert refund.match_status == MatchStatus.PENDING_SETTLE
+    assert refund.discrepancies.filter(status=DiscrepancyStatus.OPEN, kind=DiscrepancyKind.OTOMAX_ONLY).exists()
+
+
+@pytest.mark.django_db
+def test_delete_import_batch_blocked_when_partner_day_closed():
+    """Dulu: hanya tanggal batch yang dicek -- pasangan di hari yang sudah tutup buku
+    ikut berubah status (melanggar Day-Lock)."""
+    from datetime import timedelta
+
+    from apps.recon.resolve import manual_pair_transactions
+
+    closed_day = BD - timedelta(days=1)
+    b = _bank("TRANSFER SUSULAN 999", "500000", book_date=closed_day)
+    o = _otomax("TARTUN TF BRI SUSULAN 999", "500000", book_date=BD)
+    manual_pair_transactions(b, o)
+    ReconDay.objects.update_or_create(book_date=closed_day, defaults={"locked": True})
+
+    with pytest.raises(DayIsClosed, match="05 Sep 2026|04 Sep 2026"):
+        delete_import_batch(o.import_batch.id)
+    assert OtomaxEntry.objects.filter(id=o.id).exists()
+    b.refresh_from_db()
+    assert b.match_status == MatchStatus.MANUAL
+
+
+@pytest.mark.django_db
+def test_delete_import_batch_blocked_when_row_date_differs_from_batch_date():
+    """File multi-hari: batch bertanggal 5 Sep tapi berisi baris 4 Sep yang sudah ditutup."""
+    from datetime import timedelta
+
+    closed_day = BD - timedelta(days=1)
+    b = _bank("BARIS HARI SEBELUMNYA", "10000", book_date=closed_day)
+    ImportBatch.objects.filter(id=b.import_batch_id).update(book_date=BD)
+    ReconDay.objects.update_or_create(book_date=closed_day, defaults={"locked": True})
+
+    with pytest.raises(DayIsClosed):
+        delete_import_batch(b.import_batch_id)
+    assert BankMutation.objects.filter(id=b.id).exists()

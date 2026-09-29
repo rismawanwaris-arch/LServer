@@ -103,7 +103,7 @@ def _active_matches_of(src, ids):
     )
 
 
-def _bulk_affected_dates(src, objs) -> dict[int, set]:
+def bulk_affected_dates(src, objs) -> dict[int, set]:
     """Seperti _affected_dates, tapi untuk banyak baris sekaligus (beberapa query saja)."""
     dates = {o.pk: {o.book_date} for o in objs}
     if src in (SRC_BANK, SRC_OTOMAX) and objs:
@@ -132,7 +132,7 @@ def plan_delete(keys) -> DeletePlan:
         if src == SRC_OTOMAX:
             qs = qs.select_related("net_pair")
         objs = list(qs)
-        dates = _bulk_affected_dates(src, objs)
+        dates = bulk_affected_dates(src, objs)
         all_dates = set().union(*dates.values()) if dates else set()
         locked = set(ReconDay.objects.filter(book_date__in=all_dates, locked=True).values_list("book_date", flat=True))
         for o in objs:
@@ -167,10 +167,26 @@ def count_paired(plan: DeletePlan) -> int:
     return n
 
 
+def restore_net_partner(partner_id: int, deleted_pk: int, note: str) -> bool:
+    """Lawan netral dari entri Otomax yang akan dihapus: lepas net_pair-nya dan kembalikan ke
+    Pending Settle (+ selisih OTOMAX_ONLY), supaya tidak tersembunyi selamanya sebagai IGNORED."""
+    from .engine.leftovers import make_otomax_only
+
+    partner = OtomaxEntry.objects.select_for_update().filter(pk=partner_id).first()
+    if partner is None or partner.net_pair_id != deleted_pk or partner.match_status != MatchStatus.IGNORED:
+        return False
+    partner.net_pair = None
+    partner.match_status = MatchStatus.PENDING_SETTLE
+    partner.note = note
+    partner.save(update_fields=["net_pair", "match_status", "note", "updated_at"])
+    if not partner.discrepancies.filter(status=DiscrepancyStatus.OPEN).exists():
+        make_otomax_only(partner)
+    return True
+
+
 @transaction.atomic
 def delete_raw_rows(keys, user=None) -> dict:
     """Hapus baris-baris mentah yang lolos plan_delete(). Return ringkasan hitungan."""
-    from .engine.leftovers import make_otomax_only
     from .resolve import unpair_match
 
     plan = plan_delete(keys)
@@ -194,15 +210,7 @@ def delete_raw_rows(keys, user=None) -> dict:
 
         # 2. Lawan netral dikembalikan ke Pending Settle (dulu bisa tersembunyi selamanya).
         if src == SRC_OTOMAX and obj.net_pair_id:
-            partner = OtomaxEntry.objects.select_for_update().get(pk=obj.net_pair_id)
-            if partner.net_pair_id == obj.pk and partner.match_status == MatchStatus.IGNORED:
-                partner.net_pair = None
-                partner.match_status = MatchStatus.PENDING_SETTLE
-                partner.note = "Lawan netralnya dihapus dari Audit Data"
-                partner.save(update_fields=["net_pair", "match_status", "note", "updated_at"])
-                if not partner.discrepancies.filter(status=DiscrepancyStatus.OPEN).exists():
-                    make_otomax_only(partner)
-                unnetted += 1
+            unnetted += restore_net_partner(obj.net_pair_id, obj.pk, "Lawan netralnya dihapus dari Audit Data")
 
         # 3. Catatan pasangan lama (sudah dibatalkan) & selisih milik baris ini (FK PROTECT).
         if src in (SRC_BANK, SRC_OTOMAX):
