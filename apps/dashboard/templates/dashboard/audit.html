@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+{% load money %}
+{% block title %}Audit Data — RekonMutasi{% endblock %}
+
+{% block content %}
+<div class="mb-5 flex flex-wrap items-end justify-between gap-3">
+  <div>
+    <h1 class="page-title">Audit Data</h1>
+    <p class="page-sub">
+      Semua data yang masuk —
+      {% if filters.is_range %}<b class="font-medium text-slate-700 dark:text-slate-300">{{ filters.start|date:"d M Y" }} – {{ filters.end|date:"d M Y" }}</b>{% else %}<b class="font-medium text-slate-700 dark:text-slate-300">{{ filters.start|date:"d F Y" }}</b>{% endif %}
+      — mutasi bank, debit, Otomax, dan yang dikecualikan aturan, lengkap dengan status cocoknya.
+    </p>
+  </div>
+  <a href="{% url 'audit-export' %}?{{ export_query }}" class="btn-secondary">
+    <svg class="icon"><use href="#i-download"/></svg>Export Excel ({{ result_count }} baris)
+  </a>
+</div>
+
+<!-- Cakupan tanggal: satu tanggal (ikut bilah atas) atau rentang -->
+<div class="mb-4 flex flex-wrap items-center gap-3">
+  <nav class="seg" aria-label="Cakupan tanggal">
+    <a href="{% url 'audit-data' %}?d={{ filters.start|date:'Y-m-d' }}" class="seg-item {% if not range_mode %}seg-item-active{% endif %}"{% if not range_mode %} aria-current="page"{% endif %}>
+      <svg class="icon h-3.5 w-3.5"><use href="#i-cal"/></svg>Per tanggal
+    </a>
+    <a href="{% url 'audit-data' %}?start_date={{ range_start|date:'Y-m-d' }}&end_date={{ filters.end|date:'Y-m-d' }}" class="seg-item {% if range_mode %}seg-item-active{% endif %}"{% if range_mode %} aria-current="page"{% endif %}>
+      Rentang tanggal
+    </a>
+  </nav>
+  <span class="text-xs text-slate-500">{% if range_mode %}Maksimal {{ max_range }} hari.{% else %}Ganti tanggal lewat bilah atas.{% endif %}</span>
+</div>
+
+<!-- Ringkasan per sisi & status (klik untuk menyaring) -->
+<div class="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+  {% for c in cards %}
+  <div class="card p-0">
+    <div class="flex items-center justify-between border-b border-slate-200 px-4 py-2.5 dark:border-slate-800">
+      <div class="kpi-label">
+        <span class="h-2 w-2 rounded-sm {% if c.side == 'bank' %}bg-indigo-600 dark:bg-indigo-400{% else %}bg-violet-600 dark:bg-violet-400{% endif %}"></span>{{ c.title }}
+      </div>
+      <div class="money text-xs text-slate-500"><b class="text-slate-900 dark:text-white">{{ c.n }}</b> baris · Rp {{ c.amount|rupiah }}</div>
+    </div>
+    {% if c.items %}
+    <ul class="divide-y divide-slate-100 dark:divide-slate-800">
+      {% for it in c.items %}
+      <li>
+        <a href="?{{ status_query }}{% if status_query %}&{% endif %}{% if not it.active %}side={{ c.side }}&status={{ it.status }}{% endif %}"
+           class="flex items-center justify-between gap-3 px-4 py-2 text-xs transition hover:bg-slate-50 dark:hover:bg-slate-800/50 {% if it.active %}bg-slate-50 dark:bg-slate-800/60{% endif %}"
+           title="{% if it.active %}Hapus saringan status{% else %}Tampilkan hanya {{ it.label|lower }}{% endif %}">
+          <span class="badge-{{ it.tone }}">{{ it.label }}</span>
+          <span class="money whitespace-nowrap text-slate-600 dark:text-slate-300">
+            <b class="text-slate-900 dark:text-white">{{ it.n }}</b> · <span class="{% if it.amount < 0 %}text-rose-600 dark:text-rose-400{% endif %}">Rp {{ it.amount|rupiah }}</span>
+          </span>
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <div class="px-4 py-6 text-center text-xs text-slate-500">Tidak ada data {{ c.title|lower }} untuk filter ini.</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+<!-- Filter detail -->
+<form method="get" class="mb-4 flex flex-wrap items-center gap-2">
+  {% if range_mode %}
+  <div class="flex items-center gap-1.5 text-xs text-slate-500">
+    <label for="a-start" class="sr-only">Dari tanggal</label>
+    <input id="a-start" type="date" name="start_date" value="{{ filters.start|date:'Y-m-d' }}" class="field-input" title="Dari tanggal">
+    <span>–</span>
+    <label for="a-end" class="sr-only">Sampai tanggal</label>
+    <input id="a-end" type="date" name="end_date" value="{{ filters.end|date:'Y-m-d' }}" class="field-input" title="Sampai tanggal">
+  </div>
+  {% else %}
+  <input type="hidden" name="d" value="{{ filters.start|date:'Y-m-d' }}">
+  {% endif %}
+  <nav class="seg" aria-label="Sisi data">
+    {% for val, label in sides %}
+    <a href="?{{ side_query }}{% if val %}{% if side_query %}&{% endif %}side={{ val }}{% endif %}"
+       class="seg-item {% if filters.side == val %}seg-item-active{% endif %}"{% if filters.side == val %} aria-current="page"{% endif %}>{{ label }}</a>
+    {% endfor %}
+  </nav>
+  {% if filters.side %}<input type="hidden" name="side" value="{{ filters.side }}">{% endif %}
+  <label for="a-source" class="sr-only">Sumber data</label>
+  <select id="a-source" name="source" onchange="this.form.submit()" class="field-select">
+    <option value="">Semua sumber</option>
+    {% for val, label in sources %}
+    <option value="{{ val }}" {% if filters.source == val %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <label for="a-status" class="sr-only">Status</label>
+  <select id="a-status" name="status" onchange="this.form.submit()" class="field-select">
+    <option value="">Semua status</option>
+    {% for val, label in statuses %}
+    <option value="{{ val }}" {% if filters.status == val %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <div class="relative min-w-[240px] flex-1 sm:max-w-md">
+    <svg class="icon pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400"><use href="#i-search"/></svg>
+    <label for="a-q" class="sr-only">Cari keterangan, nama, nominal, atau nama file</label>
+    <input id="a-q" type="search" name="q" value="{{ filters.q }}" placeholder="Keterangan, reseller, nominal (500.000), nama file…" class="field-input w-full pl-8">
+  </div>
+  <button type="submit" class="btn-primary px-3 py-1.5 text-xs">Terapkan</button>
+  {% if has_filter %}
+  <a href="?{{ base_query }}" class="btn-ghost px-3 py-1.5 text-xs">
+    <svg class="icon h-3.5 w-3.5"><use href="#i-x"/></svg>Reset filter
+  </a>
+  {% endif %}
+</form>
+
+<!-- Tabel semua baris + pilih & hapus -->
+<div class="card overflow-hidden p-0"
+     x-data="{
+       selected: [],
+       allFiltered: false,
+       openRows: [],
+       total: {{ result_count }},
+       toggle(k) { this.openRows.includes(k) ? this.openRows = this.openRows.filter(x => x !== k) : this.openRows.push(k); },
+       isOpen(k) { return this.openRows.includes(k); },
+       visibleKeys() { return [...this.$root.querySelectorAll('input[data-row-key]')].map(el => el.value); },
+       selectVisible() { this.allFiltered = false; this.selected = this.visibleKeys(); },
+       clearSel() { this.allFiltered = false; this.selected = []; },
+       get count() { return this.allFiltered ? this.total : this.selected.length; }
+     }">
+
+  <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-2.5 dark:border-slate-800">
+    <div class="text-xs text-slate-600 dark:text-slate-400">
+      <span class="money font-semibold text-slate-900 dark:text-white">{{ result_count }}</span> baris
+      {% if total_amount.bank %}<span class="money">· bank <span class="{% if total_amount.bank < 0 %}text-rose-600 dark:text-rose-400{% else %}text-indigo-700 dark:text-indigo-300{% endif %}">Rp {{ total_amount.bank|rupiah }}</span></span>{% endif %}
+      {% if total_amount.otomax %}<span class="money">· Otomax <span class="{% if total_amount.otomax < 0 %}text-rose-600 dark:text-rose-400{% else %}text-violet-700 dark:text-violet-300{% endif %}">Rp {{ total_amount.otomax|rupiah }}</span></span>{% endif %}
+      <span class="text-slate-400">· klik baris untuk detail</span>
+    </div>
+    {% if result_count %}
+    <div class="flex flex-wrap items-center gap-2">
+      <button type="button" @click="selectVisible()" class="btn-ghost px-2.5 py-1 text-xs">Pilih yang tampil</button>
+      {% if result_count > page_obj.paginator.per_page %}
+      <button type="button" @click="allFiltered = true; selected = visibleKeys()" class="btn-ghost px-2.5 py-1 text-xs">
+        Pilih semua {{ result_count }} hasil filter
+      </button>
+      {% endif %}
+      <button type="button" x-show="count" x-cloak @click="clearSel()" class="btn-ghost px-2.5 py-1 text-xs">Batal pilih</button>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead>
+        <tr>
+          <th class="w-8 px-3"><span class="sr-only">Pilih</span></th>
+          <th>{% if filters.is_range %}Tanggal{% else %}Waktu{% endif %}</th>
+          <th>Sumber</th>
+          <th>Pihak / Keterangan</th>
+          <th class="text-right">Nominal</th>
+          <th>Status</th>
+          <th class="text-right"><span class="sr-only">Aksi</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% include "dashboard/_audit_rows.html" %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Bilah aksi: muncul saat ada baris dipilih -->
+  <div x-show="count" x-cloak x-transition.opacity
+       class="sticky bottom-0 z-20 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95">
+    <div class="text-xs text-slate-700 dark:text-slate-300">
+      <b class="money text-slate-900 dark:text-white" x-text="count"></b> baris dipilih
+      <span x-show="allFiltered" class="text-slate-500">(semua hasil filter, termasuk yang belum dimuat)</span>
+    </div>
+    <form hx-post="{% url 'audit-delete-preview' %}" hx-target="#audit-confirm" hx-swap="innerHTML">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ list_url }}">
+      <input type="hidden" name="keys" :value="selected.join(',')">
+      <input type="hidden" name="all" :value="allFiltered ? '1' : ''">
+      {% for k, v in filter_items %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+      <button type="submit" class="btn-danger px-3 py-1.5 text-xs">
+        <svg class="icon h-3.5 w-3.5"><use href="#i-trash"/></svg>Hapus baris terpilih…
+      </button>
+    </form>
+  </div>
+</div>
+
+<!-- Panel konfirmasi hapus (diisi HTMX) -->
+<div id="audit-confirm"></div>
+{% endblock %}

@@ -31,6 +31,12 @@ urlpatterns = [
     # 6. Riwayat & Laporan
     path("reports/", views.reports_view, name="reports"),
     path("reports/export/", views.reports_export_action, name="reports-export"),
+    # 6b. Audit Data: semua transaksi mentah, filter, export, hapus per baris
+    path("audit/", views.audit_data_view, name="audit-data"),
+    path("audit/detail/<str:src>/<int:pk>/", views.audit_detail_view, name="audit-detail"),
+    path("audit/export/", views.audit_export_action, name="audit-export"),
+    path("audit/hapus/periksa/", views.audit_delete_preview, name="audit-delete-preview"),
+    path("audit/hapus/", views.audit_delete_action, name="audit-delete"),
     # 7. Aturan Filter Pemisahan Non-Engine
     path("rules/", views.exclusion_rules_view, name="exclusion-rules"),
     path("rules/add/", views.add_exclusion_rule_action, name="add-exclusion-rule"),

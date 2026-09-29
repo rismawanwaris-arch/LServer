@@ -4,7 +4,11 @@ module.exports = {
   content: ["./apps/**/templates/**/*.html"],
   // Kelas yang dirakit dinamis di template (mis. "nav-count-{{ tone }}") tidak terbaca
   // pemindai -- daftarkan di sini supaya tidak terbuang saat build.
-  safelist: ["nav-count-mute", "nav-count-warn", "nav-count-crit", "nav-count-info"],
+  safelist: [
+    "nav-count-mute", "nav-count-warn", "nav-count-crit", "nav-count-info",
+    // Audit Data: badge-{{ tone }} dirakit dari audit.STATUS_TONES
+    "badge-good", "badge-warn", "badge-crit", "badge-mute", "badge-info",
+  ],
   // Tema dipilih lewat kelas .dark di <html> (tombol tema di bilah atas).
   darkMode: "class",
   theme: {

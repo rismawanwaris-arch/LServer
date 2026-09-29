@@ -1,0 +1,81 @@
+{% load money %}
+<div x-data="{ typed: '' }" @keydown.escape.window="$root.remove()"
+     class="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 p-4 sm:items-center"
+     role="dialog" aria-modal="true" aria-labelledby="audit-confirm-title">
+  <div class="absolute inset-0" @click="$root.remove()" aria-hidden="true"></div>
+  <div class="relative w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+    <div class="mb-3 flex items-start justify-between gap-3">
+      <h2 id="audit-confirm-title" class="text-base font-semibold text-slate-900 dark:text-white">Hapus data mentah</h2>
+      <button type="button" @click="$root.remove()" class="icon-btn" aria-label="Tutup"><svg class="icon"><use href="#i-x"/></svg></button>
+    </div>
+
+    {% if too_many %}
+    <div class="callout callout-crit text-xs">
+      <div>{{ requested }} baris terpilih — maksimal {{ max_delete }} baris sekali hapus. Persempit filter, atau pakai <b>Reset &amp; Purge Data</b> untuk mengosongkan satu hari.</div>
+    </div>
+    {% elif not plan or not plan.total %}
+    <div class="callout callout-warn text-xs">
+      <div>
+        Tidak ada baris yang bisa dihapus.
+        {% if plan.blocked %}Semua baris terpilih ada di tanggal yang sudah tutup buku.{% endif %}
+        {% if plan.missing %}{{ plan.missing }} baris sudah tidak ada.{% endif %}
+      </div>
+    </div>
+    {% else %}
+    <p class="mb-3 text-xs text-slate-600 dark:text-slate-300">
+      Yang dihapus adalah baris datanya sendiri, bukan hasil pencocokannya. Ringkasan:
+    </p>
+    <table class="mb-3 w-full text-xs">
+      <tbody>
+        {% for s in plan.by_source %}
+        <tr>
+          <td class="py-1 text-slate-700 dark:text-slate-300">{{ s.label }}</td>
+          <td class="money py-1 text-right text-slate-900 dark:text-white">{{ s.n }} baris</td>
+          <td class="money py-1 text-right font-semibold {% if s.amount < 0 %}text-rose-600 dark:text-rose-400{% else %}text-slate-900 dark:text-white{% endif %}">Rp {{ s.amount|rupiah }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <ul class="mb-3 space-y-1.5 text-xs">
+      {% if paired %}
+      <li class="callout callout-warn text-xs">
+        <div><b>{{ paired }}</b> baris masih berpasangan (cocok / dinetralkan). Pasangannya dibatalkan dulu — lawannya <b>tetap ada</b> dan kembali ke antrean belum cocok / pending settle.</div>
+      </li>
+      {% endif %}
+      {% if plan.blocked %}
+      <li class="callout callout-crit text-xs">
+        <div>
+          <b>{{ plan.blocked|length }}</b> baris dilewati karena tanggalnya (atau tanggal pasangannya) sudah tutup buku.
+          <ul class="mt-1 list-disc pl-4">
+            {% for src, o, why in plan.blocked|slice:":5" %}<li class="money">#{{ o.pk }} Rp {{ o.amount|rupiah }} — {{ why }}</li>{% endfor %}
+            {% if plan.blocked|length > 5 %}<li>…dan {{ plan.blocked|length|add:"-5" }} lainnya</li>{% endif %}
+          </ul>
+        </div>
+      </li>
+      {% endif %}
+      {% if plan.missing %}<li class="text-slate-500">{{ plan.missing }} baris sudah tidak ada (mungkin baru dihapus).</li>{% endif %}
+      <li class="text-slate-500">
+        Tercatat di log Django Admin atas nama Anda. Tidak bisa dibatalkan — kalau file aslinya di-upload ulang, baris ini akan terbaca "Baru" lagi.
+      </li>
+    </ul>
+
+    <form method="post" action="{% url 'audit-delete' %}">
+      {% csrf_token %}
+      <input type="hidden" name="keys" value="{{ keys }}">
+      <input type="hidden" name="next" value="{{ next_url }}">
+      <label for="audit-confirm-input" class="mb-1 block text-xs font-medium text-slate-700 dark:text-slate-300">
+        Ketik <b class="font-mono">HAPUS</b> untuk menghapus {{ plan.total }} baris
+      </label>
+      <input id="audit-confirm-input" name="confirm" x-model="typed" x-init="$nextTick(() => $el.focus())"
+             autocomplete="off" spellcheck="false" class="field-input mb-3 w-full font-mono" placeholder="HAPUS">
+      <div class="flex justify-end gap-2">
+        <button type="button" @click="$root.remove()" class="btn-ghost">Batal</button>
+        <button type="submit" class="btn-danger" :disabled="typed !== 'HAPUS'" :class="typed !== 'HAPUS' ? 'opacity-50 cursor-not-allowed' : ''">
+          <svg class="icon h-3.5 w-3.5"><use href="#i-trash"/></svg>Hapus {{ plan.total }} baris
+        </button>
+      </div>
+    </form>
+    {% endif %}
+  </div>
+</div>

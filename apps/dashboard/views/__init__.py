@@ -6,6 +6,13 @@ apps/dashboard/urls.py tidak perlu berubah sama sekali."""
 from __future__ import annotations
 
 from .app_settings import app_settings_view, update_app_settings_action
+from .audit import (
+    audit_data_view,
+    audit_delete_action,
+    audit_delete_preview,
+    audit_detail_view,
+    audit_export_action,
+)
 from .backup import backup_view, download_backup_action, restore_confirm_action, restore_preview_action
 from .data_admin import data_admin, purge_all_view, purge_day_view
 from .day import day_view
@@ -44,6 +51,11 @@ __all__ = [
     "app_settings_view",
     "apply_exclusion_rules_action",
     "approve_match_action",
+    "audit_data_view",
+    "audit_delete_action",
+    "audit_delete_preview",
+    "audit_detail_view",
+    "audit_export_action",
     "backup_view",
     "bulk_manual_match_action",
     "close_view",

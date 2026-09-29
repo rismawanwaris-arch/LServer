@@ -1,0 +1,78 @@
+{% load money %}
+{% for r in page_obj.object_list %}
+        <tr @click="toggle('{{ r.key }}')" class="cursor-pointer"
+            :class="(isOpen('{{ r.key }}') || selected.includes('{{ r.key }}')) ? '!bg-slate-50 dark:!bg-slate-800/50' : ''">
+          <td class="w-8 px-3" @click.stop>
+            <label class="sr-only" for="sel-{{ r.key }}">Pilih baris {{ r.key }}</label>
+            <input id="sel-{{ r.key }}" type="checkbox" value="{{ r.key }}" data-row-key x-model="selected"
+                   :disabled="allFiltered"
+                   x-init="if (allFiltered && !selected.includes($el.value)) selected.push($el.value)"
+                   class="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 dark:border-slate-600 dark:bg-slate-800">
+          </td>
+          <td class="money whitespace-nowrap text-xs text-slate-500">
+            {% if filters.is_range %}<div class="font-medium text-slate-700 dark:text-slate-300">{{ r.book_date|date:"d M" }}</div>{% endif %}
+            {{ r.when|date:"H:i:s"|default:"—" }}
+          </td>
+          <td class="whitespace-nowrap">
+            {% if r.side == "bank" %}
+            <span class="badge-info">{{ r.channel_label }}</span>
+            {% else %}
+            <span class="badge bg-violet-50 text-violet-700 ring-violet-600/20 dark:bg-violet-500/10 dark:text-violet-300 dark:ring-violet-500/25">Otomax</span>
+            {% endif %}
+            {% if r.src == "D" %}<div class="mt-0.5 text-[11px] text-slate-400">debit</div>
+            {% elif r.src == "X" %}<div class="mt-0.5 text-[11px] text-slate-400">dikecualikan</div>
+            {% elif r.category and r.category != "Top-up tarik tunai" %}<div class="mt-0.5 text-[11px] text-slate-400">{{ r.category }}</div>{% endif %}
+          </td>
+          <td>
+            {% if r.party %}<div class="max-w-[14rem] truncate text-[13px] font-semibold xl:max-w-[20rem] text-slate-900 dark:text-white" title="{{ r.party }}">{{ r.party }}</div>{% endif %}
+            <div class="max-w-[14rem] truncate font-mono text-xs xl:max-w-[20rem] text-slate-600 dark:text-slate-300" title="{{ r.description }}">{{ r.description }}</div>
+          </td>
+          <td class="money whitespace-nowrap text-right font-semibold {% if r.amount < 0 %}text-rose-600 dark:text-rose-400{% else %}text-slate-900 dark:text-white{% endif %}">
+            Rp&nbsp;{{ r.amount|rupiah }}
+          </td>
+          <td>
+            <span class="badge-{{ r.tone }}">{{ r.status_label }}</span>
+            {% if r.reason %}<div class="mt-0.5 line-clamp-2 min-w-[12rem] max-w-[18rem] text-[11px] text-slate-500 dark:text-slate-400" title="{{ r.reason }}">{{ r.reason }}</div>{% endif %}
+          </td>
+          <td class="whitespace-nowrap text-right" @click.stop>
+            <div class="flex items-center justify-end gap-1">
+              {% if r.link %}
+              <a href="{{ r.link }}" class="icon-btn" title="Buka di halamannya" aria-label="Buka di halamannya">
+                <svg class="icon h-3.5 w-3.5"><use href="#i-external"/></svg>
+              </a>
+              {% endif %}
+              <button type="button" @click="toggle('{{ r.key }}')" class="icon-btn" :aria-expanded="isOpen('{{ r.key }}')" aria-label="Detail">
+                <svg class="icon h-3.5 w-3.5 transition-transform" :class="isOpen('{{ r.key }}') ? 'rotate-90' : ''"><use href="#i-right"/></svg>
+              </button>
+            </div>
+          </td>
+        </tr>
+        <tr x-show="isOpen('{{ r.key }}')" x-cloak style="display: none;" class="!bg-slate-50 dark:!bg-slate-950/40">
+          <td colspan="7" class="p-3 sm:p-4">
+            <div hx-get="{% url 'audit-detail' r.src r.pk %}" hx-trigger="intersect once" hx-swap="outerHTML">
+              <div class="flex items-center gap-2 text-xs text-slate-500">
+                <svg class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                Memuat detail…
+              </div>
+            </div>
+          </td>
+        </tr>
+{% empty %}
+        <tr><td colspan="7" class="py-12 text-center text-sm text-slate-500">Tidak ada data untuk tanggal & filter ini.</td></tr>
+{% endfor %}
+
+{% if page_obj.has_next %}
+<tr hx-get="{{ list_url }}{% if '?' in list_url %}&{% else %}?{% endif %}page={{ page_obj.next_page_number }}"
+    hx-trigger="revealed" hx-swap="outerHTML" hx-target="this">
+  <td colspan="7" class="py-4 text-center text-xs text-slate-400">
+    <span class="inline-flex items-center gap-2">
+      <svg class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+      Memuat baris lainnya…
+    </span>
+  </td>
+</tr>
+{% elif page_obj.paginator.count > page_obj.paginator.per_page %}
+<tr>
+  <td colspan="7" class="py-4 text-center text-[11px] text-slate-400">Semua {{ page_obj.paginator.count }} baris sudah ditampilkan.</td>
+</tr>
+{% endif %}

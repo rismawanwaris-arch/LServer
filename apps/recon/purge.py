@@ -168,27 +168,35 @@ def delete_import_batch(batch_id: int, *, include_closed: bool = False) -> dict:
 
     # 8. Hitung ulang ReconDay jika belum dikunci
     if day and not day.locked:
-        from .close import compute_totals
-
-        totals = compute_totals(batch_date)
-        day.total_in_bri = totals["bri"]
-        day.total_in_bca = totals["bca"]
-        day.total_in_merchant_bca = totals["merchant_bca"]
-        day.total_in_mandiri = totals["mandiri"]
-        day.total_in_bank = totals["bank"]
-        day.total_out_otomax = totals["otomax"]
-        day.selisih_initial = totals["selisih"]
-        day.matched_count = Match.objects.filter(book_date=batch_date, voided_at__isnull=True).count()
-        day.unmatched_count = (
-            BankMutation.objects.filter(book_date=batch_date, match_status=MatchStatus.UNMATCHED).count()
-            + OtomaxEntry.objects.filter(
-                book_date=batch_date,
-                category=OtomaxCategory.TOPUP_TARTUN,
-                match_status__in=[MatchStatus.UNMATCHED, MatchStatus.PENDING_SETTLE],
-            ).count()
-        )
-        day.recompute_selisih()
-        day.save()
+        refresh_recon_day(batch_date)
 
     return res
 
+
+def refresh_recon_day(book_date: date) -> None:
+    """Hitung ulang total & selisih ReconDay yang BELUM dikunci setelah data mentah
+    berkurang (hapus batch / hapus baris dari Audit Data). Hari terkunci tidak disentuh."""
+    day = ReconDay.objects.select_for_update().filter(book_date=book_date, locked=False).first()
+    if not day:
+        return
+    from .close import compute_totals
+
+    totals = compute_totals(book_date)
+    day.total_in_bri = totals["bri"]
+    day.total_in_bca = totals["bca"]
+    day.total_in_merchant_bca = totals["merchant_bca"]
+    day.total_in_mandiri = totals["mandiri"]
+    day.total_in_bank = totals["bank"]
+    day.total_out_otomax = totals["otomax"]
+    day.selisih_initial = totals["selisih"]
+    day.matched_count = Match.objects.filter(book_date=book_date, voided_at__isnull=True).count()
+    day.unmatched_count = (
+        BankMutation.objects.filter(book_date=book_date, match_status=MatchStatus.UNMATCHED).count()
+        + OtomaxEntry.objects.filter(
+            book_date=book_date,
+            category=OtomaxCategory.TOPUP_TARTUN,
+            match_status__in=[MatchStatus.UNMATCHED, MatchStatus.PENDING_SETTLE],
+        ).count()
+    )
+    day.recompute_selisih()
+    day.save()

@@ -31,11 +31,12 @@ _DATED = {
     "matches",
     "reports",
     "exclusion-rules",
+    "audit-data",
 }
 _STEPPER = _DATED - {"reports"}
 # Halaman yang juga punya mode "semua tanggal" (tanpa ?d=): bilah atasnya harus bilang
 # "Semua tanggal", bukan tanggal terakhir dari sesi -- kalau tidak, judul dan isi rancu.
-_OPTIONAL_DATE = {"reversal", "discrepancy-list"}
+_OPTIONAL_DATE = {"reversal", "discrepancy-list", "audit-data"}
 
 
 @dataclass
@@ -73,7 +74,10 @@ def _menu(user) -> list[tuple[str, list[NavItem]]]:
                 NavItem("matches", "Hasil Cocok", "checks", tone="info"),
             ],
         ),
-        ("Laporan", [NavItem("reports", "Laporan Rekonsiliasi", "file")]),
+        (
+            "Laporan",
+            [NavItem("reports", "Laporan Rekonsiliasi", "file"), NavItem("audit-data", "Audit Data", "eye")],
+        ),
         ("Sistem", sistem),
     ]
 
