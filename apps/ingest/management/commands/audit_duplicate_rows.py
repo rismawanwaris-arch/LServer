@@ -1,8 +1,9 @@
 """Perintah audit baca-saja untuk mendeteksi transaksi ganda historis (Keputusan D).
 
-Mencari baris transaksi di BankMutation dan OtomaxEntry yang memiliki:
-1. Sidik persis sama (row_hash) jika ada inkonsistensi
-2. Kunci stabil sama (waktu presisi + nominal, atau no. referensi) walau keterangan beda
+Mencari baris BankMutation / OtomaxEntry yang punya KUNCI STABIL sama -- aturan yang
+PERSIS sama dengan pemeriksa upload (apps.ingest.review): waktu presisi (jam != 00:00:00)
++ nominal, atau no. referensi + tanggal + nominal. Bank yang cuma punya tanggal (BCA,
+Merchant BCA tanpa ref) tidak dicek, karena tanggal+nominal kembar di sana sering SAH.
 
 Perintah ini 100% BACA-SAJA (read-only) dan tidak mengubah database.
 """
@@ -10,13 +11,12 @@ Perintah ini 100% BACA-SAJA (read-only) dan tidak mengubah database.
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, time
 
 from django.core.management.base import BaseCommand
-from django.db.models import Count
 
 from apps.core.enums import Channel
 from apps.ingest.models import BankMutation, OtomaxEntry
+from apps.ingest.review import bank_stable_key, otomax_stable_key
 
 
 class Command(BaseCommand):
@@ -24,8 +24,12 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument("--date", type=str, help="Filter tanggal buku tertentu (YYYY-MM-DD)")
-        parser.add_argument("--channel", type=str, help="Filter channel tertentu (BCA, MANDIRI, BRI, OTOMAX)")
-        parser.add_argument("--limit", type=int, default=20, help="Batas contoh kasus yang ditampilkan (default: 20)")
+        parser.add_argument(
+            "--channel", type=str, help="Filter channel tertentu (BRI, BCA, MANDIRI, MERCHANT_BCA, OTOMAX)"
+        )
+        parser.add_argument(
+            "--limit", type=int, default=20, help="Batas contoh kelompok yang ditampilkan (default: 20)"
+        )
 
     def handle(self, *args, **options):
         date_str = options.get("date")
@@ -38,120 +42,44 @@ class Command(BaseCommand):
         if channel_filter:
             self.stdout.write(f"Filter channel: {channel_filter}")
 
-        # 1. Audit BankMutation
-        self.stdout.write("\nMemeriksa BankMutation...")
-        bank_qs = BankMutation.objects.select_related("import_batch")
-        if date_str:
-            bank_qs = bank_qs.filter(book_date=date_str)
-        if channel_filter:
-            bank_qs = bank_qs.filter(channel=channel_filter)
+        if channel_filter != Channel.OTOMAX:
+            bank_qs = BankMutation.objects.select_related("import_batch")
+            if date_str:
+                bank_qs = bank_qs.filter(book_date=date_str)
+            if channel_filter:
+                bank_qs = bank_qs.filter(channel=channel_filter)
+            groups = defaultdict(list)
+            for m in bank_qs.iterator():
+                key = bank_stable_key(m.channel, m.txn_datetime, m.book_date, m.external_ref, m.amount)
+                if key is not None:
+                    groups[key].append(m)
+            self._report("Bank", bank_qs.count(), groups, limit)
 
-        total_bank = bank_qs.count()
-        self.stdout.write(f"Total baris BankMutation diperiksa: {total_bank}")
-
-        # a. Duplikat Kunci Stabil: Channel non-BCA dengan waktu presisi (jam != 00:00:00) + nominal
-        # BCA dikecualikan dari kunci waktu karena jamnya selalu 00:00:00
-        stable_bank_dups = (
-            bank_qs.exclude(channel=Channel.BCA)
-            .exclude(txn_datetime__isnull=True)
-            .values("channel", "txn_datetime", "amount")
-            .annotate(cnt=Count("id"))
-            .filter(cnt__gt=1)
-            .order_by("-cnt")
-        )
-
-        bank_dup_count = stable_bank_dups.count()
-        self.stdout.write(f"Ditemukan kelompok duplikat waktu presisi + nominal di Bank: {bank_dup_count}")
-
-        shown = 0
-        for grp in stable_bank_dups[:limit]:
-            rows = list(
-                bank_qs.filter(
-                    channel=grp["channel"],
-                    txn_datetime=grp["txn_datetime"],
-                    amount=grp["amount"],
-                )
-            )
-            self.stdout.write(
-                self.style.WARNING(
-                    f"\n  [Bank] {grp['channel']} | Waktu: {grp['txn_datetime']} | Nominal: {grp['amount']} ({len(rows)} baris)"
-                )
-            )
-            for r in rows:
-                b = r.import_batch
-                batch_str = f"Batch #{b.id} ({b.source_filename if b else '-'})" if b else "-"
-                self.stdout.write(f"    - ID: {r.id} | {batch_str} | Ket: {r.description_raw[:70]}")
-            shown += 1
-
-        # b. Duplikat nomor referensi (bila ada)
-        ref_bank_dups = (
-            bank_qs.exclude(external_ref="")
-            .exclude(external_ref__isnull=True)
-            .values("channel", "book_date", "external_ref", "amount")
-            .annotate(cnt=Count("id"))
-            .filter(cnt__gt=1)
-            .order_by("-cnt")
-        )
-        ref_dup_count = ref_bank_dups.count()
-        if ref_dup_count > 0:
-            self.stdout.write(f"\nDitemukan kelompok duplikat no. referensi + nominal di Bank: {ref_dup_count}")
-            for grp in ref_bank_dups[:limit]:
-                rows = list(
-                    bank_qs.filter(
-                        channel=grp["channel"],
-                        book_date=grp["book_date"],
-                        external_ref=grp["external_ref"],
-                        amount=grp["amount"],
-                    )
-                )
-                self.stdout.write(
-                    self.style.WARNING(
-                        f"\n  [Bank Ref] {grp['channel']} | Ref: {grp['external_ref']} | Nominal: {grp['amount']} ({len(rows)} baris)"
-                    )
-                )
-                for r in rows:
-                    b = r.import_batch
-                    batch_str = f"Batch #{b.id} ({b.source_filename if b else '-'})" if b else "-"
-                    self.stdout.write(f"    - ID: {r.id} | {batch_str} | Ket: {r.description_raw[:70]}")
-
-        # 2. Audit OtomaxEntry
         if not channel_filter or channel_filter == Channel.OTOMAX:
-            self.stdout.write("\nMemeriksa OtomaxEntry...")
             oto_qs = OtomaxEntry.objects.select_related("import_batch")
             if date_str:
                 oto_qs = oto_qs.filter(book_date=date_str)
-
-            total_oto = oto_qs.count()
-            self.stdout.write(f"Total baris OtomaxEntry diperiksa: {total_oto}")
-
-            # Kunci stabil Otomax: waktu entri presisi + reseller_name_raw + nominal
-            stable_oto_dups = (
-                oto_qs.exclude(entry_datetime__isnull=True)
-                .values("entry_datetime", "reseller_name_raw", "amount")
-                .annotate(cnt=Count("id"))
-                .filter(cnt__gt=1)
-                .order_by("-cnt")
-            )
-
-            oto_dup_count = stable_oto_dups.count()
-            self.stdout.write(f"Ditemukan kelompok duplikat waktu + reseller + nominal di Otomax: {oto_dup_count}")
-
-            for grp in stable_oto_dups[:limit]:
-                rows = list(
-                    oto_qs.filter(
-                        entry_datetime=grp["entry_datetime"],
-                        reseller_name_raw=grp["reseller_name_raw"],
-                        amount=grp["amount"],
-                    )
-                )
-                self.stdout.write(
-                    self.style.WARNING(
-                        f"\n  [Otomax] Reseller: {grp['reseller_name_raw']} | Waktu: {grp['entry_datetime']} | Nominal: {grp['amount']} ({len(rows)} baris)"
-                    )
-                )
-                for r in rows:
-                    b = r.import_batch
-                    batch_str = f"Batch #{b.id} ({b.source_filename if b else '-'})" if b else "-"
-                    self.stdout.write(f"    - ID: {r.id} | {batch_str} | Ket: {r.description_raw[:70]}")
+            groups = defaultdict(list)
+            for o in oto_qs.iterator():
+                key = otomax_stable_key(o.entry_datetime, o.reseller_name_raw, o.amount)
+                if key is not None:
+                    groups[key].append(o)
+            self._report("Otomax", oto_qs.count(), groups, limit)
 
         self.stdout.write(self.style.SUCCESS("\nAudit selesai. Mode baca-saja: tidak ada data yang diubah."))
+
+    def _report(self, label: str, total: int, groups: dict, limit: int) -> None:
+        dups = sorted((rows for rows in groups.values() if len(rows) > 1), key=len, reverse=True)
+        self.stdout.write(f"\nMemeriksa {label}: {total} baris")
+        self.stdout.write(f"Kelompok kemungkinan dobel di {label}: {len(dups)}")
+        for rows in dups[:limit]:
+            first = rows[0]
+            when = getattr(first, "txn_datetime", None) or getattr(first, "entry_datetime", None)
+            who = getattr(first, "channel", "") or getattr(first, "reseller_name_raw", "")
+            self.stdout.write(
+                self.style.WARNING(f"\n  [{label}] {who} | Waktu: {when} | Nominal: {first.amount} ({len(rows)} baris)")
+            )
+            for r in rows:
+                b = r.import_batch
+                batch_str = f"Batch #{b.id} ({b.source_filename})" if b else "-"
+                self.stdout.write(f"    - ID: {r.id} | {batch_str} | Ket: {r.description_raw[:70]}")

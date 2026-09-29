@@ -12,7 +12,7 @@ import re
 import secrets
 import time
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 
 from django.conf import settings

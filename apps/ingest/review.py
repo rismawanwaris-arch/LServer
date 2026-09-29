@@ -70,6 +70,9 @@ def otomax_row_hash(row) -> str:
 def _precise(dt: datetime | None) -> bool:
     # BCA & Merchant BCA hanya punya tanggal (jam 00:00:00): tanggal+nominal sering kembar
     # untuk transaksi yang SAH berbeda, jadi tidak boleh dipakai sebagai kunci.
+    # Waktu dari DB bertimezone UTC (00:00 WIB = 17:00 UTC kemarin) -> cek di waktu lokal.
+    if dt is not None and timezone.is_aware(dt):
+        dt = timezone.localtime(dt)
     return dt is not None and dt.time() != time(0, 0, 0)
 
 

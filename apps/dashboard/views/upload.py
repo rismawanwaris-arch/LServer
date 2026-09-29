@@ -64,7 +64,9 @@ def upload_view(request):
 
         if action == "cancel":
             token = request.POST.get("token", "")
-            if token:
+            staged = get_staged_upload(token)
+            # Hanya pengunggahnya yang boleh membatalkan / menyimpan file yang ditahan.
+            if staged and staged.user_id in (None, request.user.id):
                 delete_staged_upload(token)
             messages.info(request, "Pemeriksaan file dibatalkan.")
             return redirect(f"/upload/?d={book_date}")
@@ -72,6 +74,8 @@ def upload_view(request):
         elif action == "confirm":
             token = request.POST.get("token", "")
             staged = get_staged_upload(token)
+            if staged and staged.user_id not in (None, request.user.id):
+                staged = None  # token milik pengguna lain: perlakukan seperti tidak ada
             if not staged:
                 messages.error(
                     request,

@@ -4,7 +4,6 @@ Dua test pertama mereplikasi bug nyata yang ditemukan di data 12 Sep & file mult
 (lihat laporan Audit Alur Upload) dan ditulis SEBELUM perbaikannya."""
 
 import hashlib
-import io
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -13,9 +12,9 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.utils import timezone
 
-from apps.core.enums import Channel, MatchStatus
-from apps.ingest.models import BankMutation, ImportBatch, OtomaxEntry
-from apps.ingest.services import ImportBlocked, NothingToImport, _hash, import_file
+from apps.core.enums import Channel
+from apps.ingest.models import BankMutation, ImportBatch
+from apps.ingest.services import ImportBlocked, _hash, import_file
 from apps.ingest.staging import (
     delete_staged_upload,
     get_staged_upload,
@@ -192,3 +191,58 @@ def test_audit_duplicate_rows_command(capsys):
     captured = capsys.readouterr()
     assert "AUDIT TRANSAKSI GANDA HISTORIS" in captured.out
     assert "Mode baca-saja" in captured.out
+
+
+def _mutasi(channel, dt, amount, desc, ref=""):
+    return BankMutation.objects.create(
+        import_batch=_batch(channel, dt.date(), f"{desc}.csv"),
+        channel=channel,
+        book_date=dt.date(),
+        txn_datetime=timezone.make_aware(dt),
+        description_raw=desc,
+        ref_normalized=desc,
+        external_ref=ref,
+        amount=Decimal(amount),
+        row_hash=hashlib.sha256(desc.encode()).hexdigest(),
+    )
+
+
+@pytest.mark.django_db
+def test_audit_tidak_melaporkan_dobel_palsu_untuk_bank_tanpa_jam(capsys):
+    """Regresi: Merchant BCA & BCA cuma punya tanggal (jam 00:00:00). Outlet berbeda dengan
+    nominal sama di hari yang sama itu SAH -- audit tidak boleh melaporkannya sebagai dobel.
+    Transaksi BRI dengan detik & nominal sama tetap harus terlaporkan."""
+    midnight = datetime(2026, 9, 1, 0, 0, 0)
+    _mutasi(Channel.MERCHANT_BCA, midnight, "150000", "QRIS OUTLET A", ref="MID-A")
+    _mutasi(Channel.MERCHANT_BCA, midnight, "150000", "QRIS OUTLET B", ref="MID-B")
+    _mutasi(Channel.BCA, midnight, "50000", "TRSF E-BANKING 1")
+    _mutasi(Channel.BCA, midnight, "50000", "TRSF E-BANKING 2")
+    presisi = datetime(2026, 9, 12, 6, 14, 36)
+    _mutasi(Channel.BRI, presisi, "5600000", "Transfer BI-Fast dari Bank Lain - Wawa")
+    _mutasi(Channel.BRI, presisi, "5600000", "Transfer BI-Fast dari Bank Lain - Wawa [WBNKTRF36820]")
+
+    call_command("audit_duplicate_rows")
+    out = capsys.readouterr().out
+
+    assert "Kelompok kemungkinan dobel di Bank: 1" in out
+    assert "QRIS OUTLET" not in out
+    assert "TRSF E-BANKING" not in out
+    assert "WBNKTRF36820" in out
+
+
+@pytest.mark.django_db
+def test_file_yang_ditahan_hanya_bisa_disimpan_pengunggahnya(client, django_user_model):
+    pemilik = django_user_model.objects.create_user(username="pemilik", password="password123")
+    lain = django_user_model.objects.create_user(username="lain", password="password123")
+    csv = (HEADER + _bri_line(1, "2026-09-12 08:00:00", "150000.00", "REF001", "Setoran 1")).encode()
+    token = stage_upload(channel=Channel.BRI, book_date=D12, filename="x.csv", content=csv, user_id=pemilik.id)
+
+    client.force_login(lain)
+    client.post("/upload/?d=2026-09-12", {"action": "confirm", "token": token})
+    client.post("/upload/?d=2026-09-12", {"action": "cancel", "token": token})
+    assert BankMutation.objects.count() == 0
+    assert get_staged_upload(token) is not None  # tidak ikut terhapus oleh pengguna lain
+
+    client.force_login(pemilik)
+    client.post("/upload/?d=2026-09-12", {"action": "confirm", "token": token})
+    assert BankMutation.objects.count() == 1
