@@ -22,3 +22,6 @@ apps/dashboard/static/css/tailwind.css
 .ruff_cache/
 .DS_Store
 tailwindcss
+*.docx
+*.xlsx
+
