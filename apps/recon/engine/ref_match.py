@@ -19,13 +19,26 @@ from apps.ingest.models import BankMutation, OtomaxEntry
 
 from .helpers import _MATCHABLE_CATEGORIES, _OPEN_STATUSES, RunStats, _persist_match, _proposal_rejected
 
-# Toleransi hari (H-min, H+max) per bank
+# Toleransi hari (H-min, H+max) per bank (default fallback)
 BANK_DATE_TOLERANCE = {
     Channel.BRI: (-1, 1),
     Channel.BCA: (-1, 1),
     Channel.MANDIRI: (-1, 1),
     Channel.MERCHANT_BCA: (-1, 2),
 }
+
+
+def get_bank_date_tolerance() -> dict[str, tuple[int, int]]:
+    """Ambil toleransi hari pencocokan per bank dari AppSettings.
+
+    Return mapping {Channel: (H_min_negatif, H_max_positif)}, mis. {Channel.BRI: (-1, 1)}.
+    """
+    from apps.core.models import AppSettings
+
+    try:
+        return AppSettings.load().get_bank_date_tolerance()
+    except Exception:
+        return BANK_DATE_TOLERANCE
 
 
 def _open_bank(book_date, channel):
@@ -44,7 +57,7 @@ def _open_otomax(book_date: date, channel: str, tolerance: tuple[int, int] = (-1
 
 def _match_ref(book_date: date, channel: str) -> RunStats:
     stats = RunStats()
-    tolerance = BANK_DATE_TOLERANCE.get(channel, (-1, 1))
+    tolerance = get_bank_date_tolerance().get(channel, (-1, 1))
     otomax = list(_open_otomax(book_date, channel, tolerance))
     reseller_by_code = {r.code.upper(): r for r in Reseller.objects.filter(active=True)}
 

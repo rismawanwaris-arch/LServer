@@ -6,34 +6,193 @@
   <p class="page-sub">Konfigurasi yang bisa diubah langsung dari sini, tanpa perlu redeploy.</p>
 </div>
 
-<div class="card max-w-lg p-6">
-  <h2 class="mb-1 flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white"><svg class="icon text-slate-400"><use href="#i-cal"/></svg>Siklus Bulan Bisnis</h2>
-  <p class="mb-4 text-sm text-slate-500 dark:text-slate-400">
-    Dipakai tombol <b>"1 Bulan Berjalan"</b> di kotak Alarm SLA Dashboard. Bukan cuma kalender
-    tanggal 1–31 — bisa disesuaikan dengan siklus tagihan reseller Anda.
-  </p>
-
-  <form method="post" action="{% url 'update-app-settings' %}" class="space-y-4">
-    {% csrf_token %}
-    <label class="block text-sm">
-      <span class="mb-1.5 block font-medium text-slate-700 dark:text-slate-300">Tanggal mulai siklus (1–31)</span>
-      <input type="number" name="business_month_start_day" min="1" max="31" required
-             value="{{ settings.business_month_start_day }}"
-             class="field-input money h-9 w-32 text-sm">
-    </label>
-    <p class="text-xs text-slate-500 dark:text-slate-400">
-      Contoh: isi <b>29</b> supaya siklus berjalan dari tanggal 29 sampai tanggal 28 bulan berikutnya.
-      Isi <b>1</b> untuk kembali ke kalender biasa.
-    </p>
-
-    <div class="flex gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-300">
-      <svg class="icon mt-px h-3.5 w-3.5 text-slate-400"><use href="#i-info"/></svg>
-      <span>
-      Dengan pengaturan saat ini, siklus bulan berjalan hari ini:
-      <b class="money">{{ preview_range.0|date:"d M Y" }} – {{ preview_range.1|date:"d M Y" }}</b></span>
+<div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+  <!-- KARTU 1: Toleransi Rentang Tanggal Pencocokan -->
+  <div class="card p-6">
+    <div class="mb-4">
+      <h2 class="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
+        <svg class="icon text-slate-400"><use href="#i-sliders"/></svg>
+        Toleransi Rentang Tanggal (Per Bank)
+      </h2>
+      <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+        Menentukan seberapa jauh mesin pencocokan mencari data Otomax: <b>H-</b> (hari mundur) dan <b>H+</b> (hari maju).
+      </p>
     </div>
 
-    <button type="submit" class="btn-primary">Simpan Pengaturan</button>
-  </form>
+    <form method="post" action="{% url 'update-app-settings' %}" class="space-y-4">
+      {% csrf_token %}
+      <input type="hidden" name="setting_type" value="tolerance">
+
+      <div class="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800">
+        <table class="w-full text-left text-xs">
+          <thead class="bg-slate-50 text-slate-600 dark:bg-slate-900/60 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
+            <tr>
+              <th class="px-3 py-2 font-medium">Bank / Channel</th>
+              <th class="px-3 py-2 font-medium text-center">H- (Mundur)</th>
+              <th class="px-3 py-2 font-medium text-center">H+ (Maju)</th>
+              <th class="px-3 py-2 font-medium text-right">Rentang</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100 dark:divide-slate-800/60 bg-white dark:bg-slate-950">
+            <!-- BRI -->
+            <tr>
+              <td class="px-3 py-2.5 font-medium text-slate-800 dark:text-slate-200">
+                BRI
+                <span class="block text-[11px] font-normal text-slate-400">Transfer bank</span>
+              </td>
+              <td class="px-3 py-2.5 text-center">
+                <div class="inline-flex items-center justify-center gap-1">
+                  <span class="text-slate-400 text-[11px]">H -</span>
+                  <input type="number" name="bri_date_tolerance_min" min="0" max="30" required
+                         value="{{ settings.bri_date_tolerance_min }}"
+                         class="field-input h-8 w-14 text-center text-xs">
+                </div>
+              </td>
+              <td class="px-3 py-2.5 text-center">
+                <div class="inline-flex items-center justify-center gap-1">
+                  <span class="text-slate-400 text-[11px]">H +</span>
+                  <input type="number" name="bri_date_tolerance_max" min="0" max="30" required
+                         value="{{ settings.bri_date_tolerance_max }}"
+                         class="field-input h-8 w-14 text-center text-xs">
+                </div>
+              </td>
+              <td class="px-3 py-2.5 text-right font-mono text-[11px] text-slate-500 dark:text-slate-400">
+                H-{{ settings.bri_date_tolerance_min }} s/d H+{{ settings.bri_date_tolerance_max }}
+              </td>
+            </tr>
+
+            <!-- BCA -->
+            <tr>
+              <td class="px-3 py-2.5 font-medium text-slate-800 dark:text-slate-200">
+                BCA
+                <span class="block text-[11px] font-normal text-slate-400">Transfer bank</span>
+              </td>
+              <td class="px-3 py-2.5 text-center">
+                <div class="inline-flex items-center justify-center gap-1">
+                  <span class="text-slate-400 text-[11px]">H -</span>
+                  <input type="number" name="bca_date_tolerance_min" min="0" max="30" required
+                         value="{{ settings.bca_date_tolerance_min }}"
+                         class="field-input h-8 w-14 text-center text-xs">
+                </div>
+              </td>
+              <td class="px-3 py-2.5 text-center">
+                <div class="inline-flex items-center justify-center gap-1">
+                  <span class="text-slate-400 text-[11px]">H +</span>
+                  <input type="number" name="bca_date_tolerance_max" min="0" max="30" required
+                         value="{{ settings.bca_date_tolerance_max }}"
+                         class="field-input h-8 w-14 text-center text-xs">
+                </div>
+              </td>
+              <td class="px-3 py-2.5 text-right font-mono text-[11px] text-slate-500 dark:text-slate-400">
+                H-{{ settings.bca_date_tolerance_min }} s/d H+{{ settings.bca_date_tolerance_max }}
+              </td>
+            </tr>
+
+            <!-- Mandiri -->
+            <tr>
+              <td class="px-3 py-2.5 font-medium text-slate-800 dark:text-slate-200">
+                Mandiri
+                <span class="block text-[11px] font-normal text-slate-400">Transfer bank</span>
+              </td>
+              <td class="px-3 py-2.5 text-center">
+                <div class="inline-flex items-center justify-center gap-1">
+                  <span class="text-slate-400 text-[11px]">H -</span>
+                  <input type="number" name="mandiri_date_tolerance_min" min="0" max="30" required
+                         value="{{ settings.mandiri_date_tolerance_min }}"
+                         class="field-input h-8 w-14 text-center text-xs">
+                </div>
+              </td>
+              <td class="px-3 py-2.5 text-center">
+                <div class="inline-flex items-center justify-center gap-1">
+                  <span class="text-slate-400 text-[11px]">H +</span>
+                  <input type="number" name="mandiri_date_tolerance_max" min="0" max="30" required
+                         value="{{ settings.mandiri_date_tolerance_max }}"
+                         class="field-input h-8 w-14 text-center text-xs">
+                </div>
+              </td>
+              <td class="px-3 py-2.5 text-right font-mono text-[11px] text-slate-500 dark:text-slate-400">
+                H-{{ settings.mandiri_date_tolerance_min }} s/d H+{{ settings.mandiri_date_tolerance_max }}
+              </td>
+            </tr>
+
+            <!-- Merchant BCA -->
+            <tr>
+              <td class="px-3 py-2.5 font-medium text-slate-800 dark:text-slate-200">
+                Merchant BCA
+                <span class="block text-[11px] font-normal text-slate-400">QRIS / Tartun Bulk</span>
+              </td>
+              <td class="px-3 py-2.5 text-center">
+                <div class="inline-flex items-center justify-center gap-1">
+                  <span class="text-slate-400 text-[11px]">H -</span>
+                  <input type="number" name="merchant_bca_date_tolerance_min" min="0" max="30" required
+                         value="{{ settings.merchant_bca_date_tolerance_min }}"
+                         class="field-input h-8 w-14 text-center text-xs">
+                </div>
+              </td>
+              <td class="px-3 py-2.5 text-center">
+                <div class="inline-flex items-center justify-center gap-1">
+                  <span class="text-slate-400 text-[11px]">H +</span>
+                  <input type="number" name="merchant_bca_date_tolerance_max" min="0" max="30" required
+                         value="{{ settings.merchant_bca_date_tolerance_max }}"
+                         class="field-input h-8 w-14 text-center text-xs">
+                </div>
+              </td>
+              <td class="px-3 py-2.5 text-right font-mono text-[11px] text-slate-500 dark:text-slate-400">
+                H-{{ settings.merchant_bca_date_tolerance_min }} s/d H+{{ settings.merchant_bca_date_tolerance_max }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-300">
+        <p class="font-medium text-slate-700 dark:text-slate-200">Aturan Usulan & Eksekusi:</p>
+        <ul class="mt-1 list-disc pl-4 space-y-0.5 text-slate-500 dark:text-slate-400">
+          <li>Untuk BRI, BCA, dan Mandiri: pencocokan pada tanggal berbeda selalu dijadikan <b>Usulan</b> untuk dicek operator.</li>
+          <li>Untuk Merchant BCA: pencocokan dalam rentang di atas dieksekusi otomatis.</li>
+          <li>Nilai <b>0</b> berarti hanya mencari pada tanggal yang persis sama (tanpa toleransi).</li>
+        </ul>
+      </div>
+
+      <button type="submit" class="btn-primary">Simpan Toleransi Tanggal</button>
+    </form>
+  </div>
+
+  <!-- KARTU 2: Siklus Bulan Bisnis -->
+  <div class="card p-6">
+    <div class="mb-4">
+      <h2 class="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
+        <svg class="icon text-slate-400"><use href="#i-cal"/></svg>
+        Siklus Bulan Bisnis
+      </h2>
+      <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+        Dipakai tombol <b>"1 Bulan Berjalan"</b> di kotak Alarm SLA Dashboard untuk siklus tagihan reseller.
+      </p>
+    </div>
+
+    <form method="post" action="{% url 'update-app-settings' %}" class="space-y-4">
+      {% csrf_token %}
+      <input type="hidden" name="setting_type" value="cycle">
+      <label class="block text-sm">
+        <span class="mb-1.5 block font-medium text-slate-700 dark:text-slate-300">Tanggal mulai siklus (1–31)</span>
+        <input type="number" name="business_month_start_day" min="1" max="31" required
+               value="{{ settings.business_month_start_day }}"
+               class="field-input money h-9 w-32 text-sm">
+      </label>
+      <p class="text-xs text-slate-500 dark:text-slate-400">
+        Contoh: isi <b>29</b> supaya siklus berjalan dari tanggal 29 sampai tanggal 28 bulan berikutnya.
+        Isi <b>1</b> untuk kembali ke kalender biasa (1 s/d akhir bulan).
+      </p>
+
+      <div class="flex gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-300">
+        <svg class="icon mt-px h-3.5 w-3.5 text-slate-400"><use href="#i-info"/></svg>
+        <span>
+        Dengan pengaturan saat ini, siklus bulan berjalan hari ini:
+        <b class="money">{{ preview_range.0|date:"d M Y" }} – {{ preview_range.1|date:"d M Y" }}</b></span>
+      </div>
+
+      <button type="submit" class="btn-primary">Simpan Siklus Bisnis</button>
+    </form>
+  </div>
 </div>
 {% endblock %}

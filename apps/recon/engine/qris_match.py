@@ -18,7 +18,7 @@ from apps.ingest.models import BankMutation, OtomaxEntry
 
 from ..models import Discrepancy, Match
 from .helpers import _OPEN_STATUSES, ZERO, RunStats, _make_discrepancy, _mark, _proposal_rejected
-from .ref_match import _open_bank
+from .ref_match import _open_bank, get_bank_date_tolerance
 
 _ALIASES = {
     "CL": "CILENGKRANG",
@@ -167,8 +167,9 @@ def _match_qris(book_date: date) -> RunStats:
     if not bank_rows:
         return stats
 
-    start_d = book_date + timedelta(days=-1)
-    end_d = book_date + timedelta(days=2)
+    tol = get_bank_date_tolerance().get(Channel.MERCHANT_BCA, (-1, 2))
+    start_d = book_date + timedelta(days=tol[0])
+    end_d = book_date + timedelta(days=tol[1])
     d_str = book_date.strftime("%d-%b-%Y").upper()
     d_str_short = book_date.strftime("%d-%b").upper()
 
