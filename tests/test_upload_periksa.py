@@ -246,3 +246,49 @@ def test_file_yang_ditahan_hanya_bisa_disimpan_pengunggahnya(client, django_user
     client.force_login(pemilik)
     client.post("/upload/?d=2026-09-12", {"action": "confirm", "token": token})
     assert BankMutation.objects.count() == 1
+
+
+@pytest.mark.django_db
+def test_upload_bca_kembar_dalam_satu_file_disimpan_semua():
+    """Kasus BCA: dalam 1 file terdapat baris kembar (tanggal, nominal, keterangan sama).
+    Baris-baris tersebut adalah mutasi uang masuk yang sah (misal reseller topup 2x di hari yg sama).
+    Sistem tidak boleh menolak baris kedua sebagai 'kembar_file', keduanya harus berstatus 'baru'
+    dan tersimpan. Saat file di-upload ulang, baris-baris tersebut dikenali sebagai 'sudah_ada'."""
+    from apps.ingest.review import BARU, SUDAH_ADA, analyze_upload
+    from apps.ingest.services import import_file
+
+    bca_csv = """Informasi Rekening
+Nomor Rekening: 1234567890
+Nama: SERVER PULSA
+Mata Uang: IDR
+Tanggal Transaksi,Keterangan,Cabang,Jumlah,Saldo
+10/09/2026,"TRSF E-BANKING CR 1009/FTSCY/WS95031 3005000.00 PLC130 DEDE YETY",0000,"3,005,000.00 CR","13,005,000.00"
+10/09/2026,"TRSF E-BANKING CR 1009/FTSCY/WS95031 3005000.00 PLC130 DEDE YETY",0000,"3,005,000.00 CR","16,010,000.00"
+"""
+    content = bca_csv.encode("utf-8")
+    bd = date(2026, 9, 10)
+
+    # 1. Pratinjau upload: kedua baris harus berstatus BARU
+    review = analyze_upload(Channel.BCA, content, bd, "bca_kembar.csv")
+    assert len(review.rows) == 2
+    assert review.counts["kembar_file"] == 0
+    assert review.counts["baru"] == 2
+    assert review.rows[0].status == BARU
+    assert review.rows[1].status == BARU
+    # row_hash keduanya harus unik
+    assert review.rows[0].row_hash != review.rows[1].row_hash
+
+    # 2. Simpan file: kedua mutasi berhasil tersimpan ke BankMutation
+    batch = import_file(channel=Channel.BCA, content=content, book_date=bd, filename="bca_kembar.csv")
+    assert batch.mutations.count() == 2
+    mutations = list(batch.mutations.order_by("id"))
+    assert mutations[0].amount == Decimal("3005000.00")
+    assert mutations[1].amount == Decimal("3005000.00")
+
+    # 3. Upload ulang file yang sama: kedua baris harus berstatus SUDAH_ADA (idempoten)
+    review_reupload = analyze_upload(Channel.BCA, content, bd, "bca_kembar.csv")
+    assert review_reupload.counts["baru"] == 0
+    assert review_reupload.counts["sudah_ada"] == 2
+    assert review_reupload.rows[0].status == SUDAH_ADA
+    assert review_reupload.rows[1].status == SUDAH_ADA
+

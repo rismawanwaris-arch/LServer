@@ -57,13 +57,27 @@ def row_book_date(dt: datetime | None, fallback: date) -> date:
     return dt.date() if dt else fallback
 
 
-def bank_row_hash(channel: str, row, row_bdate: date) -> str:
-    """Sidik baris mutasi -- rumus TIDAK boleh berubah (data lama memakainya)."""
+def bank_row_hash(channel: str, row, row_bdate: date, occurrence: int = 1) -> str:
+    """Sidik baris mutasi -- rumus dasar occurrence=1 TIDAK berubah (data lama memakainya).
+    Untuk baris kembar sah di file yang sama (occurrence > 1), ditambahkan pembeda occurrence."""
+    if occurrence > 1:
+        return _hash(
+            channel, row_bdate, row.description_raw, row.amount, row.txn_datetime, row.external_ref, f"occ:{occurrence}"
+        )
     return _hash(channel, row_bdate, row.description_raw, row.amount, row.txn_datetime, row.external_ref)
 
 
-def otomax_row_hash(row) -> str:
-    """Sidik baris Otomax -- rumus TIDAK boleh berubah (data lama memakainya)."""
+def otomax_row_hash(row, occurrence: int = 1) -> str:
+    """Sidik baris Otomax -- rumus dasar occurrence=1 TIDAK berubah (data lama memakainya)."""
+    if occurrence > 1:
+        return _hash(
+            Channel.OTOMAX,
+            row.description_raw,
+            row.amount,
+            row.entry_datetime,
+            row.reseller_name_raw,
+            f"occ:{occurrence}",
+        )
     return _hash(Channel.OTOMAX, row.description_raw, row.amount, row.entry_datetime, row.reseller_name_raw)
 
 
@@ -168,30 +182,36 @@ def analyze_upload(channel: str, content: bytes, book_date: date, filename: str 
 
     # 1. Bentuk baris + sidik + kunci stabil
     if channel == Channel.OTOMAX:
+        oto_seen: Counter = Counter()
         for i, r in enumerate(result.otomax_rows, start=1):
             rule = find_matching_rule(r.description_raw, channel="", is_bank=False, rules=rules)
+            sig = (r.description_raw, r.amount, r.entry_datetime, r.reseller_name_raw)
+            oto_seen[sig] += 1
             review.rows.append(
                 ReviewRow(
                     no=i,
                     parsed=r,
                     kind=DIKECUALIKAN if rule else OTOMAX,
-                    row_hash=otomax_row_hash(r),
+                    row_hash=otomax_row_hash(r, occurrence=oto_seen[sig]),
                     row_bdate=row_book_date(r.entry_datetime, effective),
                     stable_key=None if rule else otomax_stable_key(r.entry_datetime, r.reseller_name_raw, r.amount),
                     rule=rule,
                 )
             )
     else:
+        bank_seen: Counter = Counter()
         for i, r in enumerate(result.bank_rows, start=1):
             bdate = row_book_date(r.txn_datetime, effective)
             rule = find_matching_rule(r.description_raw, channel=channel, is_bank=True, rules=rules)
             kind = DIKECUALIKAN if rule else (DEBIT if r.amount is not None and r.amount < 0 else MUTASI)
+            sig = (channel, bdate, r.description_raw, r.amount, r.txn_datetime, r.external_ref)
+            bank_seen[sig] += 1
             review.rows.append(
                 ReviewRow(
                     no=i,
                     parsed=r,
                     kind=kind,
-                    row_hash=bank_row_hash(channel, r, bdate),
+                    row_hash=bank_row_hash(channel, r, bdate, occurrence=bank_seen[sig]),
                     row_bdate=bdate,
                     stable_key=bank_stable_key(channel, r.txn_datetime, bdate, r.external_ref, r.amount),
                     rule=rule,
