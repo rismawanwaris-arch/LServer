@@ -38,6 +38,9 @@ def _otomax_candidate(o: OtomaxEntry, book_date, *, extended: bool) -> dict:
         "day_gap": (o.book_date - book_date).days,
         "tgl_match": parse_tgl_date(o.description_raw) == book_date,
         "extended": extended,
+        "channel": o.channel_hint or "",
+        "tokens": o.extracted_tokens or [],
+        "ref_core": o.ref_core or "",
     }
 
 

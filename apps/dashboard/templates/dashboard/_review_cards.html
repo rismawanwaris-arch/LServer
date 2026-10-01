@@ -31,7 +31,7 @@
 
       <!-- Nominal & Form Tagging / Matching (Col 8-12) -->
       <div class="md:col-span-5 rounded-xl border border-slate-200 bg-slate-50 p-3.5 dark:border-slate-800 dark:bg-slate-950/40"
-           x-data="otomaxPicker({{ b.amount_cents }})">
+           x-data="otomaxPicker({{ b.amount_cents }}, '{{ b.channel }}', {{ b.extracted_tokens|default:'[]'|safe }})">
         <div class="flex items-baseline justify-between mb-2.5 pb-2 border-b border-slate-200 dark:border-slate-700">
           <span class="text-xs text-slate-600 dark:text-slate-400 font-semibold">Nominal Bank:</span>
           <span class="money text-base font-semibold text-slate-900 dark:text-white">
@@ -81,6 +81,8 @@
                       <div class="flex flex-wrap items-center gap-1">
                         <span class="money font-bold text-xs" :class="c.cents < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-900 dark:text-white'" x-text="fmt(c.cents)"></span>
                         <span class="text-[11px] font-semibold text-slate-700 dark:text-slate-200" x-text="c.reseller"></span>
+                        <template x-if="hasTokenMatch(c)"><span class="badge-good text-[10px] font-bold">★ Token Cocok</span></template>
+                        <template x-if="c.channel"><span class="badge-mute text-[10px] uppercase font-mono" x-text="c.channel"></span></template>
                         <template x-if="c.cents === bankCents"><span class="badge-good text-[10px]">Nominal sama</span></template>
                         <template x-if="c.tgl_match"><span class="badge-info text-[10px]">Sesuai TGL</span></template>
                         <template x-if="c.day_gap !== 0"><span class="badge-warn text-[10px]" x-text="gapLabel(c)"></span></template>

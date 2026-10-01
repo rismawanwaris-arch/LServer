@@ -52,27 +52,52 @@
     const PREVIEW = 8;
     const fmt = (cents) => 'Rp ' + (cents / 100).toLocaleString('id-ID', { maximumFractionDigits: 2 });
 
-    Alpine.data('otomaxPicker', (bankCents) => ({
+    Alpine.data('otomaxPicker', (bankCents, bankChannel = '', bankTokens = []) => ({
       mode: 'pair',
       query: '',
       showAll: false,
       selected: [],
       bankCents,
+      bankChannel,
+      bankTokens: Array.isArray(bankTokens) ? bankTokens : [],
       fmt,
       isSelected(id) { return this.selected.includes(id); },
       toggle(id) {
         this.selected = this.isSelected(id) ? this.selected.filter((x) => x !== id) : [...this.selected, id];
+      },
+      hasTokenMatch(c) {
+        if (!this.bankTokens || !this.bankTokens.length) return false;
+        const cTokens = c.tokens || [];
+        const cDesc = (c.desc || '').toUpperCase();
+        for (const t of this.bankTokens) {
+          if (!t) continue;
+          const tu = String(t).toUpperCase();
+          if (cTokens.some(ct => String(ct).toUpperCase() === tu)) return true;
+          if (c.ref_core && String(c.ref_core).toUpperCase() === tu) return true;
+          if (tu.length >= 6 && cDesc.includes(tu)) return true;
+        }
+        return false;
       },
       ranked() {
         const q = this.query.trim().toLowerCase();
         return ALL
           .filter((c) => !this.isSelected(c.id))
           .filter((c) => !q || (c.reseller + ' ' + c.desc + ' ' + fmt(c.cents)).toLowerCase().includes(q))
-          .sort((a, b) =>
-            (b.cents === bankCents) - (a.cents === bankCents)
-            || b.tgl_match - a.tgl_match
-            || Math.abs(a.day_gap) - Math.abs(b.day_gap)
-            || b.cents - a.cents);
+          .sort((a, b) => {
+            const aToken = this.hasTokenMatch(a) ? 1 : 0;
+            const bToken = this.hasTokenMatch(b) ? 1 : 0;
+            if (aToken !== bToken) return bToken - aToken;
+
+            // Prioritas kanal: jika ada channel mutasi bank, prioritaskan kandidat yang kanalnya sama atau netral (belum ada channel)
+            const aChan = (!this.bankChannel || !a.channel || a.channel === this.bankChannel) ? 1 : 0;
+            const bChan = (!this.bankChannel || !b.channel || b.channel === this.bankChannel) ? 1 : 0;
+            if (aChan !== bChan) return bChan - aChan;
+
+            return (b.cents === this.bankCents) - (a.cents === this.bankCents)
+              || b.tgl_match - a.tgl_match
+              || Math.abs(a.day_gap) - Math.abs(b.day_gap)
+              || b.cents - a.cents;
+          });
       },
       visible() {
         const picked = ALL.filter((c) => this.isSelected(c.id));

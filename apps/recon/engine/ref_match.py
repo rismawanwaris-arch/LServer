@@ -58,6 +58,8 @@ def _open_otomax(book_date: date, channel: str, tolerance: tuple[int, int] = (-1
 def _match_ref(book_date: date, channel: str) -> RunStats:
     stats = RunStats()
     tolerance = get_bank_date_tolerance().get(channel, (-1, 1))
+    start_d = book_date + timedelta(days=tolerance[0])
+    end_d = book_date + timedelta(days=tolerance[1])
     otomax = list(_open_otomax(book_date, channel, tolerance))
     reseller_by_code = {r.code.upper(): r for r in Reseller.objects.filter(active=True)}
 
@@ -83,6 +85,7 @@ def _match_ref(book_date: date, channel: str) -> RunStats:
         return None
 
     for b in _open_bank(book_date, channel):
+        match_note = ""
         # 1. Exact norm match
         o = take(by_norm, (b.ref_normalized, b.amount))
         mtype = MatchType.AUTO_EXACT
@@ -112,13 +115,35 @@ def _match_ref(book_date: date, channel: str) -> RunStats:
                     o = take(by_token, (tk, b.amount))
                     if o:
                         break
+
+            # 2a. Cross-channel token match untuk token deterministik kuat (mis. BI-Fast transfer antar bank)
+            if o is None:
+                strong_tokens = [tk for tk in ([b.ref_core] + (b.extracted_tokens or [])) if tk and len(tk) >= 8]
+                if strong_tokens:
+                    cross_cands = OtomaxEntry.objects.filter(
+                        book_date__range=(start_d, end_d),
+                        category__in=_MATCHABLE_CATEGORIES,
+                        match_status__in=_OPEN_STATUSES,
+                        amount=b.amount,
+                    ).exclude(id__in=used)
+                    for cand in cross_cands:
+                        cand_tokens = set(cand.extracted_tokens or [])
+                        if cand.ref_core:
+                            cand_tokens.add(cand.ref_core)
+                        # Cek juga kecocokan token dalam deskripsi mentah Otomax
+                        cand_raw = (cand.description_raw or "").upper()
+                        if any(st in cand_tokens or st in cand_raw for st in strong_tokens):
+                            o = cand
+                            used.add(o.id)
+                            match_note = f"Transfer antar-bank (token cocok dengan Otomax {o.channel_hint or ''})"
+                            break
+
             if o is not None:
                 mtype = MatchType.AUTO_CORE
 
         # 2b. Kode Reseller (menu Kode Reseller) -> reseller spesifik + nominal persis.
         # Ditaruh sebelum fuzzy karena ini identitas eksplisit dari tabel yang dikelola
         # user, jauh lebih bisa dipercaya daripada tebakan kemiripan teks.
-        match_note = ""
         if o is None:
             o = _match_by_reseller_code(b, otomax, used, reseller_by_code)
             if o is not None:

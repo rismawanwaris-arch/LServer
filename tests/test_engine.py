@@ -996,4 +996,30 @@ def test_next_code_prevents_duplicate_key_violation():
     assert d2.code == "SLS-20260830-051"
 
 
+@pytest.mark.django_db
+def test_cross_channel_bi_fast_token_auto_match():
+    # Bank BRI menerima transfer BI-Fast dari nasabah BCA
+    b_desc = (
+        "Transfer BI-Fast dari BANK CENTRAL ASIA - 4371555808 - Heinrikh Parulian Tampub "
+        "[BFST215401000596563HEINRIKH PAR:CENAIDJA]"
+    )
+    bm = _bank(b_desc, "1000000", channel=Channel.BRI, book_date=BD)
+
+    # Otomax dicatat operator sebagai TARTUN TF BCA dengan token BFST yang sama
+    o_desc = "TARTUN TF BCA BFST215401000596563HEINRIKH PAR:CENAIDJA"
+    oe = _otomax(o_desc, "1000000", channel=Channel.BCA, book_date=BD)
+
+    run_match(BD)
+
+    bm.refresh_from_db()
+    oe.refresh_from_db()
+
+    assert bm.match_status == MatchStatus.MATCHED
+    assert oe.match_status == MatchStatus.MATCHED
+    m = Match.objects.get(bank_mutation=bm, otomax_entry=oe)
+    assert m.channel == Channel.BRI
+    assert "Transfer antar-bank" in m.note
+
+
+
 
