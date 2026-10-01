@@ -13,6 +13,7 @@ from apps.recon.carry import carry_forward
 from apps.recon.close import close_day, compute_totals
 from apps.recon.engine import run_match
 from apps.recon.models import Adjustment, Discrepancy, Match, ReconDay
+from apps.recon.resolve import approve_match
 
 BD = date(2026, 9, 5)
 
@@ -181,7 +182,13 @@ def test_carry_forward_resolves_and_posts_adjustment():
     bd6 = date(2026, 9, 6)
     _otomax("TARTUN TF BRI DANA20260905034895588601ASEPKURNIAWA", "1600000", book_date=bd6)
     resolved = carry_forward(bd6)
-    assert resolved == 1
+    assert resolved == 0  # sekarang jadi usulan, belum langsung resolved
+
+    match = Match.objects.get(voided_at__isnull=True)
+    assert match.needs_review is True
+
+    # Operator setujui usulan
+    approve_match(match)
 
     disc.refresh_from_db()
     assert disc.status == "RESOLVED"
@@ -274,16 +281,26 @@ def test_carry_forward_skips_duplicate_discrepancy_instead_of_crashing():
 
     resolved = carry_forward(bd6)
 
-    assert resolved == 1
+    # carry_forward sekarang membuat USULAN (proposal), bukan langsung resolved.
+    assert resolved == 0
+    # Tetap cuma 1 Match aktif (constraint uniq_active_bank_match terjaga)
+    assert Match.objects.filter(bank_mutation=bank, voided_at__isnull=True).count() == 1
+
+    match = Match.objects.get(bank_mutation=bank, voided_at__isnull=True)
+    assert match.needs_review is True
+
+    # Setelah disetujui, satu disc tertutup
+    approve_match(match)
+
     o1.refresh_from_db()
     o2.refresh_from_db()
     matched_otomax = {o1.match_status, o2.match_status}
     assert MatchStatus.MATCHED in matched_otomax
     disc1.refresh_from_db()
     disc2.refresh_from_db()
+    # Kedua disc menunjuk bank_mutation yang sama → approve_match menyelesaikan keduanya
     statuses = {disc1.status, disc2.status}
-    assert statuses == {"OPEN", "RESOLVED"}
-    assert Match.objects.filter(bank_mutation=bank, voided_at__isnull=True).count() == 1
+    assert "RESOLVED" in statuses
 
 
 @pytest.mark.django_db
@@ -314,7 +331,9 @@ def test_reopen_blocked_after_adjustment_posted():
     close_day(BD, force=True)
     bd6 = date(2026, 9, 6)
     _otomax("TARTUN TF BRI DANA20260905034895588601ASEPKURNIAWA", "1600000", book_date=bd6)
-    carry_forward(bd6)  # posting adjustment bertanggal BD
+    carry_forward(bd6)  # hanya usulan, belum ada Adjustment
+    match = Match.objects.get(voided_at__isnull=True)
+    approve_match(match)  # baru posting Adjustment bertanggal BD
     with pytest.raises(DayHasDownstream):
         reopen_day(BD)
 
@@ -338,6 +357,8 @@ def test_adjustment_is_append_only():
     bd6 = date(2026, 9, 6)
     _otomax("TARTUN TF BRI DANA20260905034895588601ASEPKURNIAWA", "1600000", book_date=bd6)
     carry_forward(bd6)
+    match = Match.objects.get(voided_at__isnull=True)
+    approve_match(match)  # baru posting Adjustment
     adj = Adjustment.objects.get()
     adj.amount = Decimal("1")
     with pytest.raises(ValidationError):
@@ -905,6 +926,7 @@ def test_qris_matches_otomax_entry_left_pending_settle_by_earlier_cleanup():
 @pytest.mark.django_db
 def test_recon_rematch_command():
     from io import StringIO
+
     from django.core.management import call_command
 
     d = date(2026, 9, 7)

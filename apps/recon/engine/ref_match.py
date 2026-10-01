@@ -132,6 +132,16 @@ def _match_ref(book_date: date, channel: str) -> RunStats:
         if o is None:
             continue
 
+        # Cross-date: Otomax dari tanggal berbeda → jadikan usulan agar operator
+        # bisa memverifikasi langsung di aplikasi Otomax (nominal sama belum tentu
+        # transaksi sama, terutama tiket deposit yang beda tujuan/tanggal).
+        if not review_reason and o.book_date != book_date:
+            if _proposal_rejected(b):
+                continue
+            review_reason = (
+                f"Lintas hari: Otomax tgl {o.book_date:%d/%m} vs Bank tgl {book_date:%d/%m}"
+            )
+
         _persist_match(book_date, channel, b, o, mtype, note=match_note, review_reason=review_reason)
         stats.matched += 1
     return stats

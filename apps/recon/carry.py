@@ -16,6 +16,7 @@ from .resolve import resolve_discrepancy, retire_leftover_discrepancies
 # Teks yang lebih pendek dari ini terlalu umum untuk dianggap "mirip" (mis. "TRANSFER").
 _MIN_SIMILAR_TEXT = 12
 _SIMILAR_REASON = "Susulan lintas hari, teks mirip tapi tidak persis"
+_CROSS_DATE_REASON = "Susulan lintas hari, perlu verifikasi operator"
 
 
 @transaction.atomic
@@ -92,7 +93,8 @@ def _find_otomax_for(bank: BankMutation, book_date: date) -> Match | None:
     )
     o = o or same_amount.filter(ref_normalized=bank.ref_normalized).first()
     if o:
-        return _persist(book_date, bank.channel, bank, o)
+        reason = "" if bank.channel == Channel.MERCHANT_BCA else _CROSS_DATE_REASON
+        return _persist(book_date, bank.channel, bank, o, review_reason=reason)
 
     # Tidak persis: usulkan kalau ada TEPAT SATU kandidat yang teksnya mirip -- lebih dari
     # satu berarti ambigu, jangan ditebak.
@@ -123,7 +125,8 @@ def _find_bank_for(otomax: OtomaxEntry, book_date: date) -> Match | None:
     if not b and otomax.ref_core:
         b = same_amount.filter(ref_core=otomax.ref_core).first()
     if b:
-        return _persist(book_date, channel, b, otomax)
+        reason = "" if channel == Channel.MERCHANT_BCA else _CROSS_DATE_REASON
+        return _persist(book_date, channel, b, otomax, review_reason=reason)
 
     similar = [c for c in same_amount if _similar(otomax.ref_normalized, c.ref_normalized)]
     if len(similar) != 1 or _proposal_rejected(similar[0]):

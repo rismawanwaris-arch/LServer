@@ -29,7 +29,7 @@ from apps.recon.carry import carry_forward
 from apps.recon.close import close_day
 from apps.recon.engine import run_match
 from apps.recon.models import Adjustment, Discrepancy, Match, ReconDay
-from apps.recon.resolve import manual_pair_many, manual_pair_transactions, unpair_match
+from apps.recon.resolve import approve_match, manual_pair_many, manual_pair_transactions, unpair_match
 
 from .test_engine import _bank, _otomax
 
@@ -82,7 +82,8 @@ def test_sahidin_otomax_entered_4_days_late_is_matched_by_carry_forward():
     # leftovers sempat mencatat OTOMAX_ONLY untuk entri 3 Sep -- inilah calon selisih "hantu".
     assert _open_discs(otomax_entry=oe, kind=DiscrepancyKind.OTOMAX_ONLY).exists()
 
-    assert carry_forward(SEP3) == 1
+    # carry_forward membuat Match USULAN (needs_review=True) -- discrepancy belum ditutup.
+    assert carry_forward(SEP3) == 0
 
     bm.refresh_from_db()
     oe.refresh_from_db()
@@ -90,7 +91,11 @@ def test_sahidin_otomax_entered_4_days_late_is_matched_by_carry_forward():
     assert oe.match_status == MatchStatus.MATCHED
     match = Match.objects.get(bank_mutation=bm, voided_at__isnull=True)
     assert match.otomax_entry_id == oe.id
+    assert match.needs_review is True
     assert match.amount_diff == Decimal("0.00")
+
+    # Operator menyetujui usulan → discrepancy lama ditutup lewat Adjustment.
+    approve_match(match)
 
     stale.refresh_from_db()
     assert stale.status == DiscrepancyStatus.RESOLVED
@@ -110,7 +115,11 @@ def test_otomax_first_then_bank_later_is_matched_without_ghost_bank_discrepancy(
     run_match(SEP3)
     assert _open_discs(bank_mutation=bm, kind=DiscrepancyKind.BANK_ONLY).exists()
 
-    assert carry_forward(SEP3) == 1
+    assert carry_forward(SEP3) == 0
+
+    match = Match.objects.get(bank_mutation=bm, otomax_entry=oe, voided_at__isnull=True)
+    assert match.needs_review is True
+    approve_match(match)
 
     stale.refresh_from_db()
     assert stale.status == DiscrepancyStatus.RESOLVED
@@ -128,6 +137,16 @@ def test_counterpart_discrepancy_on_closed_day_is_resolved_not_deleted():
     close_day(SEP3, force=True)  # selisihnya sudah jadi bagian snapshot beku
 
     carry_forward(SEP3)
+
+    match = Match.objects.get(bank_mutation=bm, otomax_entry=oe, voided_at__isnull=True)
+    assert match.needs_review is True
+
+    # Sebelum disetujui, counterpart masih OPEN
+    counterpart.refresh_from_db()
+    assert counterpart.status == DiscrepancyStatus.OPEN
+
+    # Operator setujui → counterpart diselesaikan lewat Adjustment
+    approve_match(match)
 
     counterpart.refresh_from_db()
     assert counterpart.status == DiscrepancyStatus.RESOLVED
