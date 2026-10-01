@@ -270,3 +270,72 @@ def test_per_bank_breakdown_identik_dengan_versi_lama():
         (BankMutation.objects.filter(book_date=BD_NEXT), OtomaxEntry.objects.filter(book_date=BD_NEXT)),
     ]:
         assert _per_bank_breakdown(qs_b, qs_o) == _per_bank_breakdown_lama(qs_b, qs_o)
+
+
+@pytest.mark.django_db
+def test_generate_excel_discrepancies_and_export_view(client, django_user_model):
+    """Test ekspor daftar selisih ke Excel (.xlsx) menghasilkan file valid dengan konten lengkap."""
+    import io
+    import openpyxl
+    from apps.core.enums import DiscrepancyKind, DiscrepancyStatus
+    from apps.recon.models import Discrepancy
+    from apps.recon.reports import generate_excel_discrepancies
+
+    user = django_user_model.objects.create_user(username="operator_export", password="password123")
+    client.force_login(user)
+
+    bm = _bank("TRANSFER DARI RESELLER XYZ", "1500000", channel=Channel.BCA, book_date=BD)
+    oe = _otomax("TARTUN RESELLER XYZ", "1500000", channel=Channel.BCA, book_date=BD)
+
+    d1 = Discrepancy.objects.create(
+        code="SLS-20260911-001",
+        origin_book_date=BD,
+        channel=Channel.BCA,
+        kind=DiscrepancyKind.BANK_ONLY,
+        bank_mutation=bm,
+        amount=Decimal("1500000.00"),
+        status=DiscrepancyStatus.OPEN,
+        note="Belum ada di Otomax",
+    )
+    d2 = Discrepancy.objects.create(
+        code="SLS-20260911-002",
+        origin_book_date=BD,
+        channel=Channel.BCA,
+        kind=DiscrepancyKind.OTOMAX_ONLY,
+        otomax_entry=oe,
+        amount=Decimal("-1500000.00"),
+        status=DiscrepancyStatus.OPEN,
+    )
+
+    # 1. Test generate_excel_discrepancies service function
+    excel_bytes = generate_excel_discrepancies(
+        Discrepancy.objects.filter(origin_book_date=BD).order_by("code"),
+        title_note="Tanggal Buku: 11 Sep 2026",
+    )
+    assert len(excel_bytes) > 0
+
+    wb = openpyxl.load_workbook(io.BytesIO(excel_bytes))
+    ws = wb.active
+    assert ws.title == "Daftar Selisih"
+    assert "DAFTAR SELISIH REKONSILIASI" in str(ws["A1"].value)
+    assert "Tanggal Buku: 11 Sep 2026" in str(ws["A2"].value)
+
+    # Verifikasi baris 5 dan 6 (data selisih)
+    row5_vals = [ws.cell(row=5, column=col).value for col in range(1, 16)]
+    assert "SLS-20260911-001" in row5_vals
+    assert 1500000.0 in row5_vals
+
+    row6_vals = [ws.cell(row=6, column=col).value for col in range(1, 16)]
+    assert "SLS-20260911-002" in row6_vals
+    assert -1500000.0 in row6_vals
+
+    # 2. Test view endpoint /selisih/export/
+    resp = client.get(f"/selisih/export/?d={BD.isoformat()}&status=OPEN")
+    assert resp.status_code == 200
+    assert resp["Content-Type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    assert 'attachment; filename="daftar_selisih_20260911.xlsx"' in resp["Content-Disposition"]
+
+    wb_resp = openpyxl.load_workbook(io.BytesIO(resp.content))
+    ws_resp = wb_resp.active
+    assert ws_resp.title == "Daftar Selisih"
+

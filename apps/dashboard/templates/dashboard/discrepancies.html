@@ -3,15 +3,20 @@
 {% block title %}Daftar Selisih — RekonMutasi{% endblock %}
 
 {% block content %}
-<div class="mb-5">
-  <h1 class="page-title">Daftar Selisih</h1>
-  <p class="page-sub">
-    {% if book_date %}
-    Selisih (bank only, otomax only, nominal beda) yang berasal dari tanggal buku <b class="font-medium text-slate-700 dark:text-slate-300">{{ book_date|date:"d F Y" }}</b>.
-    {% else %}
-    Semua selisih (bank only, otomax only, nominal beda) lintas tanggal, urut dari yang paling lama.
-    {% endif %}
-  </p>
+<div class="mb-5 flex flex-wrap items-end justify-between gap-3">
+  <div>
+    <h1 class="page-title">Daftar Selisih</h1>
+    <p class="page-sub">
+      {% if book_date %}
+      Selisih (bank only, otomax only, nominal beda) yang berasal dari tanggal buku <b class="font-medium text-slate-700 dark:text-slate-300">{{ book_date|date:"d F Y" }}</b>.
+      {% else %}
+      Semua selisih (bank only, otomax only, nominal beda) lintas tanggal, urut dari yang paling lama.
+      {% endif %}
+    </p>
+  </div>
+  <a href="{% url 'discrepancy-export' %}{% if export_query %}?{{ export_query }}{% endif %}" class="btn-secondary">
+    <svg class="icon"><use href="#i-download"/></svg>Export Excel ({{ total_count }} selisih)
+  </a>
 </div>
 
 <!-- Mode tanggal: satu tanggal (ikut bilah atas) atau semua tanggal -->
@@ -135,6 +140,10 @@
     </div>
     {% if items %}
     <div class="flex items-center gap-2">
+      <a href="{% url 'discrepancy-export' %}{% if export_query %}?{{ export_query }}{% endif %}" class="btn-ghost px-2.5 py-1 text-xs">
+        <svg class="icon h-3.5 w-3.5"><use href="#i-download"/></svg>Export Excel
+      </a>
+      <span class="text-slate-300 dark:text-slate-700">|</span>
       <button type="button" @click="expandAll()" class="btn-ghost px-2.5 py-1 text-xs">
         Buka Semua
       </button>

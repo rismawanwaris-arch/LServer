@@ -530,3 +530,118 @@ def generate_excel_report(start_date: date, end_date: date) -> bytes:
     buffer = io.BytesIO()
     wb.save(buffer)
     return buffer.getvalue()
+
+
+def generate_excel_discrepancies(discrepancies_qs, title_note: str = "") -> bytes:
+    """Export daftar selisih (Discrepancy) ke file Excel (.xlsx).
+    Mendukung format rapi, filter, format rupiah, dan side-by-side Bank vs Otomax."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Daftar Selisih"
+
+    header_font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+    title_font = Font(name="Arial", size=13, bold=True)
+    regular_font = Font(name="Arial", size=9)
+    money_format = "#,##0;[Red]-#,##0"
+
+    primary_fill = PatternFill(start_color="1E3A8A", end_color="1E3A8A", fill_type="solid")
+    thin_border = Border(
+        left=Side(style="thin", color="E2E8F0"),
+        right=Side(style="thin", color="E2E8F0"),
+        top=Side(style="thin", color="E2E8F0"),
+        bottom=Side(style="thin", color="E2E8F0"),
+    )
+
+    ws["A1"] = "DAFTAR SELISIH REKONSILIASI"
+    ws["A1"].font = title_font
+    if title_note:
+        ws["A2"] = title_note
+        ws["A2"].font = regular_font
+
+    headers = [
+        "Kode",
+        "Tgl Asal",
+        "Channel",
+        "Jenis Selisih",
+        "Nominal Selisih (Rp)",
+        "Status",
+        "Pihak (Reseller / Outlet)",
+        "Nominal Bank (Rp)",
+        "Ket Bank",
+        "No Ref Bank",
+        "Nominal Otomax (Rp)",
+        "Ket Otomax",
+        "Ref Core Otomax",
+        "Tgl Selesai",
+        "Catatan",
+    ]
+
+    header_row = 4
+    for col_idx, h in enumerate(headers, start=1):
+        cell = ws.cell(row=header_row, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = primary_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    row_num = header_row + 1
+    for d in discrepancies_qs:
+        bm = d.bank_mutation
+        oe = d.otomax_entry
+
+        # Tentukan pihak terkait (Reseller / Outlet)
+        party = "-"
+        if oe and oe.reseller_name_raw:
+            party = oe.reseller_name_raw
+        elif bm and bm.outlet_name:
+            party = bm.outlet_name
+
+        bank_amt = float(bm.amount) if bm and bm.amount is not None else None
+        oto_amt = float(oe.amount) if oe and oe.amount is not None else None
+
+        values = [
+            d.code,
+            d.origin_book_date.strftime("%Y-%m-%d"),
+            d.get_channel_display(),
+            d.get_kind_display(),
+            float(d.amount),
+            d.get_status_display(),
+            party,
+            bank_amt,
+            bm.description_raw if bm else "-",
+            bm.external_ref if bm and bm.external_ref else (bm.ref_core if bm and bm.ref_core else "-"),
+            oto_amt,
+            oe.description_raw if oe else "-",
+            oe.ref_core if oe and oe.ref_core else "-",
+            d.resolved_book_date.strftime("%Y-%m-%d") if d.resolved_book_date else "-",
+            d.note or "-",
+        ]
+
+        for col_idx, val in enumerate(values, start=1):
+            cell = ws.cell(row=row_num, column=col_idx, value=val)
+            cell.font = Font(name="Arial", size=9)
+            cell.border = thin_border
+            if col_idx in (5, 8, 11):  # Nominal columns
+                if val is not None and isinstance(val, int | float | Decimal):
+                    cell.number_format = money_format
+                    cell.alignment = Alignment(horizontal="right")
+                else:
+                    cell.alignment = Alignment(horizontal="center")
+            elif col_idx in (1, 2, 3, 4, 6, 14):
+                cell.alignment = Alignment(horizontal="center")
+            else:
+                cell.alignment = Alignment(horizontal="left")
+
+        row_num += 1
+
+    widths = [16, 12, 14, 22, 18, 14, 24, 18, 35, 18, 18, 35, 18, 14, 25]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    ws.freeze_panes = f"A{header_row + 1}"
+    last_row = max(header_row, row_num - 1)
+    ws.auto_filter.ref = f"A{header_row}:{get_column_letter(len(headers))}{last_row}"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
