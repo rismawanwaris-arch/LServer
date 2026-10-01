@@ -16,7 +16,7 @@ from apps.core.normalize import classify_otomax, extract_tokens, norm_ref, ref_c
 from apps.ingest.models import BankMutation, ImportBatch, OtomaxEntry
 from apps.recon.engine import run_match
 from apps.recon.models import Adjustment, Discrepancy, Match, ReconDay
-from apps.recon.resolve import manual_net_reversal, unnet_otomax_pair
+from apps.recon.resolve import manual_net_reversal, manual_net_reversal_many, unnet_otomax_pair
 
 User = get_user_model()
 BD = date(2026, 9, 16)
@@ -163,7 +163,7 @@ def test_halaman_reversal_menawarkan_refund_kategori_lain_sebagai_kandidat(clien
     admin.save(update_fields=["category"])
 
     res = client_op.get("/reversal/")
-    (item_rev, candidates, _banks) = next(i for i in res.context["items"] if i[0].id == rev.id)
+    (item_rev, candidates, _banks, _flex) = next(i for i in res.context["items"] if i[0].id == rev.id)
     assert [c.id for c, _m in candidates] == [refund.id, lama.id]
 
 
@@ -224,3 +224,94 @@ def test_netting_otomatis_lintas_hari_menutup_selisih_lama_entri_asli():
     rev.refresh_from_db()
     assert original.match_status == rev.match_status == MatchStatus.IGNORED
     assert not _open_discs(original, rev).exists()
+
+
+@pytest.mark.django_db
+def test_manual_net_reversal_many_multiple_entries():
+    # 1 REV membatalkan 2 entri sekaligus (mis. 1.150.000 vs 1.000.000 + 150.000)
+    rev = _row("REV REV TARTUN EDC BRI", "1150000", "PLC CUKANG")
+    o1 = _row("TARTUN EDC BRI BAGIAN 1", "-1000000", "PLC CUKANG")
+    o2 = _row("TARTUN EDC BRI BAGIAN 2", "-150000", "PLC CUKANG")
+    run_match(BD)
+
+    net_diff, disc = manual_net_reversal_many(rev, [o1, o2], note="Dua baris digabung")
+    assert net_diff == Decimal("0.00")
+    assert disc is None
+
+    rev.refresh_from_db()
+    o1.refresh_from_db()
+    o2.refresh_from_db()
+    assert rev.match_status == o1.match_status == o2.match_status == MatchStatus.IGNORED
+    assert rev.net_pair_id == o1.id  # entri terbesar
+    assert o1.net_pair_id == rev.id
+    assert o2.net_pair_id == rev.id
+    assert not _open_discs(rev, o1, o2).exists()
+
+
+@pytest.mark.django_db
+def test_manual_net_reversal_many_different_amounts_creates_amount_diff():
+    # Kasus typo / salah tulis nilai: REV 1.150.000 vs entri asli 1.140.000 (selisih 10.000)
+    rev = _row("REV REV TARTUN EDC BRI", "1150000", "PLC CUKANG")
+    orig = _row("TARTUN EDC BRI SALAH KETIK", "-1140000", "PLC CUKANG")
+    run_match(BD)
+    assert _open_discs(rev, orig).count() == 2
+
+    net_diff, disc = manual_net_reversal_many(rev, [orig], note="Typo kasir Otomax 10rb", allow_amount_diff=True)
+    assert net_diff == Decimal("10000.00")
+    assert disc is not None
+    assert disc.kind == DiscrepancyKind.AMOUNT_DIFF
+    assert disc.amount == Decimal("-10000.00")  # -net_diff (Otomax lebih)
+    assert disc.status == DiscrepancyStatus.OPEN
+
+    rev.refresh_from_db()
+    orig.refresh_from_db()
+    assert rev.match_status == orig.match_status == MatchStatus.IGNORED
+    # OTOMAX_ONLY lama sudah dibersihkan, tapi AMOUNT_DIFF tetap tercatat
+    assert not _open_discs(rev, orig).filter(kind=DiscrepancyKind.OTOMAX_ONLY).exists()
+    assert Discrepancy.objects.filter(otomax_entry=rev, kind=DiscrepancyKind.AMOUNT_DIFF).exists()
+
+
+@pytest.mark.django_db
+def test_unnet_multi_entry_releases_all_and_cleans_amount_diff():
+    rev = _row("REV REV TARTUN EDC BRI", "1150000", "PLC CUKANG")
+    orig = _row("TARTUN EDC BRI SALAH KETIK", "-1140000", "PLC CUKANG")
+    run_match(BD)
+    manual_net_reversal_many(rev, [orig], allow_amount_diff=True)
+
+    # Batalkan netralkan
+    unnet_otomax_pair(rev)
+
+    rev.refresh_from_db()
+    orig.refresh_from_db()
+    assert rev.match_status == orig.match_status == MatchStatus.PENDING_SETTLE
+    assert rev.net_pair_id is None
+    assert orig.net_pair_id is None
+    # Discrepancy AMOUNT_DIFF dihapus, OTOMAX_ONLY kembali
+    assert not Discrepancy.objects.filter(kind=DiscrepancyKind.AMOUNT_DIFF).exists()
+    assert _open_discs(rev, orig).filter(kind=DiscrepancyKind.OTOMAX_ONLY).count() == 2
+
+
+@pytest.mark.django_db
+def test_reversal_action_supports_multi_ids_and_manual_ids(client_op):
+    rev = _row("REV REV TARTUN EDC BRI", "1150000", "PLC CUKANG")
+    o1 = _row("TARTUN EDC BRI BAGIAN 1", "-1000000", "PLC CUKANG")
+    o2 = _row("TARTUN EDC BRI BAGIAN 2", "-150000", "PLC CUKANG")
+    run_match(BD)
+
+    res = client_op.post(
+        "/reversal/net/",
+        {
+            "rev_id": rev.id,
+            "original_ids": [o1.id],
+            "manual_ids": f"{o2.id}",
+            "note": "Multi-entry via form",
+            "allow_amount_diff": "1",
+        },
+    )
+    assert res.status_code == 302
+
+    rev.refresh_from_db()
+    o1.refresh_from_db()
+    o2.refresh_from_db()
+    assert rev.match_status == o1.match_status == o2.match_status == MatchStatus.IGNORED
+

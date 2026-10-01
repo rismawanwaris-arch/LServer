@@ -40,8 +40,43 @@
 {% if tab != 'netted' %}
 <!-- Tab 1: Belum Netted, lengkap dengan kandidat pasangan -->
 <div class="space-y-4">
-  {% for rev, candidates, unmatched_banks in items %}
-  <div class="card overflow-hidden p-0" x-data="{ openMatch: null, manualBankOpen: false }">
+  {% for rev, candidates, unmatched_banks, flex_candidates in items %}
+  <div class="card overflow-hidden p-0"
+       x-data="{
+         openMatch: null,
+         manualBankOpen: false,
+         flexNetOpen: {% if not candidates %}true{% else %}false{% endif %},
+         search: '',
+         manualIds: '',
+         selected: {},
+         revAmount: {{ rev.amount|stringformat:'f' }},
+         amounts: {
+           {% for c in flex_candidates %}{{ c.id }}: {{ c.amount|stringformat:'f' }},{% endfor %}
+         },
+         toggle(id) {
+           this.selected[id] = !this.selected[id];
+         },
+         isSelected(id) {
+           return !!this.selected[id];
+         },
+         get selectedIds() {
+           return Object.keys(this.selected).filter(k => this.selected[k]);
+         },
+         get totalSelected() {
+           let sum = 0;
+           for (let id of this.selectedIds) {
+             sum += Number(this.amounts[id] || 0);
+           }
+           return sum;
+         },
+         get netDiff() {
+           return Number(this.revAmount) + this.totalSelected;
+         },
+         formatRp(val) {
+           if (val === undefined || isNaN(val)) return '0';
+           return Math.round(val).toLocaleString('id-ID');
+         }
+       }">
     <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 p-4 dark:border-slate-800">
       <div>
         <div class="flex items-center gap-2 mb-1">
@@ -60,9 +95,17 @@
 
     <div class="p-4">
       {% if candidates %}
-      <div class="mb-2 text-xs font-medium text-slate-500">
-        Kandidat Pasangan (nominal berlawanan Rp {{ candidates.0.0.amount|rupiah }})
+      <div class="mb-2 flex items-center justify-between">
+        <span class="text-xs font-medium text-slate-500">
+          Kandidat Pasangan (nominal berlawanan Rp {{ candidates.0.0.amount|rupiah }})
+        </span>
+        <button type="button" @click="flexNetOpen = !flexNetOpen"
+                class="btn-ghost text-xs text-indigo-600 dark:text-indigo-400 font-semibold py-1 px-2 flex items-center gap-1">
+          <svg class="icon h-3.5 w-3.5"><use href="#i-sliders"/></svg>
+          <span x-text="flexNetOpen ? 'Tutup Opsi Multi/Beda Nominal' : 'Opsi Beda Nominal / Multi-Entri'"></span>
+        </button>
       </div>
+
       <div class="space-y-2">
         {% for c, active_match in candidates %}
         <div class="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
@@ -118,8 +161,6 @@
           </div>
 
           {% if active_match %}
-          <!-- Detail pencocokan yang bikin kandidat ini tidak bisa langsung dinetralkan,
-               dengan opsi Batalkan Pencocokan langsung dari sini (sama seperti di Hasil Cocok). -->
           <div x-show="openMatch === {{ c.id }}" x-cloak style="display: none;"
                class="border-t border-slate-200 dark:border-slate-700 bg-indigo-50/30 dark:bg-slate-800/50 p-4">
             <div class="grid gap-4 rounded-xl border border-slate-200 bg-white p-4 text-xs md:grid-cols-2 dark:border-slate-800 dark:bg-slate-900">
@@ -183,11 +224,112 @@
         {% endfor %}
       </div>
       {% else %}
-      <p class="text-xs text-slate-400 italic">
-        Tidak ditemukan kandidat entri dengan nominal berlawanan (Rp {{ rev.amount|rupiah }} berbanding terbalik).
-        Kemungkinan entri aslinya belum ter-import, atau cek manual lewat Django Admin.
-      </p>
+      <div class="mb-3">
+        <p class="text-xs text-amber-600 dark:text-amber-400 font-medium">
+          Tidak ditemukan kandidat entri dengan nominal persis berlawanan (Rp {{ rev.amount|rupiah }} berbalik). Silakan gunakan opsi pencocokan beda nominal / multi-entri di bawah.
+        </p>
+      </div>
       {% endif %}
+
+      <!-- PANEL: Opsi Beda Nominal & Multi-Entri -->
+      <div x-show="flexNetOpen" x-cloak class="mt-3 rounded-xl border border-indigo-200 bg-indigo-50/25 p-3.5 dark:border-indigo-900/60 dark:bg-indigo-950/20">
+        <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 class="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+              <svg class="icon h-3.5 w-3.5 text-indigo-600"><use href="#i-swap"/></svg>
+              Netkan Beda Nominal / Pilih Lebih dari 1 Entri
+            </h3>
+            <p class="text-[11px] text-slate-500 mt-0.5">
+              Pilih satu atau beberapa entri lawan. Jika ada selisih nilai (mis. salah ketik), sisa selisih dicatat ke Daftar Selisih.
+            </p>
+          </div>
+          <div class="flex items-center gap-2">
+            <input type="text" x-model="search" placeholder="Cari reseller / ref / nominal..."
+                   class="field-input h-7 w-48 text-[11px]">
+          </div>
+        </div>
+
+        <form method="post" action="{% url 'manual-net-reversal' %}">
+          {% csrf_token %}
+          <input type="hidden" name="rev_id" value="{{ rev.id }}">
+          <input type="hidden" name="book_date" value="{{ book_date }}">
+          <input type="hidden" name="next_url" value="{{ request.get_full_path }}">
+          <input type="hidden" name="allow_amount_diff" value="1">
+
+          {% if flex_candidates %}
+          <div class="max-h-60 overflow-y-auto space-y-1.5 rounded-lg border border-slate-200 bg-white p-2 text-xs dark:border-slate-800 dark:bg-slate-900">
+            {% for c in flex_candidates %}
+            <label class="flex items-center justify-between gap-2 rounded-lg p-2 hover:bg-slate-50 dark:hover:bg-slate-800/60 cursor-pointer border border-transparent hover:border-slate-200 dark:hover:border-slate-700"
+                   x-show="!search || $el.innerText.toLowerCase().includes(search.toLowerCase())">
+              <div class="flex items-center gap-2.5 min-w-0">
+                <input type="checkbox" name="original_ids" value="{{ c.id }}"
+                       @change="toggle({{ c.id }})" :checked="isSelected({{ c.id }})"
+                       class="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500">
+                <div class="min-w-0">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <span class="font-bold text-xs text-slate-900 dark:text-white">{{ c.reseller_name_raw }}</span>
+                    {% if c.reseller_name_raw == rev.reseller_name_raw %}<span class="badge-good text-[10px]">Reseller sama</span>{% endif %}
+                    {% if c.ref_core and c.ref_core == rev.ref_core %}<span class="badge-good text-[10px]">Ref sama</span>{% endif %}
+                    <span class="text-[10px] text-slate-400">#{{ c.id }} &middot; {{ c.book_date|date:"d M Y" }}</span>
+                  </div>
+                  <div class="font-mono text-[11px] text-slate-500 truncate">{{ c.description_raw }}</div>
+                </div>
+              </div>
+              <div class="text-right shrink-0">
+                <span class="money font-semibold text-xs {% if c.amount < 0 %}text-rose-600 dark:text-rose-400{% else %}text-slate-900 dark:text-white{% endif %}">
+                  Rp {{ c.amount|rupiah }}
+                </span>
+              </div>
+            </label>
+            {% endfor %}
+          </div>
+          {% else %}
+          <p class="text-xs text-slate-400 italic p-3 text-center border border-dashed rounded-lg">
+            Tidak ada entri lawan terbuka di sekitar tanggal ini. Masukkan ID entri di bawah jika Anda mengetahui ID-nya.
+          </p>
+          {% endif %}
+
+          <div class="mt-2.5 flex flex-wrap items-center gap-2 text-xs">
+            <span class="text-slate-500 text-[11px]">Ketik ID Otomax manual (jika di luar daftar):</span>
+            <input type="text" name="manual_ids" x-model="manualIds" placeholder="Contoh: 15701, 15702"
+                   class="field-input h-7 w-48 text-[11px]">
+          </div>
+
+          <!-- Ringkasan Kalkulasi & Tombol Aksi -->
+          <div class="mt-3 rounded-lg border border-indigo-200 bg-white p-3 dark:border-indigo-800 dark:bg-slate-900">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div class="text-xs space-y-1">
+                <div class="flex items-center gap-2">
+                  <span class="text-slate-500">Target REV:</span>
+                  <b class="money text-slate-800 dark:text-slate-200">Rp {{ rev.amount|rupiah }}</b>
+                  <span class="text-slate-300">|</span>
+                  <span class="text-slate-500">Lawan Terpilih (<span x-text="selectedIds.length"></span> entri):</span>
+                  <b class="money text-slate-800 dark:text-slate-200">Rp <span x-text="formatRp(totalSelected)"></span></b>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-slate-500">Status Selisih:</span>
+                  <span x-show="netDiff === 0" class="badge-good text-[11px]">✓ Pas Rp 0 (Seimbang)</span>
+                  <span x-show="netDiff !== 0" class="badge-crit text-[11px]">
+                    ⚠ Selisih Rp <span x-text="formatRp(Math.abs(netDiff))"></span> (akan dicatat ke Daftar Selisih)
+                  </span>
+                </div>
+              </div>
+
+              <div class="flex items-center gap-2 flex-1 justify-end min-w-[260px]">
+                <input type="text" name="note" placeholder="Catatan koreksi (opsional)..."
+                       class="field-input h-8 text-xs flex-1 max-w-xs">
+                <button type="submit"
+                        onclick="return confirm('Netralkan REV #{{ rev.id }} dengan entri yang dipilih?');"
+                        class="btn-primary h-8 px-3 text-xs font-bold"
+                        :disabled="selectedIds.length === 0 && !manualIds.trim()">
+                  <svg class="icon h-3.5 w-3.5"><use href="#i-scale"/></svg>
+                  Netkan Pilihan (<span x-text="selectedIds.length"></span>) &rarr;
+                </button>
+              </div>
+            </div>
+          </div>
+        </form>
+      </div>
 
       <!-- Koreksi manual: kalau REV ini ternyata BUKAN koreksi internal murni (mis. memang
            ada refund nyata dari bank), pasangkan langsung ke mutasi bank di sini. -->

@@ -524,55 +524,120 @@ def _settle_manual_pair(
 
 
 @transaction.atomic
+def manual_net_reversal_many(
+    rev: OtomaxEntry,
+    originals: list[OtomaxEntry],
+    note: str = "",
+    user=None,
+    allow_amount_diff: bool = True,
+) -> tuple[Decimal, Discrepancy | None]:
+    """Netralkan manual SATU entri Otomax (REV) dengan SATU ATAU BEBERAPA entri Otomax lawan.
+    Bisa berbeda nominal (mis. salah ketik nilai oleh operator) jika allow_amount_diff=True.
+
+    Jika ada sisa selisih nominal (net_diff != 0):
+      Discrepancy OTOMAX_ONLY lama ditutup/dibersihkan, dan SATU Discrepancy AMOUNT_DIFF
+      baru dicatat untuk sisa selisihnya agar tetap terpantau di Daftar Selisih.
+    """
+    if not originals:
+        raise ValueError("Pilih minimal satu entri Otomax lawan untuk dinetralkan.")
+
+    r = OtomaxEntry.objects.select_for_update().get(pk=rev.pk)
+    ids = sorted({o.pk for o in originals})
+    if r.pk in ids:
+        raise ValueError("Tidak bisa menetralkan entri dengan dirinya sendiri.")
+
+    orig_entries = list(OtomaxEntry.objects.select_for_update().filter(pk__in=ids).order_by("pk"))
+    if len(orig_entries) != len(ids):
+        raise ValueError("Sebagian entri Otomax lawan tidak ditemukan.")
+
+    open_statuses = {MatchStatus.UNMATCHED, MatchStatus.PENDING_SETTLE}
+    if r.match_status not in open_statuses:
+        raise ValueError(
+            f"Entri #{r.id} ({r.reseller_name_raw}) sudah tidak berstatus terbuka ({r.match_status})."
+        )
+    for o in orig_entries:
+        if o.match_status not in open_statuses:
+            raise ValueError(
+                f"Entri #{o.id} ({o.reseller_name_raw}) sudah tidak berstatus terbuka ({o.match_status})."
+            )
+
+    sum_orig = sum((o.amount for o in orig_entries), ZERO)
+    net_diff = r.amount + sum_orig
+
+    if not allow_amount_diff and net_diff != ZERO:
+        raise ValueError(
+            "Nominal kedua entri harus persis saling meniadakan (berlawanan tanda, sama besar)."
+        )
+
+    who = str(user) if user else "sistem"
+    diff_label = f" [selisih Rp {net_diff:,.2f}]" if net_diff != ZERO else ""
+    tag_note = (
+        f"Netting manual oleh {who}: {note}{diff_label}".strip().rstrip(":")
+        if (note or diff_label)
+        else f"Netting manual oleh {who}"
+    )
+
+    primary = max(orig_entries, key=lambda o: abs(o.amount))
+    r.match_status = MatchStatus.IGNORED
+    r.net_pair = primary
+    r.note = tag_note
+    r.save(update_fields=["match_status", "net_pair", "note", "updated_at"])
+
+    for o in orig_entries:
+        o.match_status = MatchStatus.IGNORED
+        o.net_pair = r
+        o.note = tag_note
+        o.save(update_fields=["match_status", "net_pair", "note", "updated_at"])
+
+    actor = user if getattr(user, "pk", None) else None
+    new_disc = None
+
+    if net_diff == ZERO:
+        settle_netted_discrepancies([r, *orig_entries], user=actor, reason=tag_note)
+    else:
+        locked_days = ReconDay.objects.filter(
+            book_date__in={e.book_date for e in [r, *orig_entries]}, locked=True
+        )
+        if locked_days.exists():
+            settle_netted_discrepancies([r, *orig_entries], user=actor, reason=tag_note)
+        else:
+            Discrepancy.objects.filter(
+                otomax_entry__in=[r, *orig_entries], status=DiscrepancyStatus.OPEN
+            ).delete()
+
+        diff_disc_note = (
+            f"Selisih nominal netting reversal Otomax: REV Rp {r.amount:,.2f} vs Lawan Rp {sum_orig:,.2f} "
+            f"(selisih Rp {net_diff:,.2f}). {note}".strip()
+        )
+        new_disc = _make_discrepancy(
+            r.book_date,
+            r.channel_hint or Channel.OTOMAX,
+            DiscrepancyKind.AMOUNT_DIFF,
+            amount=-net_diff,
+            otomax=r,
+            note=diff_disc_note,
+        )
+        _recompute_days([r.book_date, *(o.book_date for o in orig_entries)])
+
+    return net_diff, new_disc
+
+
+@transaction.atomic
 def manual_net_reversal(
     rev: OtomaxEntry,
     original: OtomaxEntry,
     note: str = "",
     user=None,
+    allow_amount_diff: bool = False,
 ) -> None:
-    """Netralkan manual sepasang entri Otomax yang nominalnya persis berlawanan dan gagal
-    (atau sengaja tidak) dinetralkan otomatis oleh reversal_netting — mis. REV vs entri
-    yang dibatalkannya dengan nama reseller beda, atau koreksi salah tembak saldo (REV dari
-    reseller A lalu REFUND ke reseller B). Efeknya sama seperti netting otomatis: keduanya
-    jadi IGNORED dan saling menunjuk net_pair, TANPA membuat Match (tidak ada uang bank yang
-    bergerak, murni koreksi internal Otomax). Selisih OTOMAX_ONLY keduanya ikut ditutup.
-    """
-    r = OtomaxEntry.objects.select_for_update().get(pk=rev.pk)
-    o = OtomaxEntry.objects.select_for_update().get(pk=original.pk)
-
-    if r.pk == o.pk:
-        raise ValueError("Tidak bisa menetralkan entri dengan dirinya sendiri.")
-    if r.amount != -o.amount:
-        raise ValueError("Nominal kedua entri harus persis saling meniadakan (berlawanan tanda, sama besar).")
-    open_statuses = {MatchStatus.UNMATCHED, MatchStatus.PENDING_SETTLE}
-    if r.match_status not in open_statuses or o.match_status not in open_statuses:
-        raise ValueError(
-            "Salah satu entri sudah tidak berstatus terbuka (sudah MATCHED/MANUAL/IGNORED). "
-            "Batalkan pencocokan/tag-nya dulu sebelum menetralkan manual."
-        )
-
-    who = str(user) if user else "sistem"
-    tag_note = f"Netting manual oleh {who}: {note}".strip().rstrip(":") if note else f"Netting manual oleh {who}"
-
-    r.match_status = MatchStatus.IGNORED
-    r.net_pair = o
-    r.note = tag_note
-    r.save(update_fields=["match_status", "net_pair", "note", "updated_at"])
-
-    o.match_status = MatchStatus.IGNORED
-    o.net_pair = r
-    o.note = tag_note
-    o.save(update_fields=["match_status", "net_pair", "note", "updated_at"])
-
-    # `user` kadang cuma label teks (lihat `who` di atas) -- resolved_by butuh User asli.
-    actor = user if getattr(user, "pk", None) else None
-    settle_netted_discrepancies([r, o], user=actor, reason=tag_note)
+    """Netralkan manual sepasang entri Otomax yang nominalnya persis berlawanan (atau beda jika diizinkan)."""
+    manual_net_reversal_many(rev, [original], note=note, user=user, allow_amount_diff=allow_amount_diff)
 
 
 @transaction.atomic
-def unnet_otomax_pair(entry: OtomaxEntry, user=None) -> tuple[OtomaxEntry, OtomaxEntry]:
-    """Batalkan netralkan (otomatis maupun manual) -- mis. operator salah memilih lawan.
-    Keduanya kembali PENDING_SETTLE dan tercatat lagi di Daftar Selisih (OTOMAX_ONLY).
+def unnet_otomax_pair(entry: OtomaxEntry, user=None) -> tuple[OtomaxEntry, OtomaxEntry] | list[OtomaxEntry]:
+    """Batalkan netralkan (otomatis maupun manual, 1:1 maupun 1:banyak) -- mis. operator salah memilih lawan.
+    Keduanya/semuanya kembali PENDING_SETTLE dan tercatat lagi di Daftar Selisih (OTOMAX_ONLY).
 
     Ditolak kalau salah satu tanggal bukunya sudah ditutup: selisihnya sudah diselesaikan
     lewat Adjustment (append-only) yang tidak bisa ditarik kembali -- buka hari itu dulu."""
@@ -581,19 +646,29 @@ def unnet_otomax_pair(entry: OtomaxEntry, user=None) -> tuple[OtomaxEntry, Otoma
     a = OtomaxEntry.objects.select_for_update().get(pk=entry.pk)
     if a.match_status != MatchStatus.IGNORED or not a.net_pair_id:
         raise ValueError(f"Entri Otomax #{a.id} tidak sedang dinetralkan.")
-    b = OtomaxEntry.objects.select_for_update().get(pk=a.net_pair_id)
-    pair = [a] if b.pk == a.pk else [a, b]
+
+    partner_pks = set(
+        OtomaxEntry.objects.filter(
+            Q(pk=a.net_pair_id) | Q(net_pair=a)
+        ).values_list("id", flat=True)
+    )
+    partner_pks.add(a.pk)
+    pair = list(OtomaxEntry.objects.select_for_update().filter(pk__in=partner_pks))
 
     locked = ReconDay.objects.filter(book_date__in={e.book_date for e in pair}, locked=True)
     if locked.exists():
         tgl = ", ".join(d.book_date.strftime("%d %b %Y") for d in locked)
         raise ValueError(f"Tanggal {tgl} sudah ditutup — buka kembali hari itu dulu sebelum membatalkan netralkan.")
 
+    # Hapus discrepancy AMOUNT_DIFF yang sempat dibuat untuk selisih nominal netting ini
+    Discrepancy.objects.filter(
+        otomax_entry__in=pair,
+        kind=DiscrepancyKind.AMOUNT_DIFF,
+        status=DiscrepancyStatus.OPEN,
+    ).delete()
+
     who = str(user) if user else "sistem"
     for e in pair:
-        # Pasangan lawan cuma ikut dibuka kalau memang masih menunjuk balik ke entri ini.
-        if e.pk != a.pk and (e.net_pair_id != a.pk or e.match_status != MatchStatus.IGNORED):
-            continue
         e.match_status = MatchStatus.PENDING_SETTLE
         e.net_pair = None
         e.note = f"Netralkan dibatalkan oleh {who}"
@@ -602,7 +677,9 @@ def unnet_otomax_pair(entry: OtomaxEntry, user=None) -> tuple[OtomaxEntry, Otoma
             make_otomax_only(e)
 
     _recompute_days(e.book_date for e in pair)
-    return a, b
+    if len(pair) == 2:
+        return pair[0], pair[1]
+    return pair
 
 
 @transaction.atomic

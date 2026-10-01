@@ -15,12 +15,13 @@ from django.views.decorators.http import require_POST
 from apps.core.enums import MatchStatus, OtomaxCategory
 from apps.ingest.models import BankMutation, OtomaxEntry
 from apps.recon.models import Match
-from apps.recon.resolve import manual_net_reversal, unnet_otomax_pair
+from apps.recon.resolve import manual_net_reversal_many, unnet_otomax_pair
 
 from ._shared import _parse_date
 
 _OPEN_STATUSES = [MatchStatus.UNMATCHED, MatchStatus.PENDING_SETTLE]
 _MAX_CANDIDATES = 5
+_MAX_FLEX_CANDIDATES = 35
 _MAX_NETTED_ROWS = 300
 _BANK_CANDIDATE_WINDOW = (-2, 1)  # hari, sama seperti jendela di Pending Settle/Review Manual
 
@@ -74,6 +75,32 @@ def _candidates_for_reversal(rev: OtomaxEntry) -> list[tuple[OtomaxEntry, Match 
     return [(o, _active_match_for(o) if o.match_status in matched_statuses else None) for o in scored]
 
 
+def _flexible_candidates_for(rev: OtomaxEntry) -> list[OtomaxEntry]:
+    """Kandidat entri lawan terbuka di sekitar tanggal REV (±14 hari) untuk opsi beda nominal
+    dan multi-entri. Diurutkan berdasarkan kemiripan ref, nama reseller, tanggal, dan waktu."""
+    wide = (rev.book_date - timedelta(days=14), rev.book_date + timedelta(days=14))
+    opp_sign = models.Q(amount__lt=0) if rev.amount > 0 else models.Q(amount__gt=0)
+    qs = (
+        OtomaxEntry.objects.filter(book_date__range=wide, match_status__in=_OPEN_STATUSES)
+        .exclude(category=OtomaxCategory.ADMIN)
+        .exclude(pk=rev.pk)
+        .filter(opp_sign)
+    )
+
+    def score(o: OtomaxEntry) -> tuple:
+        ref_s = 0
+        if rev.ref_core and o.ref_core == rev.ref_core:
+            ref_s = 3
+        elif rev.ref_normalized and o.ref_normalized == rev.ref_normalized:
+            ref_s = 2
+        reseller_s = 1 if o.reseller_name_raw == rev.reseller_name_raw else 0
+        same_date = 1 if o.book_date == rev.book_date else 0
+        day_dist = abs((o.book_date - rev.book_date).days)
+        return (-ref_s, -reseller_s, -same_date, day_dist, o.id)
+
+    return sorted(qs, key=score)[:_MAX_FLEX_CANDIDATES]
+
+
 def _unmatched_banks_for(rev: OtomaxEntry) -> list[BankMutation]:
     """Mutasi bank UNMATCHED di sekitar tanggal REV ini, buat opsi 'Pencocokan Manual ke
     Bank' kalau REV-nya ternyata bukan koreksi internal murni tapi memang ada uang bank
@@ -111,7 +138,12 @@ def reversal_view(request):
         items = list(netted_qs.order_by("-updated_at")[:_MAX_NETTED_ROWS])
     else:
         items = [
-            (rev, _candidates_for_reversal(rev), _unmatched_banks_for(rev))
+            (
+                rev,
+                _candidates_for_reversal(rev),
+                _unmatched_banks_for(rev),
+                _flexible_candidates_for(rev),
+            )
             for rev in belum_qs.order_by("-entry_datetime")
         ]
 
@@ -133,22 +165,56 @@ def reversal_view(request):
 @login_required
 @require_POST
 def manual_net_reversal_action(request):
+    import re
+
     rev_id = request.POST.get("rev_id")
     original_id = request.POST.get("original_id")
+    original_ids_list = request.POST.getlist("original_ids")
+    manual_ids_raw = request.POST.get("manual_ids", "").strip()
+    allow_diff = request.POST.get("allow_amount_diff") in ("1", "true", "True", "on")
     note = request.POST.get("note", "").strip()
     book_date = request.POST.get("book_date", "")
     fallback_url = f"/reversal/?d={book_date}" if book_date else "/reversal/"
     next_url = request.POST.get("next_url") or request.META.get("HTTP_REFERER") or fallback_url
 
+    selected_ids = set()
+    if original_id and original_id.isdigit():
+        selected_ids.add(int(original_id))
+    for oid in original_ids_list:
+        if oid and oid.strip().isdigit():
+            selected_ids.add(int(oid.strip()))
+    if manual_ids_raw:
+        for token in re.findall(r"\d+", manual_ids_raw):
+            selected_ids.add(int(token))
+
+    if not selected_ids:
+        messages.error(request, "Pilih minimal satu entri Otomax lawan untuk dinetralkan.")
+        return redirect(next_url)
+
     rev = get_object_or_404(OtomaxEntry, pk=rev_id)
-    original = get_object_or_404(OtomaxEntry, pk=original_id)
+    originals = list(OtomaxEntry.objects.filter(pk__in=selected_ids))
+    if len(originals) != len(selected_ids):
+        messages.error(request, "Sebagian entri Otomax lawan yang dipilih tidak ditemukan.")
+        return redirect(next_url)
 
     try:
-        manual_net_reversal(rev, original, note=note, user=request.user)
+        # Jika multi-entri atau user mencentang beda nominal, izinkan selisih nominal
+        allow_amount_diff = allow_diff or len(originals) > 1 or (rev.amount != -originals[0].amount)
+        net_diff, disc = manual_net_reversal_many(
+            rev, originals, note=note, user=request.user, allow_amount_diff=allow_amount_diff
+        )
+        orig_names = ", ".join(f"#{o.id} '{o.reseller_name_raw}'" for o in originals)
+        diff_info = (
+            f" dengan sisa selisih Rp {abs(net_diff):,.0f} dicatat ke Daftar Selisih"
+            if net_diff != Decimal("0.00")
+            else " (nominal pas seimbang)"
+        )
         messages.success(
             request,
-            f"Berhasil menetralkan #{rev.id} '{rev.reseller_name_raw}' (Rp {rev.amount:,.0f}) "
-            f"dengan #{original.id} '{original.reseller_name_raw}' (Rp {original.amount:,.0f}).",
+            (
+                f"Berhasil menetralkan REV #{rev.id} (Rp {rev.amount:,.0f}) dengan "
+                f"{len(originals)} entri lawan ({orig_names}){diff_info}."
+            ),
         )
     except ValueError as e:
         messages.error(request, str(e))
