@@ -339,3 +339,84 @@ def test_generate_excel_discrepancies_and_export_view(client, django_user_model)
     ws_resp = wb_resp.active
     assert ws_resp.title == "Daftar Selisih"
 
+
+@pytest.mark.django_db
+def test_generate_whatsapp_recon_text_and_note_update(client, django_user_model):
+    """Test pembuatan teks laporan WhatsApp dan pembaruan catatan investigasi selisih."""
+    from apps.core.enums import DiscrepancyKind, DiscrepancyStatus
+    from apps.recon.models import Discrepancy
+    from apps.recon.wa_report import generate_whatsapp_recon_text
+
+    user = django_user_model.objects.create_user(username="operator_wa", password="password123")
+    client.force_login(user)
+
+    d_prev = date(2026, 9, 10)
+    d_curr = date(2026, 9, 11)
+
+    bm_prev = _bank("SETORAN TARTUN LAMA", "500000", channel=Channel.BRI, book_date=d_prev)
+    bm_curr = _bank("AISUMIATI-BANK KESEJAHTERAAN", "700000", channel=Channel.BRI, book_date=d_curr)
+
+    # Selisih hari sebelumnya (1 resolved, 1 open)
+    disc_prev_resolved = Discrepancy.objects.create(
+        code="SLS-20260910-001",
+        origin_book_date=d_prev,
+        channel=Channel.BRI,
+        kind=DiscrepancyKind.BANK_ONLY,
+        bank_mutation=bm_prev,
+        amount=Decimal("500000.00"),
+        status=DiscrepancyStatus.RESOLVED,
+        resolved_book_date=d_curr,
+    )
+    disc_prev_open = Discrepancy.objects.create(
+        code="SLS-20260910-002",
+        origin_book_date=d_prev,
+        channel=Channel.MANDIRI,
+        kind=DiscrepancyKind.BANK_ONLY,
+        amount=Decimal("100000.00"),
+        status=DiscrepancyStatus.OPEN,
+        note="Follow up konter",
+    )
+
+    # Selisih hari ini (1 open)
+    disc_curr = Discrepancy.objects.create(
+        code="SLS-20260911-001",
+        origin_book_date=d_curr,
+        channel=Channel.BRI,
+        kind=DiscrepancyKind.BANK_ONLY,
+        bank_mutation=bm_curr,
+        amount=Decimal("700000.00"),
+        status=DiscrepancyStatus.OPEN,
+    )
+
+    # 1. Test update note endpoint
+    resp_note = client.post(
+        f"/selisih/{disc_curr.pk}/note/",
+        {"note": "Saldo masuk BRI belum ada claim", "next_url": "/selisih/?d=2026-09-11"},
+        follow=True,
+    )
+    assert resp_note.status_code == 200
+    disc_curr.refresh_from_db()
+    assert disc_curr.note == "Saldo masuk BRI belum ada claim"
+
+    # 2. Test generate_whatsapp_recon_text
+    wa_text = generate_whatsapp_recon_text(d_curr)
+    assert "LAPORAN REKONSILIASI HARIAN" in wa_text
+    assert "11 September 2026" in wa_text
+    assert "OUTSTANDING HARI INI" in wa_text
+    assert "700.000" in wa_text
+    assert "AISUMIATI-BANK KESEJAHTERAAN" in wa_text
+    assert "Saldo masuk BRI belum ada claim" in wa_text
+    assert "UPDATE PROGRESS TGL SEBELUMNYA (10 Sep 2026)" in wa_text
+    assert "Sudah Selesai / Klop (1)" in wa_text
+    assert "SLS-20260910-001" in wa_text
+    assert "Masih Belum Selesai (1)" in wa_text
+    assert "Follow up konter" in wa_text
+
+    # 3. Test endpoint /selisih/wa-text/
+    resp_wa = client.get(f"/selisih/wa-text/?d={d_curr.isoformat()}")
+    assert resp_wa.status_code == 200
+    json_data = resp_wa.json()
+    assert json_data["status"] == "ok"
+    assert "LAPORAN REKONSILIASI HARIAN" in json_data["text"]
+
+

@@ -28,7 +28,9 @@ urlpatterns = [
     # 5c. Daftar Selisih (dipindahkan keluar dari Dashboard)
     path("selisih/", views.discrepancy_list_view, name="discrepancy-list"),
     path("selisih/export/", views.discrepancy_export_action, name="discrepancy-export"),
+    path("selisih/<int:pk>/note/", views.discrepancy_update_note_action, name="discrepancy-note"),
     path("selisih/<int:pk>/detail/", views.discrepancy_detail_view, name="discrepancy-detail"),
+    path("selisih/wa-text/", views.wa_report_text_view, name="wa-report-text"),
     # 6. Riwayat & Laporan
     path("reports/", views.reports_view, name="reports"),
     path("reports/export/", views.reports_export_action, name="reports-export"),

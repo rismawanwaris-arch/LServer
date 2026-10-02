@@ -3,6 +3,36 @@
 {% block title %}Daftar Selisih — RekonMutasi{% endblock %}
 
 {% block content %}
+<div x-data="{
+  waModalOpen: false,
+  waText: '',
+  waLoading: false,
+  waCopied: false,
+  openWaModal(d) {
+    this.waModalOpen = true;
+    this.waLoading = true;
+    this.waCopied = false;
+    this.waText = 'Membuat teks laporan WhatsApp...';
+    fetch('{% url 'wa-report-text' %}?d=' + (d || ''))
+      .then(res => res.json())
+      .then(data => {
+        this.waText = data.text;
+        this.waLoading = false;
+      })
+      .catch(err => {
+        this.waText = 'Gagal memuat teks laporan: ' + err;
+        this.waLoading = false;
+      });
+  },
+  copyWaText() {
+    if (!this.waText) return;
+    navigator.clipboard.writeText(this.waText).then(() => {
+      this.waCopied = true;
+      setTimeout(() => { this.waCopied = false; }, 2500);
+    });
+  }
+}">
+
 <div class="mb-5 flex flex-wrap items-end justify-between gap-3">
   <div>
     <h1 class="page-title">Daftar Selisih</h1>
@@ -14,9 +44,15 @@
       {% endif %}
     </p>
   </div>
-  <a href="{% url 'discrepancy-export' %}{% if export_query %}?{{ export_query }}{% endif %}" class="btn-secondary">
-    <svg class="icon"><use href="#i-download"/></svg>Export Excel ({{ total_count }} selisih)
-  </a>
+  <div class="flex items-center gap-2">
+    <button type="button" @click="openWaModal('{% if book_date %}{{ book_date|date:'Y-m-d' }}{% elif nav_book_date %}{{ nav_book_date }}{% else %}{% now 'Y-m-d' %}{% endif %}')"
+            class="btn-primary flex items-center gap-1.5 shadow-sm">
+      <svg class="icon h-4 w-4"><use href="#i-swap"/></svg>Salin Format WA
+    </button>
+    <a href="{% url 'discrepancy-export' %}{% if export_query %}?{{ export_query }}{% endif %}" class="btn-secondary">
+      <svg class="icon"><use href="#i-download"/></svg>Export Excel ({{ total_count }} selisih)
+    </a>
+  </div>
 </div>
 
 <!-- Mode tanggal: satu tanggal (ikut bilah atas) atau semua tanggal -->
@@ -174,5 +210,69 @@
       </tbody>
     </table>
   </div>
+</div>
+
+<!-- Modal Pratinjau & Salin Format WA -->
+<div x-show="waModalOpen"
+     x-transition:enter="transition ease-out duration-200"
+     x-transition:enter-start="opacity-0"
+     x-transition:enter-end="opacity-100"
+     x-transition:leave="transition ease-in duration-150"
+     x-transition:leave-start="opacity-100"
+     x-transition:leave-end="opacity-0"
+     class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm"
+     style="display: none;"
+     @keydown.escape.window="waModalOpen = false">
+  <div class="relative w-full max-w-2xl rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900 border border-slate-200 dark:border-slate-800"
+       @click.outside="waModalOpen = false">
+    
+    <div class="mb-4 flex items-center justify-between border-b border-slate-100 pb-3 dark:border-slate-800">
+      <div class="flex items-center gap-2">
+        <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400">
+          <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.298.38 2.27 1.019 3.287l-.711 2.598 2.664-.699c.971.531 1.761.814 2.796.814 3.181 0 5.767-2.586 5.768-5.766 0-3.18-2.586-5.766-5.768-5.766zm9.969 5.768c0 5.518-4.482 10-10 10-1.748 0-3.385-.453-4.814-1.242l-5.186 1.36 1.385-5.061c-.868-1.488-1.385-3.224-1.385-5.057 0-5.518 4.482-10 10-10 5.518 0 10 4.482 10 10z"/></svg>
+        </div>
+        <div>
+          <h3 class="text-sm font-bold text-slate-900 dark:text-white">Format Laporan WhatsApp</h3>
+          <p class="text-xs text-slate-500">Teks laporan otomatis siap kirim ke grup manajemen</p>
+        </div>
+      </div>
+      <button type="button" @click="waModalOpen = false" class="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800">
+        <svg class="icon h-4 w-4"><use href="#i-x"/></svg>
+      </button>
+    </div>
+
+    <!-- Kotak Teks Preview / Edit -->
+    <div class="mb-4">
+      <label class="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">
+        Pratinjau Pesan (Bisa Anda edit atau tambahkan catatan jika perlu sebelum disalin):
+      </label>
+      <textarea x-model="waText"
+                rows="14"
+                :disabled="waLoading"
+                class="field-input w-full font-mono text-xs leading-relaxed bg-slate-50 p-3.5 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl resize-y select-all focus:bg-white dark:focus:bg-slate-900 transition"></textarea>
+    </div>
+
+    <div class="flex items-center justify-between pt-2">
+      <span class="text-xs text-slate-400">
+        <span x-show="waCopied" class="inline-flex items-center gap-1 font-semibold text-emerald-600 dark:text-emerald-400">
+          <svg class="icon h-4 w-4"><use href="#i-check"/></svg>Berhasil disalin ke Clipboard!
+        </span>
+      </span>
+      <div class="flex items-center gap-2">
+        <button type="button" @click="waModalOpen = false" class="btn-ghost px-3.5 py-1.5 text-xs">
+          Tutup
+        </button>
+        <button type="button" @click="copyWaText()"
+                :disabled="waLoading"
+                class="btn-primary px-4 py-1.5 text-xs flex items-center gap-1.5 shadow-sm">
+          <svg class="icon h-3.5 w-3.5"><use href="#i-check"/></svg>
+          <span x-text="waCopied ? 'Tersalin! ✅' : 'Salin ke Clipboard'"></span>
+        </button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
 </div>
 {% endblock %}

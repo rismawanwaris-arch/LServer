@@ -29,6 +29,12 @@
             {% else %}
               <span class="text-xs text-slate-400 italic">—</span>
             {% endif %}
+            {% if d.note %}
+              <div class="mt-1 flex items-center gap-1 text-[11px] text-amber-700 dark:text-amber-400 truncate max-w-[240px]" title="Catatan: {{ d.note }}">
+                <svg class="h-3 w-3 shrink-0"><use href="#i-pencil"/></svg>
+                <span class="truncate">{{ d.note }}</span>
+              </div>
+            {% endif %}
           </td>
           <td>
             {% if d.kind == 'BANK_ONLY' %}<span class="badge-warn">bank only</span>

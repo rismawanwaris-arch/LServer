@@ -15,8 +15,8 @@ from decimal import Decimal
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.db.models import Count, Q, Sum
-from django.http import HttpResponse
-from django.shortcuts import get_object_or_404, render
+from django.http import HttpResponse, JsonResponse
+from django.shortcuts import get_object_or_404, redirect, render
 
 from apps.core.enums import Channel, DiscrepancyStatus
 from apps.recon.models import Discrepancy
@@ -206,3 +206,25 @@ def discrepancy_export_action(request):
     )
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     return response
+
+
+@login_required
+def discrepancy_update_note_action(request, pk: int):
+    """Simpan catatan investigasi / follow-up langsung dari web untuk selisih ini."""
+    if request.method == "POST":
+        d = get_object_or_404(Discrepancy, pk=pk)
+        note = request.POST.get("note", "").strip()
+        d.note = note
+        d.save(update_fields=["note"])
+    next_url = request.POST.get("next_url") or request.GET.get("next_url") or "/selisih/"
+    return redirect(next_url)
+
+
+@login_required
+def wa_report_text_view(request):
+    """Mengembalikan teks laporan WhatsApp dalam bentuk JSON untuk disalin ke clipboard."""
+    from apps.recon.wa_report import generate_whatsapp_recon_text
+
+    book_date = _parse_date(request.GET.get("d"))
+    text = generate_whatsapp_recon_text(book_date)
+    return JsonResponse({"status": "ok", "book_date": str(book_date), "text": text})
