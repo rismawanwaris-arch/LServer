@@ -11,7 +11,7 @@ from decimal import Decimal, InvalidOperation
 
 from apps.core.enums import DiscrepancyStatus
 from apps.recon.models import Discrepancy
-from apps.recon.reports import get_daily_summary
+from apps.recon.reports import get_daily_summary, get_reconciliation_bridge
 
 ZERO = Decimal("0.00")
 
@@ -69,17 +69,39 @@ def generate_whatsapp_recon_text(book_date: date) -> str:
 
     prev_open_total = sum((d.amount for d in prev_open), ZERO)
 
+    bridge = get_reconciliation_bridge(book_date)
+
+    diff_str = f"-Rp {_format_rupiah(bridge['diff_gross_abs'])}" if bridge['diff_gross'] < 0 else f"+Rp {_format_rupiah(bridge['diff_gross_abs'])}" if bridge['diff_gross'] > 0 else "Rp 0"
+
     lines = [
         "📊 *LAPORAN REKONSILIASI HARIAN*",
         f"📅 *Tanggal Rekon:* {book_date.strftime('%d %B %Y')}",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        "💰 *RINGKASAN REKONSILIASI:*",
-        f"• Total Uang Masuk Bank : Rp {_format_rupiah(summary['total_bank'])}",
+        "💰 *1️⃣ TOTAL MASUK & OMSET:*",
+        f"• Total Uang Masuk Bank   : Rp {_format_rupiah(summary['total_bank'])}",
         f"• Total Penambahan Otomax : Rp {_format_rupiah(summary['total_otomax'])}",
-        f"• Selisih Bersih Hari Ini : Rp {_format_rupiah(summary['selisih'])}",
-        f"• Transaksi Cocok : {summary['matched_auto_count'] + summary['matched_manual_count']} transaksi",
+        f"• Beda Buku (Kotor)       : {diff_str}",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        "🔍 *2️⃣ PENJELASAN BEDA BUKU (SUDAH KLOP):*",
+        f"• Cocok Hari Sama            : Rp {_format_rupiah(bridge['same_day_matched_amount'])} ({bridge['same_day_matched_count']} trx)",
     ]
+    if bridge['cross_date_oto_count'] > 0:
+        lines.append(f"• Otomax Lintas Hari (Uang beda tgl) : Rp {_format_rupiah(bridge['cross_date_oto_amount'])} ({bridge['cross_date_oto_count']} trx)")
+    if bridge['cross_date_bank_count'] > 0:
+        lines.append(f"• Bank Lintas Hari (Tiket beda tgl)  : Rp {_format_rupiah(bridge['cross_date_bank_amount'])} ({bridge['cross_date_bank_count']} trx)")
+    if bridge['netted_count'] > 0:
+        lines.append(f"• Reversal Dinetralkan Otomax        : Rp {_format_rupiah(bridge['netted_amount'])} ({bridge['netted_count']} trx)")
+    if bridge['tagged_bank_count'] > 0:
+        lines.append(f"• Mutasi Bank Di-Tag (Admin/Tarik)   : Rp {_format_rupiah(bridge['tagged_bank_amount'])} ({bridge['tagged_bank_count']} trx)")
+
+    lines.extend([
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        "🎯 *3️⃣ STATUS SELISIH RIIL (PR HARI INI):*",
+        f"• Selisih Bersih Hari Ini : Rp {_format_rupiah(summary['selisih'])}",
+        f"• Sisa Bank Belum Cocok   : {summary['unmatched_bank_count']} mutasi (Rp {_format_rupiah(summary['unmatched_bank_amount'])})",
+        f"• Sisa Otomax Belum Settle: {summary['pending_settle_count']} tiket (Rp {_format_rupiah(summary['pending_settle_amount'])})",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━",
+    ])
 
     # Bagian Selisih Outstanding Hari Ini
     if outstanding_list:

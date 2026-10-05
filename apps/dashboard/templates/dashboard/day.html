@@ -4,6 +4,7 @@
 
 {% block content %}
 {% with d=book_date|date:'Y-m-d' %}
+<div x-data="{ showBridgeModal: false, bridgeTab: 'cross' }">
 <!-- Judul halaman -->
 <div class="mb-5 flex flex-wrap items-end justify-between gap-3">
   <div>
@@ -165,7 +166,16 @@
   <div class="card flex flex-col gap-2.5 p-4">
     <div class="kpi-label"><span class="h-2 w-2 rounded-sm bg-violet-600"></span>Transaksi Otomax</div>
     <div class="kpi-value money"><span class="kpi-unit">Rp</span>{{ summary.total_otomax|rupiah }}</div>
+    {% if bridge.diff_gross != 0 %}
+    <div class="mt-auto flex items-center justify-between text-xs pt-1.5 border-t border-slate-100 dark:border-slate-800">
+      <span class="text-slate-500">Beda vs Bank:</span>
+      <button type="button" @click="showBridgeModal = true" class="font-semibold money text-indigo-600 hover:underline dark:text-indigo-400">
+        {% if bridge.diff_gross < 0 %}-{% endif %}Rp {{ bridge.diff_gross_abs|rupiah }} &rarr;
+      </button>
+    </div>
+    {% else %}
     <div class="mt-auto text-xs text-slate-500">Top-up tarik tunai reseller</div>
+    {% endif %}
   </div>
 
   <a href="{% url 'matches' %}?d={{ d }}" class="card card-link flex flex-col gap-2.5 p-4 sm:col-span-2 lg:col-span-1">
@@ -184,6 +194,34 @@
       {% if matched_rate is not None %}<b class="money text-emerald-600 dark:text-emerald-400">{{ matched_rate }}%</b>{% endif %}
     </div>
   </a>
+</div>
+
+<!-- Jembatan Rekonsiliasi (Penjelasan Beda Buku Bank vs Otomax) -->
+<div class="card mb-6 border-indigo-100 bg-gradient-to-r from-indigo-50/70 via-violet-50/40 to-slate-50/50 p-4 dark:border-indigo-900/40 dark:from-indigo-950/20 dark:via-violet-950/20 dark:to-slate-900/30">
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div class="flex items-center gap-3">
+      <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-600/10 text-indigo-600 dark:bg-indigo-400/15 dark:text-indigo-400">
+        <svg class="icon h-5 w-5"><use href="#i-swap"/></svg>
+      </span>
+      <div>
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="text-xs font-semibold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">Jembatan Rekonsiliasi</span>
+          <span class="badge {% if bridge.diff_gross < 0 %}badge-warn{% elif bridge.diff_gross > 0 %}badge-info{% else %}badge-good{% endif %} money text-[11px]">
+            Beda buku kotor: {% if bridge.diff_gross < 0 %}-{% endif %}Rp {{ bridge.diff_gross_abs|rupiah }}
+          </span>
+        </div>
+        <p class="mt-0.5 text-xs text-slate-600 dark:text-slate-300">
+          Uang Bank vs Otomax beda <b>{% if bridge.diff_gross < 0 %}-{% endif %}Rp {{ bridge.diff_gross_abs|rupiah }}</b>. 
+          Sebagian besar sudah klop via transaksi lintas hari (H-1/H+1) dan reversal. 
+          Selisih riil (PR) yang belum beres hanya <b class="money text-rose-600 dark:text-rose-400">Rp {{ bridge.selisih_net|rupiah }}</b>.
+        </p>
+      </div>
+    </div>
+    <button type="button" @click="showBridgeModal = true" class="btn-primary shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium shadow-sm">
+      <svg class="icon h-3.5 w-3.5"><use href="#i-search"/></svg>
+      Rincian Penjelasan (Beda Rp {{ bridge.diff_gross_abs|rupiah }}) &rarr;
+    </button>
+  </div>
 </div>
 
 <!-- Belum cocok -->
@@ -312,6 +350,9 @@
     "Lain-lain" = entri Otomax tanpa keterangan channel bank yang jelas (mis. biaya admin, setor/ambil setoran) — tidak masuk kategori BRI/BCA/Mandiri/Merchant BCA manapun.
   </p>
   {% endif %}
+</div>
+
+  {% include "dashboard/_bridge_modal.html" %}
 </div>
 {% endwith %}
 {% endblock %}

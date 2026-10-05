@@ -129,6 +129,208 @@ def get_daily_summary(book_date: date) -> dict:
     }
 
 
+def get_reconciliation_bridge(book_date: date) -> dict:
+    """Menghitung jembatan rekonsiliasi yang menjelaskan selisih bruto antara
+    Total Masuk Bank vs Total Penambahan Otomax pada tanggal buku tertentu."""
+    bank_qs = BankMutation.objects.filter(book_date=book_date)
+    otomax_qs = OtomaxEntry.objects.filter(
+        book_date=book_date, category=OtomaxCategory.TOPUP_TARTUN
+    ).exclude(match_status=MatchStatus.IGNORED)
+
+    total_bank = bank_qs.filter(amount__gt=0).aggregate(s=Sum("amount"))["s"] or ZERO
+    total_otomax = otomax_qs.aggregate(s=Sum("amount"))["s"] or ZERO
+    diff_gross = total_bank - total_otomax
+    diff_gross_abs = abs(diff_gross)
+
+    # 1. Matches yang aktif (tidak dibatalkan)
+    matches_all = (
+        Match.objects.filter(voided_at__isnull=True)
+        .filter(
+            Q(book_date=book_date)
+            | Q(bank_mutation__book_date=book_date)
+            | Q(bank_mutations__book_date=book_date)
+            | Q(otomax_entry__book_date=book_date)
+            | Q(otomax_entries__book_date=book_date)
+        )
+        .distinct()
+        .select_related("bank_mutation", "otomax_entry")
+        .prefetch_related("bank_mutations", "otomax_entries")
+    )
+
+    same_day_matched_amount = ZERO
+    same_day_matched_count = 0
+
+    cross_date_oto_items = []
+    cross_date_oto_amount = ZERO
+
+    cross_date_bank_items = []
+    cross_date_bank_amount = ZERO
+
+    tagged_bank_items = []
+    tagged_bank_amount = ZERO
+
+    seen_cross_oto_ids = set()
+    seen_cross_bank_ids = set()
+
+    for m in matches_all:
+        bm = m.bank_mutation
+        b_list = list(m.bank_mutations.all()) or ([bm] if bm else [])
+        oe = m.otomax_entry
+        o_list = list(m.otomax_entries.all()) or ([oe] if oe else [])
+
+        b_dates = {b.book_date for b in b_list}
+        o_dates = {o.book_date for o in o_list}
+
+        # Kasus 1: Cocok di hari yang sama
+        if book_date in b_dates and book_date in o_dates:
+            same_day_matched_count += 1
+            same_day_matched_amount += m.amount_bank
+
+        # Kasus 2: Otomax bertanggal book_date, tapi bank bertanggal LAIN (atau belum ada bank)
+        for o in o_list:
+            if o.book_date == book_date and (not b_dates or book_date not in b_dates):
+                if o.id not in seen_cross_oto_ids:
+                    seen_cross_oto_ids.add(o.id)
+                    b_date_str = ", ".join(d.strftime("%d/%m") for d in sorted(b_dates)) if b_dates else "-"
+                    cross_date_oto_amount += o.amount
+                    cross_date_oto_items.append({
+                        "id": o.id,
+                        "party": o.reseller_name_raw or "-",
+                        "channel": o.channel_hint or "OTOMAX",
+                        "amount": o.amount,
+                        "bank_dates": b_date_str,
+                        "desc": o.description_raw,
+                        "note": m.note or m.review_reason,
+                    })
+
+        # Kasus 3: Bank bertanggal book_date, tapi Otomax bertanggal LAIN
+        for b in b_list:
+            if b.book_date == book_date and o_dates and book_date not in o_dates:
+                if b.id not in seen_cross_bank_ids:
+                    seen_cross_bank_ids.add(b.id)
+                    o_date_str = ", ".join(d.strftime("%d/%m") for d in sorted(o_dates))
+                    cross_date_bank_amount += b.amount
+                    cross_date_bank_items.append({
+                        "id": b.id,
+                        "party": b.outlet_name or "-",
+                        "channel": b.channel,
+                        "amount": b.amount,
+                        "otomax_dates": o_date_str,
+                        "desc": b.description_raw,
+                        "note": m.note or m.review_reason,
+                    })
+
+        # Kasus 4: Bank bertanggal book_date yang di-tag manual tanpa Otomax
+        if m.match_type == MatchType.MANUAL and not o_list and book_date in b_dates:
+            for b in b_list:
+                if b.book_date == book_date and b.id not in seen_cross_bank_ids:
+                    seen_cross_bank_ids.add(b.id)
+                    tagged_bank_amount += b.amount
+                    tagged_bank_items.append({
+                        "id": b.id,
+                        "party": b.outlet_name or "-",
+                        "channel": b.channel,
+                        "amount": b.amount,
+                        "tag": b.get_tag_manual_display() if b.tag_manual else "Manual",
+                        "desc": b.description_raw,
+                        "note": b.manual_note or m.note,
+                    })
+
+    # 2. Koreksi Reversal Internal Otomax (Dinetralkan)
+    netted_qs = OtomaxEntry.objects.filter(
+        book_date=book_date,
+        match_status=MatchStatus.IGNORED,
+        net_pair__isnull=False,
+    ).select_related("net_pair")
+    netted_items = []
+    netted_amount = ZERO
+    for o in netted_qs:
+        if o.amount > 0:
+            netted_amount += o.amount
+            netted_items.append({
+                "id": o.id,
+                "party": o.reseller_name_raw or "-",
+                "channel": o.channel_hint or "OTOMAX",
+                "amount": o.amount,
+                "desc": o.description_raw,
+                "pair_info": f"Dinetralkan dengan #{o.net_pair.id} {o.net_pair.reseller_name_raw} Rp {o.net_pair.amount:,.0f}" if o.net_pair else "-",
+            })
+
+    # 3. PR yang Masih Terbuka
+    unmatched_bank_qs = bank_qs.filter(match_status=MatchStatus.UNMATCHED)
+    unmatched_bank_amount = unmatched_bank_qs.aggregate(s=Sum("amount"))["s"] or ZERO
+    unmatched_bank_items = [
+        {
+            "id": b.id,
+            "party": b.outlet_name or "-",
+            "channel": b.channel,
+            "amount": b.amount,
+            "desc": b.description_raw,
+        }
+        for b in unmatched_bank_qs.order_by("-amount")[:25]
+    ]
+
+    pending_settle_qs = OtomaxEntry.objects.filter(
+        book_date=book_date,
+        category=OtomaxCategory.TOPUP_TARTUN,
+        match_status__in=[MatchStatus.PENDING_SETTLE, MatchStatus.UNMATCHED],
+    )
+    pending_settle_amount = pending_settle_qs.aggregate(s=Sum("amount"))["s"] or ZERO
+    pending_settle_items = [
+        {
+            "id": o.id,
+            "party": o.reseller_name_raw or "-",
+            "channel": o.channel_hint or "OTOMAX",
+            "amount": o.amount,
+            "desc": o.description_raw,
+        }
+        for o in pending_settle_qs.order_by("-amount")[:25]
+    ]
+
+    amount_diff_qs = Discrepancy.objects.filter(
+        origin_book_date=book_date, kind=DiscrepancyKind.AMOUNT_DIFF, status=DiscrepancyStatus.OPEN
+    )
+    amount_diff_amount = amount_diff_qs.aggregate(s=Sum("amount"))["s"] or ZERO
+    amount_diff_count = amount_diff_qs.count()
+
+    selisih_net = unmatched_bank_amount - pending_settle_amount + amount_diff_amount
+
+    return {
+        "book_date": book_date,
+        "total_bank": total_bank,
+        "total_otomax": total_otomax,
+        "diff_gross": diff_gross,
+        "diff_gross_abs": diff_gross_abs,
+        "is_otomax_higher": total_otomax > total_bank,
+        "is_bank_higher": total_bank > total_otomax,
+        # Klop
+        "same_day_matched_amount": same_day_matched_amount,
+        "same_day_matched_count": same_day_matched_count,
+        "cross_date_oto_amount": cross_date_oto_amount,
+        "cross_date_oto_count": len(cross_date_oto_items),
+        "cross_date_oto_items": cross_date_oto_items,
+        "cross_date_bank_amount": cross_date_bank_amount,
+        "cross_date_bank_count": len(cross_date_bank_items),
+        "cross_date_bank_items": cross_date_bank_items,
+        "netted_amount": netted_amount,
+        "netted_count": len(netted_items),
+        "netted_items": netted_items,
+        "tagged_bank_amount": tagged_bank_amount,
+        "tagged_bank_count": len(tagged_bank_items),
+        "tagged_bank_items": tagged_bank_items,
+        # PR
+        "unmatched_bank_amount": unmatched_bank_amount,
+        "unmatched_bank_count": unmatched_bank_qs.count(),
+        "unmatched_bank_items": unmatched_bank_items,
+        "pending_settle_amount": pending_settle_amount,
+        "pending_settle_count": pending_settle_qs.count(),
+        "pending_settle_items": pending_settle_items,
+        "amount_diff_amount": amount_diff_amount,
+        "amount_diff_count": amount_diff_count,
+        "selisih_net": selisih_net,
+    }
+
+
 # Kolom yang dihitung get_daily_rows() -- subset get_daily_summary() tanpa per_bank.
 DAILY_ROW_KEYS = (
     "day_status",
