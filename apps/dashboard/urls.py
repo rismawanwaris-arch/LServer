@@ -31,6 +31,10 @@ urlpatterns = [
     path("selisih/<int:pk>/note/", views.discrepancy_update_note_action, name="discrepancy-note"),
     path("selisih/<int:pk>/detail/", views.discrepancy_detail_view, name="discrepancy-detail"),
     path("selisih/wa-text/", views.wa_report_text_view, name="wa-report-text"),
+    # 5d. Data Dikecualikan
+    path("dikecualikan/", views.excluded_transactions_view, name="excluded-transactions"),
+    path("dikecualikan/<int:pk>/restore/", views.restore_excluded_transaction_action, name="excluded-restore"),
+    path("dikecualikan/restore-bulk/", views.restore_excluded_bulk_action, name="excluded-restore-bulk"),
     # 6. Riwayat & Laporan
     path("reports/", views.reports_view, name="reports"),
     path("reports/export/", views.reports_export_action, name="reports-export"),

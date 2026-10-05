@@ -133,6 +133,8 @@ class ExcludedTransaction(TimeStampedModel):
         on_delete=models.SET_NULL,
         related_name="excluded_transactions",
     )
+    party_raw = models.CharField(max_length=120, blank=True, default="")
+    extra_data = models.JSONField(default=dict, blank=True)
     category = models.CharField(max_length=30, blank=True)
     reason = models.CharField(max_length=150, blank=True)
     row_hash = models.CharField(max_length=64, unique=True)

@@ -276,7 +276,9 @@ def test_per_bank_breakdown_identik_dengan_versi_lama():
 def test_generate_excel_discrepancies_and_export_view(client, django_user_model):
     """Test ekspor daftar selisih ke Excel (.xlsx) menghasilkan file valid dengan konten lengkap."""
     import io
+
     import openpyxl
+
     from apps.core.enums import DiscrepancyKind, DiscrepancyStatus
     from apps.recon.models import Discrepancy
     from apps.recon.reports import generate_excel_discrepancies
@@ -287,7 +289,7 @@ def test_generate_excel_discrepancies_and_export_view(client, django_user_model)
     bm = _bank("TRANSFER DARI RESELLER XYZ", "1500000", channel=Channel.BCA, book_date=BD)
     oe = _otomax("TARTUN RESELLER XYZ", "1500000", channel=Channel.BCA, book_date=BD)
 
-    d1 = Discrepancy.objects.create(
+    Discrepancy.objects.create(
         code="SLS-20260911-001",
         origin_book_date=BD,
         channel=Channel.BCA,
@@ -297,7 +299,7 @@ def test_generate_excel_discrepancies_and_export_view(client, django_user_model)
         status=DiscrepancyStatus.OPEN,
         note="Belum ada di Otomax",
     )
-    d2 = Discrepancy.objects.create(
+    Discrepancy.objects.create(
         code="SLS-20260911-002",
         origin_book_date=BD,
         channel=Channel.BCA,
@@ -357,7 +359,7 @@ def test_generate_whatsapp_recon_text_and_note_update(client, django_user_model)
     bm_curr = _bank("AISUMIATI-BANK KESEJAHTERAAN", "700000", channel=Channel.BRI, book_date=d_curr)
 
     # Selisih hari sebelumnya (1 resolved, 1 open)
-    disc_prev_resolved = Discrepancy.objects.create(
+    Discrepancy.objects.create(
         code="SLS-20260910-001",
         origin_book_date=d_prev,
         channel=Channel.BRI,
@@ -367,7 +369,7 @@ def test_generate_whatsapp_recon_text_and_note_update(client, django_user_model)
         status=DiscrepancyStatus.RESOLVED,
         resolved_book_date=d_curr,
     )
-    disc_prev_open = Discrepancy.objects.create(
+    Discrepancy.objects.create(
         code="SLS-20260910-002",
         origin_book_date=d_prev,
         channel=Channel.MANDIRI,

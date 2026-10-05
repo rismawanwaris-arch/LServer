@@ -12,7 +12,7 @@ from django import template
 from django.urls import reverse
 
 from apps.core.enums import DiscrepancyStatus, MatchStatus, OtomaxCategory
-from apps.ingest.models import BankMutation, OtomaxEntry
+from apps.ingest.models import BankMutation, ExcludedTransaction, OtomaxEntry
 from apps.recon.models import Discrepancy, Match, ReconDay
 
 register = template.Library()
@@ -32,6 +32,7 @@ _DATED = {
     "reports",
     "exclusion-rules",
     "audit-data",
+    "excluded-transactions",
 }
 _STEPPER = _DATED - {"reports"}
 # Halaman yang juga punya mode "semua tanggal" (tanpa ?d=): bilah atasnya harus bilang
@@ -72,6 +73,7 @@ def _menu(user) -> list[tuple[str, list[NavItem]]]:
                 NavItem("reversal", "Reversal Otomax", "swap"),
                 NavItem("discrepancy-list", "Daftar Selisih", "alert", tone="crit"),
                 NavItem("matches", "Hasil Cocok", "checks", tone="info"),
+                NavItem("excluded-transactions", "Data Dikecualikan", "shield", tone="mute"),
             ],
         ),
         (
@@ -115,6 +117,7 @@ def _counts(d: date) -> dict[str, int]:
         "discrepancy-list": Discrepancy.objects.filter(origin_book_date=d, status=DiscrepancyStatus.OPEN).count(),
         # Hasil Cocok: usulan mesin yang menunggu persetujuan operator.
         "matches": Match.objects.filter(book_date=d, needs_review=True, voided_at__isnull=True).count(),
+        "excluded-transactions": ExcludedTransaction.objects.filter(book_date=d).count(),
     }
 
 

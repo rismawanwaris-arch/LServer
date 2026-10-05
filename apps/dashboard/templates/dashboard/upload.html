@@ -116,8 +116,8 @@
     <div class="card ring-2 ring-indigo-500/40"
          x-data="{
            currentFilter: 'all',
-           selectedMaybe: [],
-           baseNew: {{ review.counts.baru }},
+           selectedRows: [{% for r in review.rows %}{% if r.status == 'baru' %}'{{ r.row_hash }}',{% endif %}{% endfor %}],
+           selectableRows: [{% for r in review.rows %}{% if r.status == 'baru' or r.status == 'mungkin_ada' %}'{{ r.row_hash }}',{% endif %}{% endfor %}],
            matchesFilter(status) {
              if (this.currentFilter === 'all') return true;
              if (this.currentFilter === 'baru') return status === 'baru';
@@ -126,15 +126,21 @@
              if (this.currentFilter === 'lainnya') return status === 'kembar_file' || status === 'ditutup';
              return true;
            },
-           toggleAllMaybe(event) {
+           get isAllSelected() {
+             return this.selectableRows.length > 0 && this.selectableRows.every(h => this.selectedRows.includes(h));
+           },
+           toggleAll(event) {
              if (event.target.checked) {
-               this.selectedMaybe = [{% for r in review.rows %}{% if r.status == 'mungkin_ada' %}'{{ r.row_hash }}',{% endif %}{% endfor %}];
+               this.selectedRows = [...this.selectableRows];
              } else {
-               this.selectedMaybe = [];
+               this.selectedRows = [];
              }
            },
            get totalToSave() {
-             return this.baseNew + this.selectedMaybe.length;
+             return this.selectedRows.length;
+           },
+           get totalToExclude() {
+             return this.selectableRows.length - this.selectedRows.length;
            }
          }">
 
@@ -283,33 +289,41 @@
             {% endif %}
           </div>
 
-          <!-- Total To Save Pill -->
-          <div class="text-xs text-slate-500">
-            Akan disimpan: <b class="text-slate-900 dark:text-white" x-text="totalToSave + ' baris'"></b>
+          <!-- Total Summary Pill -->
+          <div class="flex items-center gap-2 text-xs">
+            <span class="rounded-full bg-emerald-50 px-2.5 py-0.5 font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400">
+              Akan disimpan: <b x-text="totalToSave"></b> baris
+            </span>
+            <span class="rounded-full bg-slate-100 px-2.5 py-0.5 font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300" x-show="totalToExclude > 0">
+              Dikecualikan: <b x-text="totalToExclude"></b> baris
+            </span>
           </div>
         </div>
 
-        {% if review.counts.mungkin_ada > 0 %}
-        <div class="mb-3 rounded-lg border border-amber-200 bg-amber-50/70 p-2.5 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300">
-          <div class="flex items-center justify-between gap-2">
+        <!-- Banner Info Checkbox -->
+        <div class="mb-3 rounded-lg border border-indigo-100 bg-indigo-50/50 p-2.5 text-xs text-indigo-900 dark:border-indigo-900/40 dark:bg-indigo-950/20 dark:text-indigo-200 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex items-center gap-2">
+            <svg class="icon h-4 w-4 shrink-0 text-indigo-500"><use href="#i-info"/></svg>
             <span>
-              <b>Catatan:</b> Ditemukan <b>{{ review.counts.mungkin_ada }}</b> baris dengan waktu & nominal sama tapi keterangan beda format.
-              Secara bawaan <b>tidak disimpan</b>. Centang kotak di bawah jika Anda yakin baris tersebut transaksi sah berbeda.
+              Pilih data yang ingin di-import. Baris yang <b>tercentang</b> masuk ke rekonsiliasi aktif, baris yang <b>tidak dicentang</b> tetap disimpan di menu <b>Data Dikecualikan</b>.
             </span>
-            <label class="inline-flex shrink-0 items-center gap-1.5 cursor-pointer font-medium">
-              <input type="checkbox" @change="toggleAllMaybe($event)" class="rounded border-amber-400 text-amber-600 focus:ring-amber-500">
-              <span>Pilih Semua</span>
-            </label>
           </div>
+          <label class="inline-flex shrink-0 items-center gap-1.5 cursor-pointer font-medium text-indigo-700 dark:text-indigo-300">
+            <input type="checkbox" :checked="isAllSelected" @change="toggleAll($event)" class="rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500">
+            <span x-text="isAllSelected ? 'Batal Pilih Semua' : 'Pilih Semua'"></span>
+          </label>
         </div>
-        {% endif %}
 
         <!-- Tabel Detail Seluruh Baris -->
         <div class="max-h-[32rem] overflow-x-auto overflow-y-auto rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
           <table class="w-full text-xs">
             <thead class="sticky top-0 bg-slate-50 dark:bg-slate-950/80 backdrop-blur z-10">
               <tr>
-                <th class="w-8 text-center">#</th>
+                <th class="w-10 text-center">
+                  <input type="checkbox" :checked="isAllSelected" @change="toggleAll($event)"
+                         class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                         title="Pilih Semua / Batal Pilih Semua">
+                </th>
                 <th class="w-28">Waktu</th>
                 {% if review.channel == 'OTOMAX' %}
                 <th>Reseller</th>
@@ -330,13 +344,13 @@
                   {% elif r.status == 'ditutup' or r.status == 'kembar_file' %}bg-rose-50/20 dark:bg-rose-950/10
                   {% endif %}">
                 <td class="text-center font-mono text-slate-400">
-                  {% if r.status == 'mungkin_ada' %}
-                  <input type="checkbox" name="include_maybe" value="{{ r.row_hash }}"
-                         x-model="selectedMaybe"
-                         title="Centang untuk tetap menyimpan baris ini"
-                         class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500">
+                  {% if r.status == 'baru' or r.status == 'mungkin_ada' %}
+                  <input type="checkbox" name="selected_hashes" value="{{ r.row_hash }}"
+                         x-model="selectedRows"
+                         title="Centang untuk simpan ke rekon, lepas centang untuk simpan ke data dikecualikan"
+                         class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer">
                   {% else %}
-                  {{ r.no }}
+                  <span class="text-[11px] text-slate-400">{{ r.no }}</span>
                   {% endif %}
                 </td>
                 <td class="font-mono text-slate-500 whitespace-nowrap">
@@ -382,10 +396,11 @@
         <!-- Action Buttons Footer -->
         <div class="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-3 dark:border-slate-800">
           <div>
-            <span class="text-xs text-slate-500" x-show="totalToSave > 0">
-              Siap menyimpan <b class="text-slate-900 dark:text-white" x-text="totalToSave + ' baris'"></b>. Baris yang sudah ada/ditutup akan otomatis dilewati.
+            <span class="text-xs text-slate-500" x-show="selectableRows.length > 0">
+              Siap menyimpan <b class="text-slate-900 dark:text-white" x-text="totalToSave + ' baris ke rekon'"></b>
+              <span x-show="totalToExclude > 0"> dan <b class="text-slate-700 dark:text-slate-300" x-text="totalToExclude + ' baris ke data dikecualikan'"></b></span>.
             </span>
-            <span class="text-xs text-rose-600 dark:text-rose-400" x-show="totalToSave === 0">
+            <span class="text-xs text-rose-600 dark:text-rose-400" x-show="selectableRows.length === 0">
               Tidak ada baris baru yang dapat disimpan. Batch kosong tidak akan dibuat.
             </span>
           </div>
@@ -396,10 +411,10 @@
               Batal
             </button>
             <button type="submit" name="action" value="confirm"
-                    :disabled="totalToSave === 0"
+                    :disabled="selectableRows.length === 0"
                     class="btn-primary px-4 py-1.5 text-xs disabled:opacity-50 disabled:cursor-not-allowed">
               <svg class="icon"><use href="#i-check"/></svg>
-              <span x-text="totalToSave > 0 ? 'Simpan ' + totalToSave + ' Baris Baru' : 'Tidak Ada Baris Baru'"></span>
+              <span x-text="selectableRows.length > 0 ? 'Simpan Data (' + totalToSave + ' Rekon, ' + totalToExclude + ' Dikecualikan)' : 'Tidak Ada Baris Baru'"></span>
             </button>
           </div>
         </div>

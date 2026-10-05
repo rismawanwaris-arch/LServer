@@ -24,6 +24,11 @@ from .discrepancies import (
     wa_report_text_view,
 )
 from .engine_control import close_view, reopen_view, resolve_view, run_engine
+from .excluded import (
+    excluded_transactions_view,
+    restore_excluded_bulk_action,
+    restore_excluded_transaction_action,
+)
 from .exclusion_rules import (
     add_exclusion_rule_action,
     apply_exclusion_rules_action,
@@ -52,6 +57,9 @@ from .reversal import manual_net_reversal_action, reversal_view, unnet_otomax_ac
 from .upload import delete_batch_action, upload, upload_view
 
 __all__ = [
+    "excluded_transactions_view",
+    "restore_excluded_bulk_action",
+    "restore_excluded_transaction_action",
     "add_exclusion_rule_action",
     "add_reseller_action",
     "app_settings_view",

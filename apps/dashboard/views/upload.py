@@ -26,6 +26,7 @@ from ._shared import _parse_date, _sync_inconsistent_batches, build_today_steps
 def _format_import_success_message(batch: ImportBatch, original_book_date: date) -> str:
     rev = getattr(batch, "review", {})
     saved = rev.get("saved", batch.row_count)
+    manual_ex = rev.get("manual_excluded", 0)
     skipped_details = []
     if rev.get("existing"):
         skipped_details.append(f"{rev['existing']} sudah ada")
@@ -36,10 +37,17 @@ def _format_import_success_message(batch: ImportBatch, original_book_date: date)
     if rev.get("locked"):
         skipped_details.append(f"{rev['locked']} di hari tutup buku")
 
+    extra_ex = f", {manual_ex} disimpan ke data dikecualikan" if manual_ex > 0 else ""
     if skipped_details:
-        msg = f"Berhasil mengimpor {batch.channel}: {saved} baris ditambahkan, {', '.join(skipped_details)} dilewati."
+        msg = (
+            f"Berhasil mengimpor {batch.channel}: {saved} baris ditambahkan ke rekon{extra_ex}, "
+            f"{', '.join(skipped_details)} dilewati."
+        )
     else:
-        msg = f"Berhasil mengimpor {batch.channel}: {saved} baris ditambahkan ({batch.quarantined_count} dikarantina)."
+        msg = (
+            f"Berhasil mengimpor {batch.channel}: {saved} baris ditambahkan ke rekon{extra_ex} "
+            f"({batch.quarantined_count} dikarantina)."
+        )
 
     if batch.book_date != original_book_date:
         msg += (
@@ -84,6 +92,9 @@ def upload_view(request):
                 return redirect(f"/upload/?d={book_date}")
 
             include_maybe = set(request.POST.getlist("include_maybe"))
+            selected_hashes = (
+                set(request.POST.getlist("selected_hashes")) if "selected_hashes" in request.POST else None
+            )
             try:
                 batch = import_file(
                     channel=staged.channel,
@@ -92,6 +103,7 @@ def upload_view(request):
                     filename=staged.filename,
                     user=request.user,
                     include_maybe=include_maybe,
+                    selected_hashes=selected_hashes,
                 )
                 delete_staged_upload(token)
                 messages.success(request, _format_import_success_message(batch, book_date))

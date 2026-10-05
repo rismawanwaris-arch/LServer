@@ -125,12 +125,14 @@ def import_file(
     filename: str,
     user=None,
     include_maybe: set[str] | frozenset[str] = frozenset(),
+    selected_hashes: set[str] | frozenset[str] | None = None,
 ) -> ImportBatch:
     """Simpan isi file. Aturan pilih baris SAMA dengan layar Periksa (review.analyze_upload),
     dihitung ulang di sini (server hakim terakhir): yang disimpan hanya baris berstatus
     "baru", ditambah baris "kemungkinan sudah ada" yang dipilih operator (include_maybe =
-    row_hash-nya). Baris kembar/sudah ada/di hari yang sudah ditutup dilewati & dihitung
-    di batch.review. Tanpa baris baru -> NothingToImport (tidak ada batch kosong)."""
+    row_hash-nya). Jika selected_hashes diberikan, baris kandidat yang tidak dipilih akan
+    disimpan sebagai ExcludedTransaction (MANUAL_UPLOAD).
+    Baris kembar/sudah ada/di hari yang sudah ditutup dilewati & dihitung di batch.review."""
     from .review import BARU, DEBIT, DIKECUALIKAN, MUNGKIN_ADA, OTOMAX, analyze_upload, file_fingerprint
 
     data = content if content is not None else text
@@ -139,24 +141,39 @@ def import_file(
     content_bytes = data if isinstance(data, bytes) else data.encode("utf-8")
 
     review = analyze_upload(channel, content_bytes, book_date, filename)
-    # Otomatis deteksi tanggal buku dari isi file: jika parser mendeteksi tanggal dominan
-    # di file, gunakan tanggal tersebut agar batch dan transaksi selalu sinkron.
     effective_book_date = review.book_date
 
     day = ReconDay.objects.filter(book_date=effective_book_date).first()
     if day and day.locked:
         raise ImportBlocked(f"Tanggal {effective_book_date} sudah ditutup — impor ditolak.")
 
-    to_save = [r for r in review.rows if r.status == BARU or (r.status == MUNGKIN_ADA and r.row_hash in include_maybe)]
+    candidate_rows = [
+        r
+        for r in review.rows
+        if r.status == BARU
+        or (
+            r.status == MUNGKIN_ADA
+            and (r.row_hash in include_maybe or (selected_hashes is not None and r.row_hash in selected_hashes))
+        )
+    ]
+
+    if selected_hashes is not None:
+        to_save = [r for r in candidate_rows if r.row_hash in selected_hashes]
+        to_exclude_manual = [r for r in candidate_rows if r.row_hash not in selected_hashes]
+    else:
+        to_save = candidate_rows
+        to_exclude_manual = []
+
     counts = review.counts
     summary = {
         "saved": len(to_save),
+        "manual_excluded": len(to_exclude_manual),
         "existing": counts["sudah_ada"],
         "maybe_skipped": counts["mungkin_ada"] - sum(1 for r in to_save if r.status == MUNGKIN_ADA),
         "dup_file": counts["kembar_file"],
         "locked": counts["ditutup"],
     }
-    if not to_save:
+    if not to_save and not to_exclude_manual:
         raise NothingToImport(
             f"Tidak ada baris baru untuk disimpan dari {filename}: "
             f"{summary['existing']} sudah ada, {summary['maybe_skipped']} kemungkinan sudah ada, "
@@ -177,6 +194,9 @@ def import_file(
     else:
         quarantined = _persist_bank(batch, to_save, channel, debit_kind=DEBIT, excluded_kind=DIKECUALIKAN)
 
+    if to_exclude_manual:
+        _persist_manual_excluded(batch, to_exclude_manual, channel)
+
     batch.row_count = (
         batch.mutations.count()
         + batch.otomax.count()
@@ -187,7 +207,7 @@ def import_file(
     batch.excluded_count = batch.excluded_transactions.count()
     batch.status = ImportStatus.PARTIAL if quarantined else ImportStatus.PARSED
     notes = list(review.result.warnings)
-    skipped = {k: v for k, v in summary.items() if k != "saved" and v}
+    skipped = {k: v for k, v in summary.items() if k not in ("saved", "manual_excluded") and v}
     if skipped:
         notes.append(
             "Dilewati saat simpan: "
@@ -204,11 +224,50 @@ def import_file(
                 ]
             )
         )
+    if to_exclude_manual:
+        notes.append(f"{len(to_exclude_manual)} baris dikecualikan manual saat upload")
     if notes:
         batch.notes = "\n".join(notes)
     batch.save(update_fields=["row_count", "quarantined_count", "excluded_count", "status", "notes"])
     batch.review = summary  # bukan kolom DB -- untuk pesan hasil ke operator
     return batch
+
+
+def _persist_manual_excluded(batch, rows, channel) -> None:
+    for r in rows:
+        row, rh, row_bdate = r.parsed, r.row_hash, r.row_bdate
+        is_otomax = (channel == Channel.OTOMAX)
+        raw_party = getattr(row, "reseller_name_raw", "") if is_otomax else getattr(row, "outlet_name", "")
+        party = getattr(r, "party", "") or raw_party or ""
+        txn_dt = getattr(row, "entry_datetime", None) if is_otomax else getattr(row, "txn_datetime", None)
+        extra = {}
+        if not is_otomax:
+            if getattr(row, "external_ref", None):
+                extra["external_ref"] = row.external_ref
+            if getattr(row, "frequency", None):
+                extra["frequency"] = row.frequency
+            if getattr(row, "outlet_name", None):
+                extra["outlet_name"] = row.outlet_name
+        else:
+            if getattr(row, "reseller_name_raw", None):
+                extra["reseller_name_raw"] = row.reseller_name_raw
+
+        ExcludedTransaction.objects.get_or_create(
+            row_hash=rh,
+            defaults=dict(
+                import_batch=batch,
+                channel=channel,
+                source_type="OTOMAX" if is_otomax else "BANK",
+                book_date=row_bdate,
+                txn_datetime=_aware(txn_dt),
+                party_raw=party,
+                description_raw=row.description_raw,
+                amount=abs(row.amount) if row.amount is not None else Decimal("0"),
+                category="MANUAL_UPLOAD",
+                reason="Dikecualikan manual saat upload",
+                extra_data=extra,
+            ),
+        )
 
 
 def _persist_bank(batch, rows, channel, *, debit_kind, excluded_kind) -> int:
@@ -225,11 +284,13 @@ def _persist_bank(batch, rows, channel, *, debit_kind, excluded_kind) -> int:
                     source_type="BANK",
                     book_date=row_bdate,
                     txn_datetime=_aware(row.txn_datetime),
+                    party_raw=getattr(row, "outlet_name", "") or "",
                     description_raw=row.description_raw,
                     amount=row.amount or Decimal("0"),
                     rule=rule,
                     category=rule.category,
                     reason=f"Aturan: {rule.name} ({rule.keywords})",
+                    extra_data=dict(external_ref=row.external_ref or "") if getattr(row, "external_ref", None) else {},
                 ),
             )
             continue
@@ -286,11 +347,17 @@ def _persist_otomax(batch, rows) -> int:
                     source_type="OTOMAX",
                     book_date=row_bdate,
                     txn_datetime=_aware(row.entry_datetime),
+                    party_raw=getattr(row, "reseller_name_raw", "") or "",
                     description_raw=row.description_raw,
                     amount=row.amount or Decimal("0"),
                     rule=rule,
                     category=rule.category,
                     reason=f"Aturan: {rule.name} ({rule.keywords})",
+                    extra_data=(
+                        dict(reseller_name_raw=row.reseller_name_raw or "")
+                        if getattr(row, "reseller_name_raw", None)
+                        else {}
+                    ),
                 ),
             )
             continue
@@ -336,11 +403,13 @@ def apply_exclusion_rules_retroactive(book_date: date | None = None) -> dict[str
                     source_type="BANK",
                     book_date=bm.book_date,
                     txn_datetime=bm.txn_datetime,
+                    party_raw=bm.outlet_name or "",
                     description_raw=bm.description_raw,
                     amount=bm.amount,
                     rule=rule,
                     category=rule.category,
                     reason=f"Aturan: {rule.name} ({rule.keywords})",
+                    extra_data=dict(external_ref=bm.external_ref or "") if bm.external_ref else {},
                 ),
             )
             batches_to_update.add(bm.import_batch)
@@ -360,11 +429,13 @@ def apply_exclusion_rules_retroactive(book_date: date | None = None) -> dict[str
                     source_type="OTOMAX",
                     book_date=oe.book_date,
                     txn_datetime=oe.entry_datetime,
+                    party_raw=oe.reseller_name_raw or "",
                     description_raw=oe.description_raw,
                     amount=oe.amount,
                     rule=rule,
                     category=rule.category,
                     reason=f"Aturan: {rule.name} ({rule.keywords})",
+                    extra_data=dict(reseller_name_raw=oe.reseller_name_raw or "") if oe.reseller_name_raw else {},
                 ),
             )
             batches_to_update.add(oe.import_batch)
@@ -401,4 +472,96 @@ def apply_exclusion_rules_retroactive(book_date: date | None = None) -> dict[str
             day.save()
 
     return {"bank_moved": bank_moved, "otomax_moved": otomax_moved, "total_moved": bank_moved + otomax_moved}
+
+
+@transaction.atomic
+def restore_excluded_transaction(excluded_tx: ExcludedTransaction, user=None) -> BankMutation | OtomaxEntry:
+    """Pulihkan transaksi yang dikecualikan kembali ke mutasi bank atau entri Otomax aktif."""
+    day = ReconDay.objects.filter(book_date=excluded_tx.book_date).first()
+    if day and day.locked:
+        raise ValueError(
+            f"Tanggal buku {excluded_tx.book_date.strftime('%d %B %Y')} sudah ditutup — "
+            "buka kembali hari tersebut sebelum memulihkan transaksi."
+        )
+
+    batch = excluded_tx.import_batch
+    source_type = excluded_tx.source_type
+    channel = excluded_tx.channel
+
+    if source_type == "OTOMAX" or channel == Channel.OTOMAX:
+        from apps.catalog.models import ResellerAlias
+
+        alias_map = {a.alias_norm: a.reseller for a in ResellerAlias.objects.select_related("reseller")}
+        reseller_name = excluded_tx.party_raw or (excluded_tx.extra_data or {}).get("reseller_name_raw", "")
+        reseller_obj = resolve_reseller(reseller_name, alias_map=alias_map) if reseller_name else None
+
+        obj, _ = OtomaxEntry.objects.get_or_create(
+            row_hash=excluded_tx.row_hash,
+            defaults=dict(
+                import_batch=batch,
+                book_date=excluded_tx.book_date,
+                entry_datetime=excluded_tx.txn_datetime,
+                reseller_name_raw=reseller_name,
+                reseller=reseller_obj,
+                amount=excluded_tx.amount,
+                description_raw=excluded_tx.description_raw,
+                match_status=MatchStatus.UNMATCHED,
+                **otomax_derived_fields(excluded_tx.description_raw),
+            ),
+        )
+    else:
+        from apps.core.normalize import extract_tokens, norm_ref, ref_core
+
+        outlet_name = excluded_tx.party_raw or (excluded_tx.extra_data or {}).get("outlet_name", "")
+        external_ref = (excluded_tx.extra_data or {}).get("external_ref", "")
+        frequency = (excluded_tx.extra_data or {}).get("frequency", None)
+        nr = norm_ref(excluded_tx.description_raw)
+        tokens = extract_tokens(excluded_tx.description_raw)
+
+        obj, _ = BankMutation.objects.get_or_create(
+            row_hash=excluded_tx.row_hash,
+            defaults=dict(
+                import_batch=batch,
+                channel=channel,
+                book_date=excluded_tx.book_date,
+                txn_datetime=excluded_tx.txn_datetime,
+                description_raw=excluded_tx.description_raw,
+                ref_normalized=nr,
+                ref_core=ref_core(excluded_tx.description_raw),
+                extracted_tokens=tokens,
+                outlet_name=outlet_name,
+                amount=excluded_tx.amount,
+                external_ref=external_ref,
+                frequency=frequency,
+                match_status=MatchStatus.UNMATCHED,
+            ),
+        )
+
+    excluded_tx.delete()
+
+    if batch:
+        batch.excluded_count = batch.excluded_transactions.count()
+        batch.row_count = (
+            batch.mutations.count()
+            + batch.otomax.count()
+            + batch.debits.count()
+            + batch.excluded_transactions.count()
+        )
+        batch.save(update_fields=["excluded_count", "row_count"])
+
+    if day:
+        from apps.recon.close import compute_totals
+
+        totals = compute_totals(excluded_tx.book_date)
+        day.total_in_bri = totals["bri"]
+        day.total_in_bca = totals["bca"]
+        day.total_in_merchant_bca = totals["merchant_bca"]
+        day.total_in_mandiri = totals["mandiri"]
+        day.total_in_bank = totals["bank"]
+        day.total_out_otomax = totals["otomax"]
+        day.selisih_initial = totals["selisih"]
+        day.recompute_selisih()
+        day.save()
+
+    return obj
 

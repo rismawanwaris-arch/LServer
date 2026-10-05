@@ -1,0 +1,307 @@
+{% extends "base.html" %}
+{% load money %}
+
+{% block title %}Data Dikecualikan ({{ book_date|date:"d M Y" }}) — RekonMutasi{% endblock %}
+
+{% block content %}
+<div class="space-y-6"
+     x-data="{
+       selectedIds: [],
+       allIds: [{% for t in items %}'{{ t.id }}',{% endfor %}],
+       toggleAll(e) {
+         if (e.target.checked) {
+           this.selectedIds = [...this.allIds];
+         } else {
+           this.selectedIds = [];
+         }
+       },
+       get isAllChecked() {
+         return this.allIds.length > 0 && this.allIds.every(id => this.selectedIds.includes(id));
+       }
+     }">
+
+  <!-- Header -->
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <div class="text-xs text-slate-500">
+        <a href="{% url 'day' %}?d={{ book_date|date:'Y-m-d' }}" class="hover:underline">Dashboard</a>
+        <span class="mx-1">/</span>
+        <span>Tinjau & selesaikan</span>
+        <span class="mx-1">/</span>
+        <span class="text-slate-700 dark:text-slate-300">Data Dikecualikan</span>
+      </div>
+      <h1 class="text-xl font-bold text-slate-900 dark:text-white mt-1">Data Dikecualikan</h1>
+      <p class="text-xs text-slate-500">
+        Transaksi mutasi bank & Otomax yang dipisahkan dari mesin rekonsiliasi (melalui uncheck saat upload atau aturan filter).
+      </p>
+    </div>
+
+    <!-- Lock status -->
+    <div class="flex items-center gap-2">
+      {% if is_locked %}
+      <span class="badge-crit flex items-center gap-1" title="Hari sudah tutup buku">
+        <svg class="icon h-3.5 w-3.5"><use href="#i-lock"/></svg>Hari Ditutup
+      </span>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- KPI Cards -->
+  <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    <div class="card p-4">
+      <div class="kpi-label">Total Transaksi Dikecualikan</div>
+      <div class="kpi-value text-amber-600 dark:text-amber-400 font-bold text-2xl mt-1">{{ total_count }}</div>
+      <div class="text-[11px] text-slate-400 mt-1">Pada tanggal {{ book_date|date:"d F Y" }}</div>
+    </div>
+    <div class="card p-4">
+      <div class="kpi-label">Total Nominal Uang Dikecualikan</div>
+      <div class="kpi-value money text-slate-900 dark:text-white font-bold text-2xl mt-1">Rp {{ total_amount|rupiah }}</div>
+      <div class="text-[11px] text-slate-400 mt-1">Tidak diikutsertakan dalam rekonsiliasi</div>
+    </div>
+    <div class="card p-4 flex flex-col justify-between">
+      <div>
+        <div class="kpi-label">Kontrol Rekonsiliasi</div>
+        <p class="text-xs text-slate-500 mt-1">
+          Transaksi di bawah aman dari mesin pencocokan. Anda dapat memulihkannya kembali ke antrean rekonsiliasi kapan saja.
+        </p>
+      </div>
+      <div class="mt-2 text-right">
+        <a href="{% url 'exclusion-rules' %}?d={{ book_date|date:'Y-m-d' }}" class="text-xs text-indigo-600 hover:underline dark:text-indigo-400">
+          Kelola Aturan Filter Otomatis &rarr;
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Channel Navigation Tabs -->
+  <div class="border-b border-slate-200 dark:border-slate-800">
+    <div class="flex flex-wrap items-center gap-2 -mb-px">
+      <!-- ALL -->
+      <a href="?d={{ book_date|date:'Y-m-d' }}&channel=&source={{ source_filter }}&q={{ query }}"
+         class="inline-flex items-center gap-2 px-3.5 py-2.5 text-xs font-medium border-b-2 transition
+         {% if not selected_channel %}border-indigo-600 text-indigo-600 dark:border-indigo-400 dark:text-indigo-400 font-bold{% else %}border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 dark:text-slate-400 dark:hover:text-slate-200{% endif %}">
+        <span>Semua Bank & Otomax</span>
+        <span class="rounded-full px-2 py-0.5 text-[10px] font-semibold {% if not selected_channel %}bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300{% else %}bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400{% endif %}">
+          {{ channel_counts.ALL }}
+        </span>
+      </a>
+
+      <!-- BRI -->
+      <a href="?d={{ book_date|date:'Y-m-d' }}&channel=BRI&source={{ source_filter }}&q={{ query }}"
+         class="inline-flex items-center gap-2 px-3.5 py-2.5 text-xs font-medium border-b-2 transition
+         {% if selected_channel == 'BRI' %}border-blue-600 text-blue-600 dark:border-blue-400 dark:text-blue-400 font-bold{% else %}border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 dark:text-slate-400 dark:hover:text-slate-200{% endif %}">
+        <span>BRI</span>
+        <span class="rounded-full px-2 py-0.5 text-[10px] font-semibold {% if selected_channel == 'BRI' %}bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300{% else %}bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400{% endif %}">
+          {{ channel_counts.BRI }}
+        </span>
+      </a>
+
+      <!-- BCA -->
+      <a href="?d={{ book_date|date:'Y-m-d' }}&channel=BCA&source={{ source_filter }}&q={{ query }}"
+         class="inline-flex items-center gap-2 px-3.5 py-2.5 text-xs font-medium border-b-2 transition
+         {% if selected_channel == 'BCA' %}border-sky-600 text-sky-600 dark:border-sky-400 dark:text-sky-400 font-bold{% else %}border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 dark:text-slate-400 dark:hover:text-slate-200{% endif %}">
+        <span>BCA</span>
+        <span class="rounded-full px-2 py-0.5 text-[10px] font-semibold {% if selected_channel == 'BCA' %}bg-sky-100 text-sky-800 dark:bg-sky-950/60 dark:text-sky-300{% else %}bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400{% endif %}">
+          {{ channel_counts.BCA }}
+        </span>
+      </a>
+
+      <!-- MANDIRI -->
+      <a href="?d={{ book_date|date:'Y-m-d' }}&channel=MANDIRI&source={{ source_filter }}&q={{ query }}"
+         class="inline-flex items-center gap-2 px-3.5 py-2.5 text-xs font-medium border-b-2 transition
+         {% if selected_channel == 'MANDIRI' %}border-amber-600 text-amber-600 dark:border-amber-400 dark:text-amber-400 font-bold{% else %}border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 dark:text-slate-400 dark:hover:text-slate-200{% endif %}">
+        <span>Mandiri</span>
+        <span class="rounded-full px-2 py-0.5 text-[10px] font-semibold {% if selected_channel == 'MANDIRI' %}bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300{% else %}bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400{% endif %}">
+          {{ channel_counts.MANDIRI }}
+        </span>
+      </a>
+
+      <!-- MERCHANT BCA -->
+      <a href="?d={{ book_date|date:'Y-m-d' }}&channel=MERCHANT_BCA&source={{ source_filter }}&q={{ query }}"
+         class="inline-flex items-center gap-2 px-3.5 py-2.5 text-xs font-medium border-b-2 transition
+         {% if selected_channel == 'MERCHANT_BCA' %}border-violet-600 text-violet-600 dark:border-violet-400 dark:text-violet-400 font-bold{% else %}border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 dark:text-slate-400 dark:hover:text-slate-200{% endif %}">
+        <span>Merchant BCA (QRIS)</span>
+        <span class="rounded-full px-2 py-0.5 text-[10px] font-semibold {% if selected_channel == 'MERCHANT_BCA' %}bg-violet-100 text-violet-800 dark:bg-violet-950/60 dark:text-violet-300{% else %}bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400{% endif %}">
+          {{ channel_counts.MERCHANT_BCA }}
+        </span>
+      </a>
+
+      <!-- OTOMAX -->
+      <a href="?d={{ book_date|date:'Y-m-d' }}&channel=OTOMAX&source={{ source_filter }}&q={{ query }}"
+         class="inline-flex items-center gap-2 px-3.5 py-2.5 text-xs font-medium border-b-2 transition
+         {% if selected_channel == 'OTOMAX' %}border-emerald-600 text-emerald-600 dark:border-emerald-400 dark:text-emerald-400 font-bold{% else %}border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 dark:text-slate-400 dark:hover:text-slate-200{% endif %}">
+        <span>OtomaX</span>
+        <span class="rounded-full px-2 py-0.5 text-[10px] font-semibold {% if selected_channel == 'OTOMAX' %}bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300{% else %}bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400{% endif %}">
+          {{ channel_counts.OTOMAX }}
+        </span>
+      </a>
+    </div>
+  </div>
+
+  <!-- Filter Bar & Search -->
+  <form method="get" class="flex flex-wrap items-center justify-between gap-3">
+    <input type="hidden" name="d" value="{{ book_date|date:'Y-m-d' }}">
+    <input type="hidden" name="channel" value="{{ selected_channel }}">
+
+    <div class="flex flex-wrap items-center gap-2">
+      <!-- Asal Filter -->
+      <select name="source" class="field-input h-9 text-xs" onchange="this.form.submit()">
+        <option value="all" {% if source_filter == 'all' %}selected{% endif %}>Semua Asal Pengecualian</option>
+        <option value="manual" {% if source_filter == 'manual' %}selected{% endif %}>Dikecualikan Saat Upload (Manual)</option>
+        <option value="rule" {% if source_filter == 'rule' %}selected{% endif %}>Dipisahkan Aturan Filter</option>
+      </select>
+
+      <!-- Search Input -->
+      <div class="relative">
+        <input type="search" name="q" value="{{ query }}" placeholder="Cari keterangan, outlet/reseller, alasan…"
+               class="field-input h-9 w-64 pl-8 text-xs">
+        <svg class="icon absolute left-2.5 top-2.5 h-4 w-4 text-slate-400"><use href="#i-search"/></svg>
+      </div>
+
+      <button type="submit" class="btn-primary h-9 px-3 text-xs">Filter</button>
+      {% if query or source_filter != 'all' or selected_channel %}
+      <a href="?d={{ book_date|date:'Y-m-d' }}" class="btn-ghost h-9 px-2 text-xs text-slate-500">Reset</a>
+      {% endif %}
+    </div>
+
+    <!-- Bulk Action trigger -->
+    <div x-show="selectedIds.length > 0" x-cloak class="flex items-center gap-2">
+      <span class="text-xs text-slate-500">
+        <b class="text-slate-900 dark:text-white" x-text="selectedIds.length"></b> transaksi dipilih
+      </span>
+      {% if not is_locked %}
+      <button type="submit" form="bulk-restore-form"
+              class="btn-primary px-3 py-1.5 text-xs bg-emerald-600 hover:bg-emerald-700"
+              onclick="return confirm('Pulihkan ' + selectedIds.length + ' transaksi yang dipilih kembali ke antrean rekonsiliasi?')">
+        <svg class="icon h-3.5 w-3.5"><use href="#i-check"/></svg>
+        Pulihkan Terpilih ke Rekon
+      </button>
+      {% else %}
+      <span class="text-xs text-rose-500 italic">Buka hari dulu untuk memulihkan</span>
+      {% endif %}
+    </div>
+  </form>
+
+  <!-- Bulk Restore Form (Hidden submit target) -->
+  <form id="bulk-restore-form" method="post" action="{% url 'excluded-restore-bulk' %}">
+    {% csrf_token %}
+    <input type="hidden" name="next_url" value="{{ request.get_full_path }}">
+    <template x-for="id in selectedIds" :key="id">
+      <input type="hidden" name="selected_ids" :value="id">
+    </template>
+  </form>
+
+  <!-- Table Card -->
+  <div class="card p-0 overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full text-xs">
+        <thead class="bg-slate-50 dark:bg-slate-950/80 border-b border-slate-200 dark:border-slate-800">
+          <tr>
+            <th class="w-8 px-3 text-center">
+              <input type="checkbox" :checked="isAllChecked" @change="toggleAll($event)"
+                     class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                     title="Pilih Semua / Batal Pilih Semua">
+            </th>
+            <th class="w-28">Waktu Transaksi</th>
+            <th class="w-24">Channel / Bank</th>
+            <th>Pihak Terkait</th>
+            <th>Keterangan Asli</th>
+            <th class="text-right">Nominal</th>
+            <th>Asal & Alasan</th>
+            <th>Batch / File</th>
+            <th class="text-right w-28">Aksi</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100 dark:divide-slate-800/60">
+          {% for t in items %}
+          <tr class="transition hover:bg-slate-50/70 dark:hover:bg-slate-800/30">
+            <td class="text-center px-3">
+              <input type="checkbox" value="{{ t.id }}" x-model="selectedIds"
+                     class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer">
+            </td>
+            <td class="font-mono text-slate-500 whitespace-nowrap">
+              {{ t.txn_datetime|date:"d M Y, H:i"|default:t.book_date }}
+            </td>
+            <td>
+              <span class="badge-info text-[10px]">{{ t.channel|channel_label }}</span>
+            </td>
+            <td class="font-semibold text-slate-800 dark:text-slate-200 whitespace-nowrap">
+              {{ t.party_raw|default:"—" }}
+            </td>
+            <td class="max-w-md break-words font-mono text-slate-700 dark:text-slate-300" title="{{ t.description_raw }}">
+              {{ t.description_raw }}
+            </td>
+            <td class="money whitespace-nowrap text-right font-semibold {% if t.amount < 0 %}text-rose-600 dark:text-rose-400{% else %}text-slate-900 dark:text-white{% endif %}">
+              Rp {{ t.amount|rupiah }}
+            </td>
+            <td>
+              {% if t.category == 'MANUAL_UPLOAD' %}
+              <span class="badge-mute text-[10px]">Manual Upload</span>
+              <div class="text-[11px] text-slate-500 mt-0.5">Dikecualikan saat upload</div>
+              {% elif t.rule %}
+              <span class="badge-warn text-[10px]">{{ t.rule.name }}</span>
+              <div class="text-[11px] text-slate-500 mt-0.5 truncate max-w-xs" title="{{ t.reason }}">{{ t.reason }}</div>
+              {% else %}
+              <span class="badge-mute text-[10px]">{{ t.category|default:"Dikecualikan" }}</span>
+              <div class="text-[11px] text-slate-500 mt-0.5 truncate max-w-xs" title="{{ t.reason }}">{{ t.reason }}</div>
+              {% endif %}
+            </td>
+            <td class="text-slate-500 text-[11px] whitespace-nowrap">
+              {% if t.import_batch %}
+              <span title="{{ t.import_batch.source_filename }}">{{ t.import_batch.source_filename|truncatechars:20 }}</span>
+              <div class="text-[10px] text-slate-400">#{{ t.import_batch.id }}</div>
+              {% else %}
+              —
+              {% endif %}
+            </td>
+            <td class="text-right whitespace-nowrap pr-3">
+              {% if not is_locked %}
+              <form method="post" action="{% url 'excluded-restore' t.id %}" class="inline"
+                    onsubmit="return confirm('Pulihkan transaksi ini (Rp {{ t.amount|rupiah }}) kembali ke antrean rekonsiliasi aktif?');">
+                {% csrf_token %}
+                <input type="hidden" name="next_url" value="{{ request.get_full_path }}">
+                <button type="submit" class="btn-ghost px-2.5 py-1 text-xs text-emerald-600 hover:bg-emerald-50 hover:border-emerald-200 dark:text-emerald-400 dark:hover:bg-emerald-950/30">
+                  <svg class="icon h-3.5 w-3.5"><use href="#i-check"/></svg>Pulihkan
+                </button>
+              </form>
+              {% else %}
+              <span class="text-[11px] text-slate-400 italic" title="Hari sudah tutup buku">Terkunci</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="9" class="text-center py-12 text-slate-400">
+              <svg class="icon mx-auto h-8 w-8 text-slate-300 dark:text-slate-600 mb-2"><use href="#i-shield"/></svg>
+              Tidak ada data transaksi yang dikecualikan untuk filter ini pada tanggal {{ book_date|date:"d F Y" }}.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Pagination -->
+    {% if page_obj.has_other_pages %}
+    <div class="flex items-center justify-between border-t border-slate-200 px-4 py-3 dark:border-slate-800 text-xs">
+      <div class="text-slate-500">
+        Menampilkan halaman {{ page_obj.number }} dari {{ page_obj.paginator.num_pages }} (Total {{ total_count }} baris)
+      </div>
+      <div class="flex items-center gap-2">
+        {% if page_obj.has_previous %}
+        <a href="?d={{ book_date|date:'Y-m-d' }}&channel={{ selected_channel }}&source={{ source_filter }}&q={{ query }}&page={{ page_obj.previous_page_number }}" class="btn-ghost px-3 py-1">
+          &larr; Sebelumnya
+        </a>
+        {% endif %}
+        {% if page_obj.has_next %}
+        <a href="?d={{ book_date|date:'Y-m-d' }}&channel={{ selected_channel }}&source={{ source_filter }}&q={{ query }}&page={{ page_obj.next_page_number }}" class="btn-ghost px-3 py-1">
+          Berikutnya &rarr;
+        </a>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}
