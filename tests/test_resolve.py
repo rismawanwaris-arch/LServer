@@ -200,3 +200,53 @@ def test_manual_match_merge_into_existing_diff_match(client, django_user_model):
     m_content = res_matches.content.decode()
     assert "2 Tiket Gabungan" in m_content
     assert "QRIS RAWA CELL" in m_content
+
+
+@pytest.mark.django_db
+def test_unpair_restores_resolved_discrepancy():
+    """Jika mutasi bank sempat punya Discrepancy yang RESOLVED (mis. dari tag manual atau match),
+    lalu match/tag tersebut dibatalkan lewat unpair_match, Discrepancy harus pulih jadi OPEN."""
+    from apps.recon.resolve import tag_manual_mutation
+
+    bm = _bank("DANA20261004035719336149ANDREBASHORA", "1000000", channel=Channel.BRI, book_date=BD)
+    run_match(BD)
+    disc = Discrepancy.objects.get(bank_mutation=bm)
+    assert disc.status == DiscrepancyStatus.OPEN
+
+    # Beri tag manual -> disc jadi RESOLVED
+    tag_manual_mutation(bm, tag="lainnya", note="Tag sementara")
+    disc.refresh_from_db()
+    assert disc.status == DiscrepancyStatus.RESOLVED
+
+    # Batalkan tag manual lewat unpair_match
+    match = Match.objects.get(bank_mutation=bm, voided_at__isnull=True)
+    unpair_match(match)
+
+    bm.refresh_from_db()
+    assert bm.match_status == MatchStatus.UNMATCHED
+    disc.refresh_from_db()
+    assert disc.status == DiscrepancyStatus.OPEN
+    assert disc.resolved_book_date is None
+
+
+@pytest.mark.django_db
+def test_leftovers_self_heals_stale_resolved_discrepancy():
+    """Jika mutasi bank berstatus UNMATCHED memiliki Discrepancy yang terlanjur RESOLVED tanpa
+    match aktif (mis. akibat desync lama), run_match() harus otomatis memulihkannya kembali jadi OPEN."""
+    bm = _bank("DANA20261004035719336149ANDREBASHORA", "1000000", channel=Channel.BRI, book_date=BD)
+    run_match(BD)
+    disc = Discrepancy.objects.get(bank_mutation=bm)
+    assert disc.status == DiscrepancyStatus.OPEN
+
+    # Simulasikan kondisi desync: discrepancy berstatus RESOLVED padahal bank UNMATCHED
+    disc.status = DiscrepancyStatus.RESOLVED
+    disc.save(update_fields=["status"])
+    bm.refresh_from_db()
+    assert bm.match_status == MatchStatus.UNMATCHED
+
+    # Jalankan engine -> harus otomatis memulihkan discrepancy jadi OPEN
+    stats = run_match(BD)
+    assert stats.discrepancies == 1
+    disc.refresh_from_db()
+    assert disc.status == DiscrepancyStatus.OPEN
+    assert disc.resolved_book_date is None

@@ -702,18 +702,56 @@ def unpair_match(match: Match, user=None) -> None:
     m.voided_by = user
     m.save(update_fields=["voided_at", "voided_by", "updated_at"])
 
+    # 1. Buka kembali Discrepancy yang secara eksplisit diselesaikan oleh match ini
+    affected_days = {m.book_date}
+    for disc in Discrepancy.objects.filter(resolution_match=m, status=DiscrepancyStatus.RESOLVED):
+        if not ReconDay.objects.filter(book_date=disc.origin_book_date, locked=True).exists():
+            disc.status = DiscrepancyStatus.OPEN
+            disc.resolved_book_date = None
+            disc.resolution_type = ""
+            disc.resolution_match = None
+            disc.resolved_by = None
+            disc.resolved_at = None
+            disc.adjustments.all().delete()
+            disc.save()
+            affected_days.add(disc.origin_book_date)
+
     for bm in BankMutation.objects.select_for_update().filter(pk__in=bank_ids):
         if not _active_matches_for_bank(bm).exists():
             bm.match_status = MatchStatus.UNMATCHED
             bm.tag_manual = ""
             bm.manual_note = ""
             bm.save(update_fields=["match_status", "tag_manual", "manual_note", "updated_at"])
+            # Pulihkan discrepancy BANK_ONLY yang sempat ter-RESOLVED untuk bm ini
+            for disc in bm.discrepancies.filter(status=DiscrepancyStatus.RESOLVED, kind=DiscrepancyKind.BANK_ONLY):
+                if not ReconDay.objects.filter(book_date=disc.origin_book_date, locked=True).exists():
+                    disc.status = DiscrepancyStatus.OPEN
+                    disc.resolved_book_date = None
+                    disc.resolution_type = ""
+                    disc.resolution_match = None
+                    disc.resolved_by = None
+                    disc.resolved_at = None
+                    disc.adjustments.all().delete()
+                    disc.save()
+                    affected_days.add(disc.origin_book_date)
 
     for o in OtomaxEntry.objects.select_for_update().filter(pk__in=otomax_ids):
         still_active = Match.objects.filter(Q(otomax_entry=o) | Q(otomax_entries=o), voided_at__isnull=True).exists()
         if not still_active:
             o.match_status = MatchStatus.PENDING_SETTLE
             o.save(update_fields=["match_status", "updated_at"])
+            # Pulihkan discrepancy OTOMAX_ONLY yang sempat ter-RESOLVED untuk o ini
+            for disc in o.discrepancies.filter(status=DiscrepancyStatus.RESOLVED, kind=DiscrepancyKind.OTOMAX_ONLY):
+                if not ReconDay.objects.filter(book_date=disc.origin_book_date, locked=True).exists():
+                    disc.status = DiscrepancyStatus.OPEN
+                    disc.resolved_book_date = None
+                    disc.resolution_type = ""
+                    disc.resolution_match = None
+                    disc.resolved_by = None
+                    disc.resolved_at = None
+                    disc.adjustments.all().delete()
+                    disc.save()
+                    affected_days.add(disc.origin_book_date)
 
     # Discrepancy AMOUNT_DIFF yang dibuat khusus untuk pasangan match ini (lihat
     # manual_pair_transactions / qris_match Pass 3) jadi usang begitu match dibatalkan --
@@ -726,6 +764,4 @@ def unpair_match(match: Match, user=None) -> None:
             status=DiscrepancyStatus.OPEN,
         ).delete()
 
-    day, _ = ReconDay.objects.select_for_update().get_or_create(book_date=m.book_date)
-    day.recompute_selisih()
-    day.save(update_fields=["selisih_adjustments", "selisih_current", "updated_at"])
+    _recompute_days(affected_days)

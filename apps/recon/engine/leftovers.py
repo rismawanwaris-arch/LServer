@@ -5,19 +5,45 @@ from __future__ import annotations
 
 from datetime import date
 
-from apps.core.enums import BANK_CHANNELS, Channel, DiscrepancyKind, MatchStatus, OtomaxCategory
+from apps.core.enums import BANK_CHANNELS, Channel, DiscrepancyKind, DiscrepancyStatus, MatchStatus, OtomaxCategory
 from apps.ingest.models import OtomaxEntry
+from apps.recon.models import ReconDay
 
 from .helpers import _MATCHABLE_CATEGORIES, _OPEN_STATUSES, RunStats, _make_discrepancy, _mark
 from .ref_match import _open_bank
 
 
+def _reopen_stale_discrepancy(disc) -> bool:
+    """Jika ada discrepancy yang berstatus RESOLVED tapi barisnya kembali terbuka (UNMATCHED/PENDING_SETTLE),
+    pulihkan kembali jadi OPEN kecuali hari bukunya sudah dikunci."""
+    if ReconDay.objects.filter(book_date=disc.origin_book_date, locked=True).exists():
+        return False
+    disc.status = DiscrepancyStatus.OPEN
+    disc.resolved_book_date = None
+    disc.resolution_type = ""
+    disc.resolution_match = None
+    disc.resolved_by = None
+    disc.resolved_at = None
+    disc.adjustments.all().delete()
+    disc.save()
+    return True
+
+
 def _classify_leftovers(book_date: date) -> RunStats:
     stats = RunStats()
     for channel in BANK_CHANNELS:
-        for b in _open_bank(book_date, channel).filter(discrepancies__isnull=True):
-            _make_discrepancy(book_date, channel, DiscrepancyKind.BANK_ONLY, amount=b.amount, bank=b)
-            stats.discrepancies += 1
+        for b in _open_bank(book_date, channel):
+            if b.discrepancies.filter(status=DiscrepancyStatus.OPEN).exists():
+                continue
+            stale = b.discrepancies.filter(
+                status=DiscrepancyStatus.RESOLVED,
+                kind=DiscrepancyKind.BANK_ONLY,
+            ).first()
+            if stale and _reopen_stale_discrepancy(stale):
+                stats.discrepancies += 1
+            elif not b.discrepancies.filter(status=DiscrepancyStatus.OPEN).exists():
+                _make_discrepancy(book_date, channel, DiscrepancyKind.BANK_ONLY, amount=b.amount, bank=b)
+                stats.discrepancies += 1
 
     # Sisi Otomax: SEMUA entri yang masih terbuka selain potongan admin -- definisi yang sama
     # persis dengan isi halaman Pending Settle, supaya setiap outstanding di sana juga muncul
@@ -26,10 +52,18 @@ def _classify_leftovers(book_date: date) -> RunStats:
     for o in (
         OtomaxEntry.objects.filter(book_date=book_date, match_status__in=_OPEN_STATUSES)
         .exclude(category=OtomaxCategory.ADMIN)
-        .filter(discrepancies__isnull=True)
     ):
-        make_otomax_only(o)
-        stats.discrepancies += 1
+        if o.discrepancies.filter(status=DiscrepancyStatus.OPEN).exists():
+            continue
+        stale = o.discrepancies.filter(
+            status=DiscrepancyStatus.RESOLVED,
+            kind=DiscrepancyKind.OTOMAX_ONLY,
+        ).first()
+        if stale and _reopen_stale_discrepancy(stale):
+            stats.discrepancies += 1
+        elif not o.discrepancies.filter(status=DiscrepancyStatus.OPEN).exists():
+            make_otomax_only(o)
+            stats.discrepancies += 1
     return stats
 
 
