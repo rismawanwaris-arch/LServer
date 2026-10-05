@@ -84,6 +84,7 @@ def retire_leftover_discrepancies(
             disc.delete()
 
 
+@transaction.atomic
 def _recompute_days(book_dates) -> None:
     for book_date in set(book_dates):
         day, _ = ReconDay.objects.select_for_update().get_or_create(book_date=book_date)
