@@ -188,3 +188,96 @@ def test_excluded_transactions_views_and_restore(auth_client):
     assert resp.status_code == 302
     assert ExcludedTransaction.objects.filter(import_batch=batch).count() == 0
     assert BankMutation.objects.filter(import_batch=batch).count() == 2
+
+
+@pytest.mark.django_db
+def test_excluded_transactions_breakdown_masuk_keluar(auth_client):
+    from apps.ingest.models import ImportBatch, summarize_excluded_transactions
+    from apps.catalog.models import ExclusionRule, ExclusionCategory
+
+    batch = ImportBatch.objects.create(
+        channel=Channel.BRI,
+        book_date=D12,
+        source_filename="test_mixed.csv",
+        file_hash="hash_mixed_123",
+    )
+
+    # 1. Transaksi Masuk (Credit)
+    ex_in = ExcludedTransaction.objects.create(
+        import_batch=batch,
+        channel=Channel.BRI,
+        source_type="BANK",
+        book_date=D12,
+        description_raw="TRANSFER MASUK DARI AGEN ABC",
+        amount=Decimal("5000000.00"),
+        category="MANUAL_UPLOAD",
+        row_hash="rh_in_1",
+    )
+
+    # 2. Transaksi Keluar (Debit negatif)
+    ex_out_neg = ExcludedTransaction.objects.create(
+        import_batch=batch,
+        channel=Channel.BRI,
+        source_type="BANK",
+        book_date=D12,
+        description_raw="BIAYA ADM BULANAN",
+        amount=Decimal("-15000.00"),
+        category="BIAYA_ADMIN",
+        row_hash="rh_out_1",
+    )
+
+    # 3. Transaksi Keluar via Aturan Rule (amount positif tapi category BIAYA_ADMIN)
+    rule = ExclusionRule.objects.create(
+        name="Biaya Buku",
+        keywords="ADM",
+        category=ExclusionCategory.BIAYA_ADMIN,
+    )
+    ex_out_rule = ExcludedTransaction.objects.create(
+        import_batch=batch,
+        channel=Channel.BCA,
+        source_type="BANK",
+        book_date=D12,
+        description_raw="BIAYA ADM REK",
+        amount=Decimal("20000.00"),
+        rule=rule,
+        category=ExclusionCategory.BIAYA_ADMIN,
+        row_hash="rh_out_2",
+    )
+
+    assert ex_in.is_money_in is True
+    assert ex_in.is_money_out is False
+    assert ex_out_neg.is_money_out is True
+    assert ex_out_rule.is_money_out is True
+
+    # Test summary function
+    all_qs = ExcludedTransaction.objects.filter(import_batch=batch)
+    summary = summarize_excluded_transactions(all_qs)
+    assert summary["masuk_count"] == 1
+    assert summary["masuk_amount"] == Decimal("5000000.00")
+    assert summary["keluar_count"] == 2
+    assert summary["keluar_amount"] == Decimal("35000.00")
+    assert summary["netto_amount"] == Decimal("4965000.00")
+
+    # Test View renders breakdown
+    url = f"{reverse('excluded-transactions')}?d={D12.isoformat()}"
+    resp = auth_client.get(url)
+    assert resp.status_code == 200
+    html = resp.content.decode("utf-8")
+    assert "Total Uang Masuk Dikecualikan" in html
+    assert "Total Uang Keluar Dikecualikan" in html
+    assert "+Rp 5.000.000" in html
+    assert "-Rp 35.000" in html
+
+    # Test filter by direction=in
+    resp_in = auth_client.get(f"{url}&direction=in")
+    assert resp_in.status_code == 200
+    html_in = resp_in.content.decode("utf-8")
+    assert "TRANSFER MASUK DARI AGEN ABC" in html_in
+    assert "BIAYA ADM BULANAN" not in html_in
+
+    # Test filter by direction=out
+    resp_out = auth_client.get(f"{url}&direction=out")
+    assert resp_out.status_code == 200
+    html_out = resp_out.content.decode("utf-8")
+    assert "BIAYA ADM BULANAN" in html_out
+    assert "TRANSFER MASUK DARI AGEN ABC" not in html_out

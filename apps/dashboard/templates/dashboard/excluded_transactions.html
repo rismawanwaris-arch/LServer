@@ -47,29 +47,56 @@
   </div>
 
   <!-- KPI Cards -->
-  <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+  <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <!-- Card 1: Total Transaksi -->
     <div class="card p-4">
       <div class="kpi-label">Total Transaksi Dikecualikan</div>
-      <div class="kpi-value text-amber-600 dark:text-amber-400 font-bold text-2xl mt-1">{{ total_count }}</div>
+      <div class="kpi-value text-slate-900 dark:text-white font-bold text-2xl mt-1">{{ total_count }} <span class="text-xs font-normal text-slate-400">transaksi</span></div>
       <div class="text-[11px] text-slate-400 mt-1">Pada tanggal {{ book_date|date:"d F Y" }}</div>
     </div>
-    <div class="card p-4">
-      <div class="kpi-label">Total Nominal Uang Dikecualikan</div>
-      <div class="kpi-value money text-slate-900 dark:text-white font-bold text-2xl mt-1">Rp {{ total_amount|rupiah }}</div>
-      <div class="text-[11px] text-slate-400 mt-1">Tidak diikutsertakan dalam rekonsiliasi</div>
-    </div>
-    <div class="card p-4 flex flex-col justify-between">
-      <div>
-        <div class="kpi-label">Kontrol Rekonsiliasi</div>
-        <p class="text-xs text-slate-500 mt-1">
-          Transaksi di bawah aman dari mesin pencocokan. Anda dapat memulihkannya kembali ke antrean rekonsiliasi kapan saja.
-        </p>
+
+    <!-- Card 2: Total Uang Masuk -->
+    <div class="card p-4 border-emerald-100 bg-emerald-50/20 dark:border-emerald-950/40 dark:bg-emerald-950/10">
+      <div class="flex items-center justify-between">
+        <div class="kpi-label text-emerald-700 dark:text-emerald-400 font-semibold flex items-center gap-1.5">
+          <span class="inline-block h-2 w-2 rounded-full bg-emerald-500"></span>
+          Total Uang Masuk Dikecualikan
+        </div>
+        <span class="badge-good text-[10px]">{{ filtered_summary.masuk_count }} trx</span>
       </div>
-      <div class="mt-2 text-right">
-        <a href="{% url 'exclusion-rules' %}?d={{ book_date|date:'Y-m-d' }}" class="text-xs text-indigo-600 hover:underline dark:text-indigo-400">
-          Kelola Aturan Filter Otomatis &rarr;
+      <div class="kpi-value money text-emerald-600 dark:text-emerald-400 font-bold text-2xl mt-1">
+        +Rp {{ filtered_summary.masuk_amount|rupiah }}
+      </div>
+      <div class="text-[11px] text-slate-400 mt-1">Mutasi kredit / top-up yang dipisahkan</div>
+    </div>
+
+    <!-- Card 3: Total Uang Keluar -->
+    <div class="card p-4 border-rose-100 bg-rose-50/20 dark:border-rose-950/40 dark:bg-rose-950/10">
+      <div class="flex items-center justify-between">
+        <div class="kpi-label text-rose-700 dark:text-rose-400 font-semibold flex items-center gap-1.5">
+          <span class="inline-block h-2 w-2 rounded-full bg-rose-500"></span>
+          Total Uang Keluar Dikecualikan
+        </div>
+        <span class="badge-crit text-[10px]">{{ filtered_summary.keluar_count }} trx</span>
+      </div>
+      <div class="kpi-value money text-rose-600 dark:text-rose-400 font-bold text-2xl mt-1">
+        -Rp {{ filtered_summary.keluar_amount|rupiah }}
+      </div>
+      <div class="text-[11px] text-slate-400 mt-1">Biaya admin, debit bank, atau penarikan</div>
+    </div>
+
+    <!-- Card 4: Selisih Bersih (Netto) -->
+    <div class="card p-4">
+      <div class="flex items-center justify-between">
+        <div class="kpi-label">Selisih Bersih (Masuk − Keluar)</div>
+        <a href="{% url 'exclusion-rules' %}?d={{ book_date|date:'Y-m-d' }}" class="text-[11px] text-indigo-600 hover:underline dark:text-indigo-400">
+          Aturan &rarr;
         </a>
       </div>
+      <div class="kpi-value money font-bold text-2xl mt-1 {% if filtered_summary.netto_amount >= 0 %}text-indigo-600 dark:text-indigo-400{% else %}text-amber-600 dark:text-amber-400{% endif %}">
+        {% if filtered_summary.netto_amount < 0 %}-{% endif %}Rp {{ filtered_summary.netto_amount_abs|rupiah }}
+      </div>
+      <div class="text-[11px] text-slate-400 mt-1">Dampak bersih ke kas non-rekon</div>
     </div>
   </div>
 
@@ -77,7 +104,7 @@
   <div class="border-b border-slate-200 dark:border-slate-800">
     <div class="flex flex-wrap items-center gap-2 -mb-px">
       <!-- ALL -->
-      <a href="?d={{ book_date|date:'Y-m-d' }}&channel=&source={{ source_filter }}&q={{ query }}"
+      <a href="?d={{ book_date|date:'Y-m-d' }}&channel=&source={{ source_filter }}&direction={{ direction_filter }}&q={{ query }}"
          class="inline-flex items-center gap-2 px-3.5 py-2.5 text-xs font-medium border-b-2 transition
          {% if not selected_channel %}border-indigo-600 text-indigo-600 dark:border-indigo-400 dark:text-indigo-400 font-bold{% else %}border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 dark:text-slate-400 dark:hover:text-slate-200{% endif %}">
         <span>Semua Bank & Otomax</span>
@@ -87,7 +114,7 @@
       </a>
 
       <!-- BRI -->
-      <a href="?d={{ book_date|date:'Y-m-d' }}&channel=BRI&source={{ source_filter }}&q={{ query }}"
+      <a href="?d={{ book_date|date:'Y-m-d' }}&channel=BRI&source={{ source_filter }}&direction={{ direction_filter }}&q={{ query }}"
          class="inline-flex items-center gap-2 px-3.5 py-2.5 text-xs font-medium border-b-2 transition
          {% if selected_channel == 'BRI' %}border-blue-600 text-blue-600 dark:border-blue-400 dark:text-blue-400 font-bold{% else %}border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 dark:text-slate-400 dark:hover:text-slate-200{% endif %}">
         <span>BRI</span>
@@ -97,7 +124,7 @@
       </a>
 
       <!-- BCA -->
-      <a href="?d={{ book_date|date:'Y-m-d' }}&channel=BCA&source={{ source_filter }}&q={{ query }}"
+      <a href="?d={{ book_date|date:'Y-m-d' }}&channel=BCA&source={{ source_filter }}&direction={{ direction_filter }}&q={{ query }}"
          class="inline-flex items-center gap-2 px-3.5 py-2.5 text-xs font-medium border-b-2 transition
          {% if selected_channel == 'BCA' %}border-sky-600 text-sky-600 dark:border-sky-400 dark:text-sky-400 font-bold{% else %}border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 dark:text-slate-400 dark:hover:text-slate-200{% endif %}">
         <span>BCA</span>
@@ -107,7 +134,7 @@
       </a>
 
       <!-- MANDIRI -->
-      <a href="?d={{ book_date|date:'Y-m-d' }}&channel=MANDIRI&source={{ source_filter }}&q={{ query }}"
+      <a href="?d={{ book_date|date:'Y-m-d' }}&channel=MANDIRI&source={{ source_filter }}&direction={{ direction_filter }}&q={{ query }}"
          class="inline-flex items-center gap-2 px-3.5 py-2.5 text-xs font-medium border-b-2 transition
          {% if selected_channel == 'MANDIRI' %}border-amber-600 text-amber-600 dark:border-amber-400 dark:text-amber-400 font-bold{% else %}border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 dark:text-slate-400 dark:hover:text-slate-200{% endif %}">
         <span>Mandiri</span>
@@ -117,7 +144,7 @@
       </a>
 
       <!-- MERCHANT BCA -->
-      <a href="?d={{ book_date|date:'Y-m-d' }}&channel=MERCHANT_BCA&source={{ source_filter }}&q={{ query }}"
+      <a href="?d={{ book_date|date:'Y-m-d' }}&channel=MERCHANT_BCA&source={{ source_filter }}&direction={{ direction_filter }}&q={{ query }}"
          class="inline-flex items-center gap-2 px-3.5 py-2.5 text-xs font-medium border-b-2 transition
          {% if selected_channel == 'MERCHANT_BCA' %}border-violet-600 text-violet-600 dark:border-violet-400 dark:text-violet-400 font-bold{% else %}border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 dark:text-slate-400 dark:hover:text-slate-200{% endif %}">
         <span>Merchant BCA (QRIS)</span>
@@ -127,7 +154,7 @@
       </a>
 
       <!-- OTOMAX -->
-      <a href="?d={{ book_date|date:'Y-m-d' }}&channel=OTOMAX&source={{ source_filter }}&q={{ query }}"
+      <a href="?d={{ book_date|date:'Y-m-d' }}&channel=OTOMAX&source={{ source_filter }}&direction={{ direction_filter }}&q={{ query }}"
          class="inline-flex items-center gap-2 px-3.5 py-2.5 text-xs font-medium border-b-2 transition
          {% if selected_channel == 'OTOMAX' %}border-emerald-600 text-emerald-600 dark:border-emerald-400 dark:text-emerald-400 font-bold{% else %}border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 dark:text-slate-400 dark:hover:text-slate-200{% endif %}">
         <span>OtomaX</span>
@@ -136,6 +163,31 @@
         </span>
       </a>
     </div>
+  </div>
+
+  <!-- Rincian Channel Terpilih (Masuk vs Keluar) -->
+  <div class="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-2.5 text-xs dark:border-slate-800 dark:bg-slate-900/60">
+    <div class="flex flex-wrap items-center gap-3">
+      <span class="font-semibold text-slate-800 dark:text-slate-200">
+        Rincian {{ selected_channel_label }}:
+      </span>
+      <span class="inline-flex items-center gap-1.5 font-medium text-emerald-600 dark:text-emerald-400">
+        <span class="h-2 w-2 rounded-full bg-emerald-500"></span>
+        Uang Masuk: <b>+Rp {{ current_channel_stats.masuk_amount|rupiah }}</b> ({{ current_channel_stats.masuk_count }} trx)
+      </span>
+      <span class="text-slate-300 dark:text-slate-700">&bull;</span>
+      <span class="inline-flex items-center gap-1.5 font-medium text-rose-600 dark:text-rose-400">
+        <span class="h-2 w-2 rounded-full bg-rose-500"></span>
+        Uang Keluar: <b>-Rp {{ current_channel_stats.keluar_amount|rupiah }}</b> ({{ current_channel_stats.keluar_count }} trx)
+      </span>
+      <span class="text-slate-300 dark:text-slate-700">&bull;</span>
+      <span class="text-slate-500">
+        Selisih Netto: <b class="text-slate-700 dark:text-slate-300">{% if current_channel_stats.netto_amount < 0 %}-{% endif %}Rp {{ current_channel_stats.netto_amount_abs|rupiah }}</b>
+      </span>
+    </div>
+    <span class="text-[11px] text-slate-400">
+      Total {{ current_channel_stats.total_count }} transaksi pada channel ini
+    </span>
   </div>
 
   <!-- Filter Bar & Search -->
@@ -151,6 +203,13 @@
         <option value="rule" {% if source_filter == 'rule' %}selected{% endif %}>Dipisahkan Aturan Filter</option>
       </select>
 
+      <!-- Arah Filter (Masuk / Keluar) -->
+      <select name="direction" class="field-input h-9 text-xs" onchange="this.form.submit()">
+        <option value="all" {% if direction_filter == 'all' %}selected{% endif %}>Semua Arah (Masuk & Keluar)</option>
+        <option value="in" {% if direction_filter == 'in' %}selected{% endif %}>Hanya Uang Masuk (+CR)</option>
+        <option value="out" {% if direction_filter == 'out' %}selected{% endif %}>Hanya Uang Keluar (-DB)</option>
+      </select>
+
       <!-- Search Input -->
       <div class="relative">
         <input type="search" name="q" value="{{ query }}" placeholder="Cari keterangan, outlet/reseller, alasan…"
@@ -159,7 +218,7 @@
       </div>
 
       <button type="submit" class="btn-primary h-9 px-3 text-xs">Filter</button>
-      {% if query or source_filter != 'all' or selected_channel %}
+      {% if query or source_filter != 'all' or direction_filter != 'all' or selected_channel %}
       <a href="?d={{ book_date|date:'Y-m-d' }}" class="btn-ghost h-9 px-2 text-xs text-slate-500">Reset</a>
       {% endif %}
     </div>
@@ -206,6 +265,7 @@
             <th class="w-24">Channel / Bank</th>
             <th>Pihak Terkait</th>
             <th>Keterangan Asli</th>
+            <th class="w-24 text-center">Jenis</th>
             <th class="text-right">Nominal</th>
             <th>Asal & Alasan</th>
             <th>Batch / File</th>
@@ -231,8 +291,19 @@
             <td class="max-w-md break-words font-mono text-slate-700 dark:text-slate-300" title="{{ t.description_raw }}">
               {{ t.description_raw }}
             </td>
-            <td class="money whitespace-nowrap text-right font-semibold {% if t.amount < 0 %}text-rose-600 dark:text-rose-400{% else %}text-slate-900 dark:text-white{% endif %}">
-              Rp {{ t.amount|rupiah }}
+            <td class="text-center whitespace-nowrap">
+              {% if t.is_money_out %}
+              <span class="badge-crit text-[10px] inline-flex items-center gap-1 font-medium">
+                <span class="h-1.5 w-1.5 rounded-full bg-rose-500"></span>Keluar
+              </span>
+              {% else %}
+              <span class="badge-good text-[10px] inline-flex items-center gap-1 font-medium">
+                <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>Masuk
+              </span>
+              {% endif %}
+            </td>
+            <td class="money whitespace-nowrap text-right font-semibold {% if t.is_money_out %}text-rose-600 dark:text-rose-400{% else %}text-emerald-600 dark:text-emerald-400{% endif %}">
+              {% if t.is_money_out %}-{% else %}+{% endif %}Rp {{ t.abs_amount|rupiah }}
             </td>
             <td>
               {% if t.category == 'MANUAL_UPLOAD' %}

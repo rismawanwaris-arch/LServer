@@ -11,7 +11,7 @@ from django.views.decorators.http import require_POST
 
 from apps.catalog.models import ExclusionCategory, ExclusionRule, ExclusionTarget
 from apps.core.enums import Channel
-from apps.ingest.models import ExcludedTransaction
+from apps.ingest.models import ExcludedTransaction, summarize_excluded_transactions
 from apps.ingest.services import apply_exclusion_rules_retroactive
 
 from ._shared import _parse_date
@@ -26,8 +26,9 @@ def exclusion_rules_view(request):
         .select_related("rule", "import_batch")
         .order_by("-txn_datetime", "-id")
     )
-    total_excluded_amount = sum((t.amount for t in excluded_txns), Decimal("0"))
-    total_excluded_count = excluded_txns.count()
+    excluded_summary = summarize_excluded_transactions(excluded_txns)
+    total_excluded_amount = excluded_summary["netto_amount"]
+    total_excluded_count = excluded_summary["total_count"]
 
     return render(
         request,
@@ -36,6 +37,7 @@ def exclusion_rules_view(request):
             "book_date": book_date,
             "rules": rules,
             "excluded_txns": excluded_txns,
+            "excluded_summary": excluded_summary,
             "total_excluded_amount": total_excluded_amount,
             "total_excluded_count": total_excluded_count,
             "target_choices": ExclusionTarget.choices,

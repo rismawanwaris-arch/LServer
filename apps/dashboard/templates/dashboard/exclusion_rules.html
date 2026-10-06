@@ -191,10 +191,18 @@
           Data ini telah diamankan ke tabel tersendiri dan tidak diikutsertakan ke mesin rekonsiliasi ataupun antrean pending.
         </p>
       </div>
-      <div class="text-right">
-        <div class="text-xs opacity-80">Total Nominal Dikecualikan</div>
-        <div class="money text-lg font-semibold">
-          Rp {{ total_excluded_amount|rupiah }}
+      <div class="text-right flex flex-wrap items-center justify-end gap-4">
+        <div>
+          <div class="text-[11px] opacity-80">Uang Masuk</div>
+          <div class="money text-sm font-semibold text-emerald-300">
+            +Rp {{ excluded_summary.masuk_amount|rupiah }} <span class="text-[10px] opacity-75">({{ excluded_summary.masuk_count }} trx)</span>
+          </div>
+        </div>
+        <div>
+          <div class="text-[11px] opacity-80">Uang Keluar</div>
+          <div class="money text-sm font-semibold text-rose-300">
+            -Rp {{ excluded_summary.keluar_amount|rupiah }} <span class="text-[10px] opacity-75">({{ excluded_summary.keluar_count }} trx)</span>
+          </div>
         </div>
       </div>
     </div>
@@ -208,6 +216,7 @@
               <th>Channel / Tipe</th>
               <th>Keterangan Asli</th>
               <th>Kategori / Alasan</th>
+              <th class="text-center">Jenis</th>
               <th class="text-right">Nominal</th>
             </tr>
           </thead>
@@ -228,8 +237,15 @@
                 <span class="badge-warn text-[10px]">{{ t.category }}</span>
                 <div class="text-[11px] text-slate-500 mt-0.5">{{ t.reason }}</div>
               </td>
-              <td class="money whitespace-nowrap text-right font-semibold {% if t.amount < 0 %}text-rose-600 dark:text-rose-400{% else %}text-slate-900 dark:text-white{% endif %}">
-                Rp {{ t.amount|rupiah }}
+              <td class="text-center whitespace-nowrap">
+                {% if t.is_money_out %}
+                <span class="badge-crit text-[10px]">Keluar</span>
+                {% else %}
+                <span class="badge-good text-[10px]">Masuk</span>
+                {% endif %}
+              </td>
+              <td class="money whitespace-nowrap text-right font-semibold {% if t.is_money_out %}text-rose-600 dark:text-rose-400{% else %}text-emerald-600 dark:text-emerald-400{% endif %}">
+                {% if t.is_money_out %}-{% else %}+{% endif %}Rp {{ t.abs_amount|rupiah }}
               </td>
             </tr>
             {% empty %}

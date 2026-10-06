@@ -262,7 +262,7 @@ def _persist_manual_excluded(batch, rows, channel) -> None:
                 txn_datetime=_aware(txn_dt),
                 party_raw=party,
                 description_raw=row.description_raw,
-                amount=abs(row.amount) if row.amount is not None else Decimal("0"),
+                amount=row.amount if row.amount is not None else Decimal("0"),
                 category="MANUAL_UPLOAD",
                 reason="Dikecualikan manual saat upload",
                 extra_data=extra,

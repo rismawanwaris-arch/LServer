@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.conf import settings
 from django.db import models
 
@@ -148,4 +150,78 @@ class ExcludedTransaction(TimeStampedModel):
 
     def __str__(self) -> str:
         return f"[EXCLUDED] {self.channel} {self.amount} — {self.description_raw[:40]}"
+
+    @property
+    def is_money_out(self) -> bool:
+        """Menentukan apakah transaksi ini adalah uang keluar (debit/biaya/pajak)."""
+        if self.amount < 0:
+            return True
+        cat = (self.category or "").upper()
+        if cat in ("BIAYA_ADMIN", "NON_OPERASIONAL", "DEBIT", "MUTASI_DEBIT"):
+            return True
+        if self.rule and (self.rule.category or "").upper() in ("BIAYA_ADMIN", "NON_OPERASIONAL"):
+            return True
+        desc = (self.description_raw or "").upper()
+        if any(k in desc for k in ["BIAYA ADM", "ADM BANK", "TARIK TUNAI", "DEBET", "DEBIT", "PAJAK TABUNGAN", "BIAYA BULANAN"]):
+            return True
+        return False
+
+    @property
+    def is_money_in(self) -> bool:
+        return not self.is_money_out
+
+    @property
+    def direction(self) -> str:
+        return "OUT" if self.is_money_out else "IN"
+
+    @property
+    def direction_label(self) -> str:
+        return "Uang Keluar" if self.is_money_out else "Uang Masuk"
+
+    @property
+    def abs_amount(self) -> Decimal:
+        return abs(self.amount)
+
+
+EXCLUDED_OUT_Q = (
+    models.Q(amount__lt=0)
+    | models.Q(category__in=["BIAYA_ADMIN", "NON_OPERASIONAL", "DEBIT", "MUTASI_DEBIT"])
+    | models.Q(rule__category__in=["BIAYA_ADMIN", "NON_OPERASIONAL"])
+    | models.Q(description_raw__icontains="BIAYA ADM")
+    | models.Q(description_raw__icontains="ADM BANK")
+    | models.Q(description_raw__icontains="TARIK TUNAI")
+    | models.Q(description_raw__icontains="PAJAK TABUNGAN")
+)
+
+
+def summarize_excluded_transactions(qs) -> dict:
+    """Menghitung ringkasan rinci uang masuk, uang keluar, dan selisih bersih transaksi dikecualikan."""
+    ZERO = Decimal("0.00")
+    masuk_count = 0
+    masuk_amount = ZERO
+    keluar_count = 0
+    keluar_amount = ZERO
+
+    for tx in qs:
+        amt = abs(tx.amount)
+        if tx.is_money_out:
+            keluar_count += 1
+            keluar_amount += amt
+        else:
+            masuk_count += 1
+            masuk_amount += amt
+
+    total_count = masuk_count + keluar_count
+    netto_amount = masuk_amount - keluar_amount
+    netto_amount_abs = abs(netto_amount)
+
+    return {
+        "total_count": total_count,
+        "masuk_count": masuk_count,
+        "masuk_amount": masuk_amount,
+        "keluar_count": keluar_count,
+        "keluar_amount": keluar_amount,
+        "netto_amount": netto_amount,
+        "netto_amount_abs": netto_amount_abs,
+    }
 
