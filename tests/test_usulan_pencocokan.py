@@ -228,3 +228,97 @@ def test_review_tab_lists_only_proposals_and_approve_endpoint(auth_client):
     auth_client.post(f"/matches/approve/{m.id}/", {"next_url": "/"})
     m.refresh_from_db()
     assert not m.needs_review
+
+
+# --- Anti-Mismatch & Name Conflict Guards --------------------------------------------
+
+
+def test_name_similarity_rejects_different_base_names_sharing_digit():
+    from apps.recon.engine.qris_match import _name_similarity
+
+    # Kasus bug: BAKSAR 2 CELL vs PLC ASBER2 sama-sama punya digit 2 tapi nama dasar beda
+    assert _name_similarity("BAKSAR 2 CELL", "PLC ASBER2") == 0.0
+
+    # Nama dasar sama persis dengan angka cabang sama
+    assert _name_similarity("BAKSAR 2 CELL", "BAKSAR2") == 100.0
+    assert _name_similarity("BAKSAR 2 CELL", "PLC BAKSAR 2") == 100.0
+
+    # Angka cabang beda
+    assert _name_similarity("BAKSAR 1 CELL", "BAKSAR 2") == 0.0
+
+
+@pytest.mark.django_db
+def test_qris_mapped_reseller_not_matched_to_different_reseller():
+    """Engine tidak boleh memasangkan outlet QRIS ke reseller berbeda jika sudah terpetakan di MerchantMap."""
+    r_baksar = Reseller.objects.create(code="BKS2", name="BAKSAR 2")
+    r_asber = Reseller.objects.create(code="ASB2", name="ASBER 2")
+    MerchantMap.objects.create(merchant_id="004769148", reseller=r_baksar)
+
+    b = _qris_bank("3836000", outlet="QRIS BAKSAR 2 CELL", merchant_id="004769148")
+    o = _otomax("TARTUN QR BULK ASBER 2 TGL 05-SEP-2026", "3836000", channel=Channel.MERCHANT_BCA, reseller=r_asber)
+    o.reseller_name_raw = "PLC ASBER2"
+    o.save(update_fields=["reseller_name_raw"])
+
+    run_match(BD)
+
+    b.refresh_from_db()
+    assert b.match_status == MatchStatus.UNMATCHED
+    assert not Match.objects.filter(bank_mutation=b, voided_at__isnull=True).exists()
+
+
+@pytest.mark.django_db
+def test_find_auto_pairs_rejects_conflicting_names_for_qris():
+    """_find_auto_pairs tidak boleh memasangkan BAKSAR 2 CELL dengan PLC ASBER2."""
+    from apps.dashboard.views._shared import _find_auto_pairs
+
+    reseller = Reseller.objects.create(code="ASB2", name="ASBER 2")
+    b = _qris_bank("3836000", outlet="QRIS BAKSAR 2 CELL", merchant_id="004769148")
+    o = _otomax("TARTUN QR BULK ASBER 2 TGL 05-SEP-2026", "3836000", channel=Channel.MERCHANT_BCA, reseller=reseller)
+    o.reseller_name_raw = "PLC ASBER2"
+    o.save(update_fields=["reseller_name_raw"])
+
+    pairs = _find_auto_pairs([b], [o])
+    assert len(pairs) == 0
+
+
+@pytest.mark.django_db
+def test_find_auto_pairs_accepts_matching_names_for_qris():
+    """_find_auto_pairs harus memasangkan BAKSAR 2 CELL dengan PLC BAKSAR2."""
+    from apps.dashboard.views._shared import _find_auto_pairs
+
+    reseller = Reseller.objects.create(code="BKS2", name="BAKSAR 2")
+    b = _qris_bank("3836000", outlet="QRIS BAKSAR 2 CELL", merchant_id="004769148")
+    o = _otomax("TARTUN QR BULK BAKSAR 2 TGL 05-SEP-2026", "3836000", channel=Channel.MERCHANT_BCA, reseller=reseller)
+    o.reseller_name_raw = "PLC BAKSAR2"
+    o.save(update_fields=["reseller_name_raw"])
+
+    pairs = _find_auto_pairs([b], [o])
+    assert len(pairs) == 1
+    bm, oe, note = pairs[0]
+    assert bm.id == b.id
+    assert oe.id == o.id
+
+
+@pytest.mark.django_db
+def test_find_auto_pairs_rejects_channel_mismatch():
+    """_find_auto_pairs tidak boleh memasangkan mutasi QRIS dengan entri bank transfer."""
+    from apps.dashboard.views._shared import _find_auto_pairs
+
+    b = _qris_bank("1500000", outlet="QRIS TOKO ABC", merchant_id="004769148")
+    o = _otomax("BAYAR KE BRI TRANSFER TOKO ABC", "1500000", channel=Channel.BRI)
+
+    pairs = _find_auto_pairs([b], [o])
+    assert len(pairs) == 0
+
+
+@pytest.mark.django_db
+def test_find_auto_pairs_rejects_conflicting_parties_in_bank_transfer():
+    """_find_auto_pairs tidak boleh memasangkan dua transfer beda pihak walau nominal unik."""
+    from apps.dashboard.views._shared import _find_auto_pairs
+
+    b = _bank("TRSF E-BANKING CR 1709/FTSCY/WS95011 500000.00 EDI SUHARTO", "500000", channel=Channel.BCA)
+    o = _otomax("BFST215401000596563BUDI SANTOSO:CENAIDJA", "500000", channel=Channel.BCA)
+
+    pairs = _find_auto_pairs([b], [o])
+    assert len(pairs) == 0
+

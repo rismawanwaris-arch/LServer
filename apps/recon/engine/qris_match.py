@@ -65,6 +65,16 @@ def _name_similarity(name1: str, name2: str) -> float:
     if nums1 and nums2 and not (nums1 & nums2):
         return 0.0
 
+    # Base alpha words check: if both contain alphabetic words, their text tokens MUST
+    # be sufficiently similar. Having matching digits (e.g. "2" in "BAKSAR 2" and "ASBER 2")
+    # must NOT cause completely different outlet names to match!
+    alpha1 = re.sub(r"[^A-Z]", " ", c1).strip()
+    alpha2 = re.sub(r"[^A-Z]", " ", c2).strip()
+    if alpha1 and alpha2:
+        alpha_sim = float(fuzz.token_set_ratio(alpha1, alpha2))
+        if alpha_sim < 75.0:
+            return 0.0
+
     return float(fuzz.token_set_ratio(c1, c2))
 
 
@@ -235,6 +245,12 @@ def _match_qris(book_date: date) -> RunStats:
         matching_grps = [grp for grp in otomax_groups.values() if not grp["used"] and b.amount == grp["total"]]
         if len(matching_grps) == 1:
             grp = matching_grps[0]
+
+            # MerchantMap check: jika bank sudah terpetakan ke reseller lain, jangan pasangkan
+            mapped_rid = mmap.get(b.external_ref)
+            if mapped_rid and grp.get("reseller_id") and grp["reseller_id"] != mapped_rid:
+                continue
+
             mtype = MatchType.AUTO_EXACT if len(grp["rows"]) == 1 else MatchType.AGGREGATE
             b_name = b.outlet_name or b.external_ref
             _persist_qris_match(

@@ -13,8 +13,10 @@ from django.db import models
 from django.urls import reverse
 from django.utils import timezone
 
-from apps.core.enums import MatchStatus, OtomaxCategory
+from apps.catalog.models import MerchantMap
+from apps.core.enums import Channel, MatchStatus, OtomaxCategory
 from apps.ingest.models import ImportBatch, OtomaxEntry
+from apps.recon.engine.qris_match import _clean_outlet_name, _name_similarity
 from apps.recon.models import Discrepancy, Match, ReconDay
 from apps.recon.reports import get_daily_summary
 
@@ -55,34 +57,129 @@ def _parse_date(raw: str | None, default=None) -> date:
     return default or timezone.localdate()
 
 
+def _is_channel_compatible(b, o) -> bool:
+    b_ch = getattr(b, "channel", None)
+    o_ch = getattr(o, "channel_hint", None)
+    o_cat = getattr(o, "category", None)
+    o_desc = (getattr(o, "description_raw", "") or "").upper()
+
+    is_b_qris = b_ch == Channel.MERCHANT_BCA
+    is_o_qris = (
+        o_ch == Channel.MERCHANT_BCA
+        or o_cat == OtomaxCategory.TOPUP_TARTUN
+        or "BULK" in o_desc
+        or "TARTUN QR" in o_desc
+    )
+
+    # Settlement QRIS bank hanya boleh dipasangkan dengan QRIS / Tartun Bulk
+    if is_b_qris != is_o_qris:
+        return False
+
+    # Untuk transfer bank non-QRIS (BCA, BRI, Mandiri, BNI, dll.)
+    if not is_b_qris:
+        if b_ch and o_ch and b_ch != Channel.UNKNOWN and o_ch not in (Channel.UNKNOWN, Channel.OTOMAX):
+            if b_ch != o_ch:
+                return False
+
+    return True
+
+
+def _get_bank_parties(b) -> list[str]:
+    names = []
+    if getattr(b, "outlet_name", None):
+        names.append(b.outlet_name)
+    desc = getattr(b, "description_raw", "") or ""
+    parts = desc.split(" - ")
+    if len(parts) >= 2:
+        names.append(parts[-1].strip())
+    m = re.search(r"(?:DARI|KE|TRANSFER|CR|TRSF)\s+(?:[A-Z0-9/.]+\s+)*(?:[0-9.,]+\s+)?([A-Z\s]{3,30})", desc.upper())
+    if m:
+        cand = m.group(1).strip()
+        if len(cand) >= 3:
+            names.append(cand)
+    res = []
+    for n in names:
+        n_clean = n.strip().upper()
+        if len(n_clean) >= 2 and n_clean not in res:
+            res.append(n_clean)
+    return res
+
+
+def _get_otomax_parties(o) -> list[str]:
+    names = []
+    if getattr(o, "reseller_name_raw", None):
+        names.append(o.reseller_name_raw)
+    if getattr(o, "reseller", None) and o.reseller and getattr(o.reseller, "name", None):
+        names.append(o.reseller.name)
+    desc = getattr(o, "description_raw", "") or ""
+    m_bfst = re.search(r"BFST\d+([A-Z\s]+?)(?::|$)", desc.upper())
+    if m_bfst:
+        names.append(m_bfst.group(1).strip())
+    m_tartun = re.search(r"TARTUN\s+(?:BULK|QR|TF\s+\w+|EDC\s+\w+)?\s*([A-Z0-9\s]+?)(?:TGL|:|\d{2}[-/]|$|\.|\bRp\b)", desc.upper())
+    if m_tartun:
+        cand = m_tartun.group(1).strip()
+        if len(cand) >= 3:
+            names.append(cand)
+    res = []
+    for n in names:
+        n_clean = n.strip().upper()
+        if len(n_clean) >= 2 and n_clean not in res:
+            res.append(n_clean)
+    return res
+
+
+def _calc_party_similarity(b_parties: list[str], o_parties: list[str]) -> tuple[float, str]:
+    best_sim = 0.0
+    best_name = ""
+    for bp in b_parties:
+        for op in o_parties:
+            sim = _name_similarity(bp, op)
+            c_bp = _clean_outlet_name(bp)
+            c_op = _clean_outlet_name(op)
+            if c_bp and c_op and (c_bp in c_op or c_op in c_bp):
+                sim = max(sim, 85.0)
+            if sim > best_sim:
+                best_sim = sim
+                best_name = bp
+    return best_sim, best_name
+
+
 def _find_auto_pairs(unmatched_banks, pending_otomax):
-    def get_name_from_bank(desc):
-        parts = (desc or "").split(" - ")
-        return parts[-1].strip().upper() if len(parts) >= 2 else ""
-
-    def get_name_from_otomax(desc):
-        m = re.search(r"BFST\d+([A-Z\s]+?)(?::|$)", (desc or "").upper())
-        if m:
-            return m.group(1).strip()
-        return ""
-
     used_b = set()
     used_o = set()
     pairs = []
 
-    # Tahap 1: Nama pengirim + nominal persis
+    mmap = {m.merchant_id: m.reseller_id for m in MerchantMap.objects.filter(active=True)}
+
+    # Tahap 1: Nama pengirim / outlet cocok DAN nominal persis
     for o in pending_otomax:
-        o_name = get_name_from_otomax(o.description_raw or "")
-        if not o_name or len(o_name) < 3:
+        if o.id in used_o:
             continue
+        o_parties = _get_otomax_parties(o)
         for b in unmatched_banks:
             if b.id in used_b:
                 continue
             if b.amount != o.amount:
                 continue
-            b_name = get_name_from_bank(b.description_raw or "")
-            if b_name and len(b_name) >= 3 and (o_name in b_name or b_name in o_name):
-                pairs.append((b, o, f"Cocok referensi nama ({b_name}) & nominal persis"))
+            if not _is_channel_compatible(b, o):
+                continue
+
+            # MerchantMap check untuk QRIS
+            if b.channel == Channel.MERCHANT_BCA and b.external_ref:
+                mapped_rid = mmap.get(b.external_ref)
+                if mapped_rid and o.reseller_id and o.reseller_id == mapped_rid:
+                    pairs.append((b, o, "Cocok pemetaan merchant ID & nominal persis"))
+                    used_b.add(b.id)
+                    used_o.add(o.id)
+                    break
+
+            b_parties = _get_bank_parties(b)
+            if not b_parties or not o_parties:
+                continue
+
+            best_sim, best_name = _calc_party_similarity(b_parties, o_parties)
+            if best_sim >= 75.0:
+                pairs.append((b, o, f"Cocok referensi nama ({best_name}) & nominal persis"))
                 used_b.add(b.id)
                 used_o.add(o.id)
                 break
@@ -104,6 +201,42 @@ def _find_auto_pairs(unmatched_banks, pending_otomax):
         if len(b_list) == 1 and len(o_list) == 1:
             bm = b_list[0]
             oe = o_list[0]
+
+            # 1. Pastikan channel kompatibel
+            if not _is_channel_compatible(bm, oe):
+                continue
+
+            b_parties = _get_bank_parties(bm)
+            o_parties = _get_otomax_parties(oe)
+
+            # 2. Khusus QRIS (MERCHANT_BCA):
+            # DILARANG pasang buta hanya karena nominal unik jika nama outlet & reseller tidak cocok / bertolak belakang!
+            if bm.channel == Channel.MERCHANT_BCA:
+                if bm.external_ref and mmap:
+                    mapped_rid = mmap.get(bm.external_ref)
+                    if mapped_rid and oe.reseller_id:
+                        if mapped_rid != oe.reseller_id:
+                            continue
+                        pairs.append((bm, oe, f"Cocok referensi nominal unik & MerchantMap (Rp {amt:,.0f})"))
+                        used_b.add(bm.id)
+                        used_o.add(oe.id)
+                        continue
+
+                if not b_parties or not o_parties:
+                    continue
+
+                best_sim, _ = _calc_party_similarity(b_parties, o_parties)
+                if best_sim < 75.0:
+                    continue
+
+            # 3. Bank Transfer Non-QRIS:
+            # Jika kedua belah pihak memiliki nama pihak pengirim/reseller,
+            # pastikan nama TIDAK bertentangan (misal EDI SUHARTO vs BUDI SANTOSO).
+            if b_parties and o_parties:
+                best_sim, _ = _calc_party_similarity(b_parties, o_parties)
+                if best_sim < 50.0:
+                    continue
+
             pairs.append((bm, oe, f"Cocok referensi nominal unik persis (Rp {amt:,.0f})"))
             used_b.add(bm.id)
             used_o.add(oe.id)
