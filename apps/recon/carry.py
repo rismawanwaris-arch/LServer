@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from datetime import date
 
-from django.db import transaction
+from django.db import models, transaction
 
-from apps.core.enums import Channel, DiscrepancyKind, DiscrepancyStatus, MatchStatus, MatchType
+from apps.catalog.models import MerchantMap, ResellerAlias
+from apps.core.enums import Channel, DiscrepancyKind, DiscrepancyStatus, MatchStatus, MatchType, OtomaxCategory
 from apps.ingest.models import BankMutation, OtomaxEntry
 
-from .engine.helpers import _MATCHABLE_CATEGORIES, _proposal_rejected
+from .engine.helpers import _MATCHABLE_CATEGORIES, ZERO, _proposal_rejected
+from .engine.qris_match import _clean_outlet_name, _find_best_group, _resolve_alias_reseller_id
 from .models import Discrepancy, Match
 from .resolve import resolve_discrepancy, retire_leftover_discrepancies
 
@@ -41,7 +43,10 @@ def carry_forward(book_date: date, user=None) -> int:
         if disc.kind == DiscrepancyKind.BANK_ONLY and disc.bank_mutation:
             match = _find_otomax_for(disc.bank_mutation, book_date)
             if match:
-                counterpart = Discrepancy.objects.filter(otomax_entry=match.otomax_entry)
+                oto_ids = list(match.otomax_entries.values_list("id", flat=True))
+                if match.otomax_entry_id and match.otomax_entry_id not in oto_ids:
+                    oto_ids.append(match.otomax_entry_id)
+                counterpart = Discrepancy.objects.filter(otomax_entry_id__in=oto_ids)
         elif disc.kind == DiscrepancyKind.OTOMAX_ONLY and disc.otomax_entry:
             match = _find_bank_for(disc.otomax_entry, book_date)
             if match:
@@ -100,10 +105,91 @@ def _find_otomax_for(bank: BankMutation, book_date: date) -> Match | None:
     # satu berarti ambigu, jangan ditebak.
     if _proposal_rejected(bank):
         return None
+
+    if bank.channel == Channel.MERCHANT_BCA:
+        qris_match = _find_qris_group_for(bank, book_date)
+        if qris_match:
+            return qris_match
+
     similar = [c for c in same_amount if _similar(c.ref_normalized, bank.ref_normalized)]
     if len(similar) != 1:
         return None
     return _persist(book_date, bank.channel, bank, similar[0], review_reason=_SIMILAR_REASON)
+
+
+def _find_qris_group_for(bank: BankMutation, book_date: date) -> Match | None:
+    """Cari kandidat QRIS (1 tiket maupun gabungan beberapa tiket dari reseller yang sama)
+    pada `book_date` yang cocok nama outlet / MerchantMap / ResellerAlias dan total nominalnya
+    persis sama dengan settlement `bank`."""
+    oto_candidates = list(
+        OtomaxEntry.objects.filter(
+            book_date=book_date,
+            match_status__in=_OTOMAX_OPEN_STATUSES,
+        )
+        .exclude(category=OtomaxCategory.ADMIN)
+        .filter(
+            models.Q(channel_hint=Channel.MERCHANT_BCA)
+            | models.Q(description_raw__icontains="BULK")
+            | models.Q(description_raw__icontains="TARTUN QR")
+        )
+    )
+    if not oto_candidates:
+        return None
+
+    mmap = {m.merchant_id: m.reseller_id for m in MerchantMap.objects.filter(active=True)}
+    alias_map: dict[str, int] = {}
+    for a in ResellerAlias.objects.filter(reseller__active=True):
+        if a.alias_norm:
+            alias_map[a.alias_norm.upper()] = a.reseller_id
+        cleaned_alias = _clean_outlet_name(a.alias_raw)
+        if cleaned_alias:
+            alias_map[cleaned_alias] = a.reseller_id
+
+    otomax_groups: dict[str, dict] = {}
+    for o in oto_candidates:
+        resolved_rid = o.reseller_id or _resolve_alias_reseller_id(o.reseller_name_raw, alias_map)
+        key = f"id:{resolved_rid}" if resolved_rid else f"name:{_clean_outlet_name(o.reseller_name_raw) or o.id}"
+        if key not in otomax_groups:
+            otomax_groups[key] = {
+                "reseller_id": resolved_rid,
+                "raw_name": o.reseller_name_raw,
+                "rows": [],
+                "total": ZERO,
+                "used": False,
+            }
+        otomax_groups[key]["rows"].append(o)
+        otomax_groups[key]["total"] += o.amount
+
+    grp, _ = _find_best_group(bank, list(otomax_groups.values()), mmap, alias_map)
+    if not grp or grp["total"] != bank.amount:
+        return None
+
+    rows = grp["rows"]
+    mtype = MatchType.MANUAL if len(rows) == 1 else MatchType.AGGREGATE
+    reason = (
+        f"Susulan lintas hari: gabungan {len(rows)} tiket QRIS"
+        if len(rows) > 1
+        else _CROSS_DATE_REASON
+    )
+    match = Match.objects.create(
+        book_date=book_date,
+        channel=Channel.MERCHANT_BCA,
+        bank_mutation=bank,
+        otomax_entry=rows[0],
+        match_type=mtype,
+        amount_bank=bank.amount,
+        amount_otomax=grp["total"],
+        note="carry-forward",
+        needs_review=True,
+        review_reason=reason,
+    )
+    match.otomax_entries.set(rows)
+    bank.match_status = MatchStatus.MATCHED
+    bank.save(update_fields=["match_status"])
+    for o in rows:
+        o.match_status = MatchStatus.MATCHED
+        o.save(update_fields=["match_status"])
+    return match
 
 
 def _find_bank_for(otomax: OtomaxEntry, book_date: date) -> Match | None:

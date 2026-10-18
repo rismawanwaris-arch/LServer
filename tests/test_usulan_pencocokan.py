@@ -322,3 +322,174 @@ def test_find_auto_pairs_rejects_conflicting_parties_in_bank_transfer():
     pairs = _find_auto_pairs([b], [o])
     assert len(pairs) == 0
 
+
+@pytest.mark.django_db
+def test_ref_match_multipass_deterministic_beats_auto_deposit_fallback():
+    """Mutasi dengan kecocokan deterministik (exact/token) di urutan belakangan tidak boleh
+    dicuri kandidat Otomax-nya oleh mutasi urutan awal yang jatuh ke fallback Auto Deposit."""
+    # Bank #1 dibuat lebih dulu: merupakan Tartun PLC tanpa pasangan exact
+    b_fallback = _bank("TARTUN PLC9999 SETORAN", "1250000")
+    # Bank #2 dibuat belakangan: punya kecocokan exact dengan entri Otomax
+    b_exact = _bank("AUTO DEPOSIT REF889900", "1250000")
+    o = _otomax("AUTO DEPOSIT REF889900", "1250000")
+
+    run_match(BD)
+
+    b_exact.refresh_from_db()
+    b_fallback.refresh_from_db()
+    assert b_exact.match_status == MatchStatus.MATCHED
+    assert b_fallback.match_status == MatchStatus.UNMATCHED
+    m = _active(b_exact)
+    assert m.otomax_entry_id == o.id
+    assert m.needs_review is False
+
+
+@pytest.mark.django_db
+def test_tartun_plc_auto_deposit_rejects_conflicting_reseller_code():
+    """Jika mutasi bank memiliki kode reseller terdaftar (misal PLC131 -> PLC CIPADUNG 2),
+    fallback Auto Deposit tidak boleh memasangkannya ke Auto Deposit milik reseller lain."""
+    Reseller.objects.get_or_create(code="PLC131", defaults={"name": "PLC CIPADUNG 2"})
+    b = _bank("TARTUN PLC131 SETOR TUNAI", "2000000")
+    o = _otomax("AUTO DEPOSIT", "2000000")
+    o.reseller_name_raw = "PLC ASBER 2"
+    o.save(update_fields=["reseller_name_raw"])
+
+    run_match(BD)
+
+    b.refresh_from_db()
+    assert b.match_status == MatchStatus.UNMATCHED
+    assert not Match.objects.filter(bank_mutation=b, voided_at__isnull=True).exists()
+
+
+@pytest.mark.django_db
+def test_qris_pass2_rejects_conflicting_branch_outlets_without_merchant_map():
+    """Tanpa MerchantMap sekalipun, Pass 2 QRIS tidak boleh mengusulkan BAKSAR 2 CELL dengan PLC ASBER2."""
+    b = _qris_bank("3836000", outlet="QRIS BAKSAR 2 CELL", merchant_id="004769148")
+    o = _otomax("TARTUN QR BULK ASBER 2 TGL 05-SEP-2026", "3836000", channel=Channel.MERCHANT_BCA)
+    o.reseller_name_raw = "PLC ASBER2"
+    o.save(update_fields=["reseller_name_raw"])
+
+    run_match(BD)
+
+    b.refresh_from_db()
+    assert b.match_status == MatchStatus.UNMATCHED
+    assert not Match.objects.filter(bank_mutation=b, voided_at__isnull=True).exists()
+
+
+@pytest.mark.django_db
+def test_learn_merchant_map_does_not_poison_on_conflicting_names():
+    """learn_merchant_map tidak boleh menyimpan MerchantMap jika nama outlet & reseller bertolak belakang."""
+    from apps.recon.engine.qris_match import learn_merchant_map
+
+    r_asber = Reseller.objects.create(code="ASB2", name="PLC ASBER2")
+    b = _qris_bank("3836000", outlet="QRIS BAKSAR 2 CELL", merchant_id="004769148")
+    o = _otomax("TARTUN QR BULK ASBER 2", "3836000", channel=Channel.MERCHANT_BCA, reseller=r_asber)
+
+    learn_merchant_map(b, o)
+    assert not MerchantMap.objects.filter(merchant_id="004769148").exists()
+
+
+@pytest.mark.django_db
+def test_qris_matches_via_reseller_alias():
+    """ResellerAlias di database harus dikenali oleh Pass 1 _match_qris meskipun ejaan outlet berbeda."""
+    from apps.catalog.models import ResellerAlias
+    from apps.core.normalize import norm_ref
+
+    reseller = Reseller.objects.create(code="PLC777", name="PLC MITRA UTAMA")
+    ResellerAlias.objects.create(
+        alias_raw="WARUNG PULSA MANDIRI",
+        alias_norm=norm_ref("WARUNG PULSA MANDIRI"),
+        reseller=reseller,
+    )
+    b = _qris_bank("1750000", outlet="WARUNG PULSA MANDIRI", merchant_id="009988776")
+    o = _otomax("TARTUN QR BULK MITRA UTAMA TGL 05-SEP-2026", "1750000", channel=Channel.MERCHANT_BCA, reseller=reseller)
+    o.reseller_name_raw = "PLC MITRA UTAMA"
+    o.save(update_fields=["reseller_name_raw"])
+
+    run_match(BD)
+
+    b.refresh_from_db()
+    assert b.match_status == MatchStatus.MATCHED
+    m = _active(b)
+    assert m.needs_review is False
+
+
+@pytest.mark.django_db
+def test_carry_forward_supports_qris_multi_ticket_aggregate():
+    """carry_forward harus bisa mengusulkan gabungan beberapa tiket QRIS susulan lintas hari."""
+    from datetime import timedelta
+
+    from apps.core.enums import MatchType
+    from apps.ingest.models import OtomaxEntry
+
+    b = _qris_bank("500000", outlet="QRIS CILENGKRANG 1", merchant_id="004760001")
+    run_match(BD)
+    b.refresh_from_db()
+    assert b.match_status == MatchStatus.UNMATCHED
+    disc = Discrepancy.objects.get(bank_mutation=b, status=DiscrepancyStatus.OPEN)
+
+    late_date = BD + timedelta(days=4)
+    batch_late = _batch(Channel.OTOMAX)
+    o1 = OtomaxEntry.objects.create(
+        import_batch=batch_late,
+        book_date=late_date,
+        reseller_name_raw="PLC CL1",
+        amount=Decimal("300000"),
+        description_raw="TARTUN QR BULK CL1 PART 1",
+        channel_hint=Channel.MERCHANT_BCA,
+        row_hash="late-qris-1",
+    )
+    o2 = OtomaxEntry.objects.create(
+        import_batch=batch_late,
+        book_date=late_date,
+        reseller_name_raw="PLC CL1",
+        amount=Decimal("200000"),
+        description_raw="TARTUN QR BULK CL1 PART 2",
+        channel_hint=Channel.MERCHANT_BCA,
+        row_hash="late-qris-2",
+    )
+
+    carry_forward(late_date)
+
+    m = _active(b)
+    assert m.match_type == MatchType.AGGREGATE
+    assert m.needs_review is True
+    assert set(m.otomax_entries.values_list("id", flat=True)) == {o1.id, o2.id}
+
+    # Saat operator menyetujui usulan, discrepancy asal otomatis RESOLVED
+    approve_match(m)
+    disc.refresh_from_db()
+    assert disc.status == DiscrepancyStatus.RESOLVED
+
+
+@pytest.mark.django_db
+def test_rbac_regular_operator_restricted_from_privileged_actions():
+    """Operator biasa (non-staff, non-superuser) tidak boleh write-off selisih, buka buku,
+    tutup buku paksa, atau menghapus batch milik user lain."""
+    admin_user = User.objects.create_superuser(username="admin_rbac", password="password123")
+    op_user = User.objects.create_user(username="operator_biasa", password="password123")
+
+    client = Client()
+    client.force_login(op_user)
+
+    # 1. Tidak boleh hapus batch yang diunggah admin
+    batch = _batch(Channel.BRI)
+    batch.uploaded_by = admin_user
+    batch.save(update_fields=["uploaded_by"])
+    res_del = client.post(f"/upload/delete-batch/{batch.id}/", {"book_date": BD.isoformat()})
+    assert res_del.status_code == 302
+    assert batch.__class__.objects.filter(pk=batch.id).exists()
+
+    # 2. Tidak boleh write-off selisih
+    disc = Discrepancy.objects.create(
+        code="SLS-RBAC-001",
+        origin_book_date=BD,
+        channel=Channel.BRI,
+        kind=DiscrepancyKind.BANK_ONLY,
+        amount=Decimal("100000"),
+    )
+    res_wo = client.post(f"/discrepancy/{disc.pk}/resolve/", {"action": "write_off", "book_date": BD.isoformat()})
+    assert res_wo.status_code == 302
+    disc.refresh_from_db()
+    assert disc.status == DiscrepancyStatus.OPEN
+

@@ -77,17 +77,27 @@ def _match_ref(book_date: date, channel: str) -> RunStats:
 
     used: set[int] = set()
 
-    def take(bucket, key):
+    def take(bucket, key, *, allow_cross_date: bool = True):
         for cand in bucket.get(key, []):
-            if cand.id not in used:
-                used.add(cand.id)
-                return cand
+            if cand.id in used:
+                continue
+            if not allow_cross_date and cand.book_date != book_date:
+                continue
+            used.add(cand.id)
+            return cand
         return None
 
-    for b in _open_bank(book_date, channel):
+    unmatched_banks = list(_open_bank(book_date, channel))
+
+    # Tahap 1 (Deterministik): Exact ref -> Subparts -> Token -> Cross-channel token -> Kode Reseller.
+    # Dijalankan penuh untuk SEMUA mutasi bank terlebih dahulu agar mutasi yang punya kecocokan
+    # deterministik tidak "dicuri" oleh mutasi urutan sebelumnya yang jatuh ke fallback Fuzzy / Auto Deposit.
+    for b in list(unmatched_banks):
         match_note = ""
+        allow_cross = not _proposal_rejected(b)
+
         # 1. Exact norm match
-        o = take(by_norm, (b.ref_normalized, b.amount))
+        o = take(by_norm, (b.ref_normalized, b.amount), allow_cross_date=allow_cross)
         mtype = MatchType.AUTO_EXACT
 
         # 1b. Subparts match jika keterangan menggabungkan beberapa sumber (misal REMARK_CUSTOM [TRREMK])
@@ -96,9 +106,9 @@ def _match_ref(book_date: date, channel: str) -> RunStats:
             p1 = parts[0].strip()
             p2 = parts[1].split("]", 1)[0].strip()
             if p1:
-                o = take(by_norm, (p1, b.amount))
+                o = take(by_norm, (p1, b.amount), allow_cross_date=allow_cross)
             if o is None and p2:
-                o = take(by_norm, (p2, b.amount))
+                o = take(by_norm, (p2, b.amount), allow_cross_date=allow_cross)
             if o is not None:
                 mtype = MatchType.AUTO_EXACT
 
@@ -106,13 +116,13 @@ def _match_ref(book_date: date, channel: str) -> RunStats:
         if o is None:
             # Check ref_core first
             if b.ref_core:
-                o = take(by_core, (b.ref_core, b.amount))
+                o = take(by_core, (b.ref_core, b.amount), allow_cross_date=allow_cross)
                 if o is None:
-                    o = take(by_token, (b.ref_core, b.amount))
+                    o = take(by_token, (b.ref_core, b.amount), allow_cross_date=allow_cross)
             # Check all extracted tokens
             if o is None and b.extracted_tokens:
                 for tk in b.extracted_tokens:
-                    o = take(by_token, (tk, b.amount))
+                    o = take(by_token, (tk, b.amount), allow_cross_date=allow_cross)
                     if o:
                         break
 
@@ -121,7 +131,7 @@ def _match_ref(book_date: date, channel: str) -> RunStats:
                 strong_tokens = [tk for tk in ([b.ref_core] + (b.extracted_tokens or [])) if tk and len(tk) >= 8]
                 if strong_tokens:
                     cross_cands = OtomaxEntry.objects.filter(
-                        book_date__range=(start_d, end_d),
+                        book_date__range=(start_d, end_d) if allow_cross else (book_date, book_date),
                         category__in=_MATCHABLE_CATEGORIES,
                         match_status__in=_OPEN_STATUSES,
                         amount=b.amount,
@@ -145,43 +155,65 @@ def _match_ref(book_date: date, channel: str) -> RunStats:
         # Ditaruh sebelum fuzzy karena ini identitas eksplisit dari tabel yang dikelola
         # user, jauh lebih bisa dipercaya daripada tebakan kemiripan teks.
         if o is None:
-            o = _match_by_reseller_code(b, otomax, used, reseller_by_code)
+            o = _match_by_reseller_code(
+                b,
+                otomax,
+                used,
+                reseller_by_code,
+                book_date=book_date,
+                allow_cross_date=allow_cross,
+            )
             if o is not None:
                 mtype = MatchType.AUTO_EXACT
                 match_note = f"Cocok via Kode Reseller ({o.reseller_name_raw})"
 
-        # 3. Fuzzy match fallback (Priority 2) -- cuma usulan, wajib dikonfirmasi operator.
-        review_reason = ""
-        if o is None and not _proposal_rejected(b):
-            o = _fuzzy_candidate(b, otomax, used)
-            mtype = MatchType.AUTO_FUZZY
-            if o is not None:
-                review_reason = "Kemiripan teks (fuzzy)"
-
-        # 4. Tartun PLC vs Auto Deposit -- cuma nominal + kata "DEPOSIT" (keterangan & reseller
-        # tidak dicek), jadi selalu usulan yang wajib dikonfirmasi operator.
-        if o is None and _is_tartun_plc(b) and not _proposal_rejected(b):
-            o = _match_auto_deposit_candidate(b, otomax, used)
-            if o is not None:
-                mtype = MatchType.AUTO_EXACT
-                match_note = f"Tartun PLC cocok nominal dengan Auto Deposit ({o.reseller_name_raw})"
-                review_reason = "Tartun PLC ↔ Auto Deposit: cocok nominal saja, keterangan tidak dicek"
-
         if o is None:
             continue
 
-        # Cross-date: Otomax dari tanggal berbeda → jadikan usulan agar operator
-        # bisa memverifikasi langsung di aplikasi Otomax (nominal sama belum tentu
-        # transaksi sama, terutama tiket deposit yang beda tujuan/tanggal).
-        if not review_reason and o.book_date != book_date:
-            if _proposal_rejected(b):
-                continue
-            review_reason = (
-                f"Lintas hari: Otomax tgl {o.book_date:%d/%m} vs Bank tgl {book_date:%d/%m}"
-            )
+        review_reason = ""
+        if o.book_date != book_date:
+            review_reason = f"Lintas hari: Otomax tgl {o.book_date:%d/%m} vs Bank tgl {book_date:%d/%m}"
 
         _persist_match(book_date, channel, b, o, mtype, note=match_note, review_reason=review_reason)
         stats.matched += 1
+        unmatched_banks.remove(b)
+
+    # Tahap 2 (Fuzzy Fallback): Hanya untuk sisa mutasi yang tidak punya kecocokan deterministik.
+    for b in list(unmatched_banks):
+        if _proposal_rejected(b):
+            continue
+        o = _fuzzy_candidate(b, otomax, used)
+        if o is not None:
+            _persist_match(
+                book_date,
+                channel,
+                b,
+                o,
+                MatchType.AUTO_FUZZY,
+                note="",
+                review_reason="Kemiripan teks (fuzzy)",
+            )
+            stats.matched += 1
+            unmatched_banks.remove(b)
+
+    # Tahap 3 (Tartun PLC vs Auto Deposit Fallback): Hanya untuk sisa mutasi Tartun PLC.
+    for b in list(unmatched_banks):
+        if not _is_tartun_plc(b) or _proposal_rejected(b):
+            continue
+        o = _match_auto_deposit_candidate(b, otomax, used, reseller_by_code=reseller_by_code)
+        if o is not None:
+            _persist_match(
+                book_date,
+                channel,
+                b,
+                o,
+                MatchType.AUTO_EXACT,
+                note=f"Tartun PLC cocok nominal dengan Auto Deposit ({o.reseller_name_raw})",
+                review_reason="Tartun PLC ↔ Auto Deposit: cocok nominal saja, keterangan tidak dicek",
+            )
+            stats.matched += 1
+            unmatched_banks.remove(b)
+
     return stats
 
 
@@ -190,6 +222,9 @@ def _match_by_reseller_code(
     otomax: list[OtomaxEntry],
     used: set[int],
     reseller_by_code: dict[str, Reseller],
+    *,
+    book_date: date | None = None,
+    allow_cross_date: bool = True,
 ) -> OtomaxEntry | None:
     """Terjemahkan kode yang tertangkap di token/ref_core mutasi bank (mis. 'PLC131')
     lewat tabel Kode Reseller, lalu cari SATU entri Otomax dari reseller itu dengan
@@ -212,7 +247,10 @@ def _match_by_reseller_code(
     cands = [
         o
         for o in otomax
-        if o.id not in used and o.amount == bank.amount and norm_ref(o.reseller_name_raw) == target_name
+        if o.id not in used
+        and o.amount == bank.amount
+        and norm_ref(o.reseller_name_raw) == target_name
+        and (allow_cross_date or book_date is None or o.book_date == book_date)
     ]
     if len(cands) != 1:
         return None
@@ -233,13 +271,32 @@ def _is_tartun_plc(b: BankMutation) -> bool:
     return False
 
 
-def _match_auto_deposit_candidate(bank: BankMutation, otomax: list[OtomaxEntry], used: set[int]) -> OtomaxEntry | None:
+def _match_auto_deposit_candidate(
+    bank: BankMutation,
+    otomax: list[OtomaxEntry],
+    used: set[int],
+    *,
+    reseller_by_code: dict[str, Reseller] | None = None,
+) -> OtomaxEntry | None:
+    known_reseller = None
+    if reseller_by_code:
+        for tk in [bank.ref_core, *(bank.extracted_tokens or [])]:
+            if tk and tk.upper() in reseller_by_code:
+                known_reseller = reseller_by_code[tk.upper()]
+                break
+    target_name = norm_ref(known_reseller.name) if known_reseller else None
+
     cands = [
         o
         for o in otomax
         if o.id not in used
         and o.amount == bank.amount
         and ("AUTO DEPOSIT" in (o.description_raw or "").upper() or "DEPOSIT" in (o.description_raw or "").upper())
+        and (
+            target_name is None
+            or norm_ref(o.reseller_name_raw) == target_name
+            or (o.reseller_id and known_reseller and o.reseller_id == known_reseller.id)
+        )
     ]
     if not cands:
         return None

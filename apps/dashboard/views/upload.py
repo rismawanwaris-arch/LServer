@@ -216,6 +216,15 @@ def upload(request):
 @require_POST
 def delete_batch_action(request, pk: int):
     book_date_raw = request.POST.get("book_date")
+    batch = ImportBatch.objects.filter(pk=pk).first()
+    if (
+        batch
+        and not (request.user.is_superuser or request.user.is_staff)
+        and batch.uploaded_by_id not in (None, request.user.id)
+    ):
+        messages.error(request, "Hanya Admin/Supervisor atau pengunggah asli yang dapat menghapus batch ini.")
+        target_d = book_date_raw or batch.book_date.isoformat()
+        return redirect(f"/upload/?d={target_d}")
     try:
         res = delete_import_batch(pk)
         bdate = res["book_date"]

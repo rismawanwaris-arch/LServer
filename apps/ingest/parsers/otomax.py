@@ -120,7 +120,7 @@ def _parse_xlsx(file_bytes: bytes, result: ParseResult) -> bool:
             )
         )
 
-        bd = _book_date_from_note(desc_val) or (entry_dt.date() if entry_dt else None)
+        bd = (entry_dt.date() if entry_dt else None) or _book_date_from_note(desc_val)
         if bd:
             counts[bd] = counts.get(bd, 0) + 1
 
@@ -169,7 +169,7 @@ def parse(data: str | bytes) -> ParseResult:
                 entry_datetime=entry_dt,
             )
         )
-        bd = _book_date_from_note(note) or (entry_dt.date() if entry_dt else None)
+        bd = (entry_dt.date() if entry_dt else None) or _book_date_from_note(note)
         if bd:
             counts[bd] = counts.get(bd, 0) + 1
 

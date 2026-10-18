@@ -20,7 +20,7 @@ from apps.recon.engine.qris_match import _clean_outlet_name, _name_similarity
 from apps.recon.models import Discrepancy, Match, ReconDay
 from apps.recon.reports import get_daily_summary
 
-staff_only = user_passes_test(lambda u: u.is_superuser)
+staff_only = user_passes_test(lambda u: u.is_superuser or u.is_staff)
 
 _REVERSAL_OPEN_STATUSES = [MatchStatus.UNMATCHED, MatchStatus.PENDING_SETTLE]
 

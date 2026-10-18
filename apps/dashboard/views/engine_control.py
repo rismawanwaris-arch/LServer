@@ -13,7 +13,7 @@ from apps.recon.engine import run_match
 from apps.recon.models import Discrepancy
 from apps.recon.resolve import write_off
 
-from ._shared import _parse_date
+from ._shared import _parse_date, staff_only
 
 
 @login_required
@@ -36,6 +36,12 @@ def run_engine(request):
 def close_view(request):
     book_date = _parse_date(request.POST.get("book_date"))
     force = request.POST.get("force") == "1"
+    if force and not (request.user.is_superuser or request.user.is_staff):
+        messages.error(
+            request,
+            "Hanya Admin/Supervisor yang dapat menutup buku paksa saat masih ada usulan pencocokan.",
+        )
+        return redirect(f"/?d={book_date}")
     try:
         day = close_day(book_date, user=request.user, force=force)
     except (DayLocked, DayNotReady) as exc:
@@ -46,6 +52,7 @@ def close_view(request):
 
 
 @login_required
+@staff_only
 @require_POST
 def reopen_view(request):
     book_date = _parse_date(request.POST.get("book_date"))
@@ -59,6 +66,7 @@ def reopen_view(request):
 
 
 @login_required
+@staff_only
 @require_POST
 def resolve_view(request, pk: int):
     disc = Discrepancy.objects.get(pk=pk)

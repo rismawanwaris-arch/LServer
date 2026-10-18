@@ -12,8 +12,9 @@ from django.conf import settings
 from django.db import models
 from rapidfuzz import fuzz
 
-from apps.catalog.models import MerchantMap
+from apps.catalog.models import MerchantMap, ResellerAlias
 from apps.core.enums import Channel, DiscrepancyKind, DiscrepancyStatus, MatchStatus, MatchType, OtomaxCategory
+from apps.core.normalize import norm_ref
 from apps.ingest.models import BankMutation, OtomaxEntry
 
 from ..models import Discrepancy, Match
@@ -78,9 +79,25 @@ def _name_similarity(name1: str, name2: str) -> float:
     return float(fuzz.token_set_ratio(c1, c2))
 
 
-def _find_best_group(b: BankMutation, groups: list[dict], mmap: dict) -> tuple[dict | None, float]:
+def _resolve_alias_reseller_id(raw_name: str | None, alias_map: dict[str, int] | None) -> int | None:
+    if not raw_name or not alias_map:
+        return None
+    for key in (norm_ref(raw_name), _clean_outlet_name(raw_name)):
+        if key and key in alias_map:
+            return alias_map[key]
+    return None
+
+
+def _find_best_group(
+    b: BankMutation,
+    groups: list[dict],
+    mmap: dict,
+    alias_map: dict[str, int] | None = None,
+) -> tuple[dict | None, float]:
     best_grp, best_score = None, 0.0
-    mapped_rid = mmap.get(b.external_ref)
+    mapped_rid = mmap.get(b.external_ref) or _resolve_alias_reseller_id(
+        b.outlet_name or b.description_raw, alias_map
+    )
 
     for grp in groups:
         if grp["used"]:
@@ -112,15 +129,33 @@ def _review_reason(rows: list[OtomaxEntry], *, amount_only: bool = False) -> str
 def learn_merchant_map(bank: BankMutation, primary_otomax: OtomaxEntry | None) -> None:
     """Auto-learn mapping merchant QRIS -> reseller. Cuma dari pencocokan yang sudah pasti
     (final / sudah disetujui) -- mapping yang dipelajari dari usulan yang ternyata salah
-    akan membuat pencocokan berikutnya ikut salah tapi dianggap "teridentifikasi"."""
-    if bank.external_ref and primary_otomax and primary_otomax.reseller:
-        MerchantMap.objects.get_or_create(
-            merchant_id=bank.external_ref,
-            defaults={
-                "reseller": primary_otomax.reseller,
-                "merchant_name": bank.outlet_name or bank.description_raw,
-            },
-        )
+    akan membuat pencocokan berikutnya ikut salah tapi dianggap "teridentifikasi".
+    Juga dijaga agar tidak menyimpan mapping jika nama outlet & reseller bertolak belakang."""
+    if not (bank.external_ref and primary_otomax and primary_otomax.reseller):
+        return
+
+    b_name = bank.outlet_name or ""
+    o_name = primary_otomax.reseller.name or primary_otomax.reseller_name_raw or ""
+    c_b = _clean_outlet_name(b_name)
+    c_o = _clean_outlet_name(o_name)
+    if len(c_b) >= 3 and len(c_o) >= 3:
+        sim = _name_similarity(b_name, o_name)
+        is_substring = c_b in c_o or c_o in c_b
+        if sim < 60.0 and not is_substring:
+            alias_exists = ResellerAlias.objects.filter(
+                reseller=primary_otomax.reseller,
+                alias_norm__in=[norm_ref(b_name), c_b],
+            ).exists()
+            if not alias_exists:
+                return
+
+    MerchantMap.objects.get_or_create(
+        merchant_id=bank.external_ref,
+        defaults={
+            "reseller": primary_otomax.reseller,
+            "merchant_name": bank.outlet_name or bank.description_raw,
+        },
+    )
 
 
 def _persist_qris_match(
@@ -199,13 +234,21 @@ def _match_qris(book_date: date) -> RunStats:
     )
 
     mmap = {m.merchant_id: m.reseller_id for m in MerchantMap.objects.filter(active=True)}
+    alias_map: dict[str, int] = {}
+    for a in ResellerAlias.objects.filter(reseller__active=True):
+        if a.alias_norm:
+            alias_map[a.alias_norm.upper()] = a.reseller_id
+        cleaned_alias = _clean_outlet_name(a.alias_raw)
+        if cleaned_alias:
+            alias_map[cleaned_alias] = a.reseller_id
 
     otomax_groups: dict[str, dict] = {}
     for o in oto_candidates:
-        key = f"id:{o.reseller_id}" if o.reseller_id else f"name:{_clean_outlet_name(o.reseller_name_raw) or o.id}"
+        resolved_rid = o.reseller_id or _resolve_alias_reseller_id(o.reseller_name_raw, alias_map)
+        key = f"id:{resolved_rid}" if resolved_rid else f"name:{_clean_outlet_name(o.reseller_name_raw) or o.id}"
         if key not in otomax_groups:
             otomax_groups[key] = {
-                "reseller_id": o.reseller_id,
+                "reseller_id": resolved_rid,
                 "raw_name": o.reseller_name_raw,
                 "rows": [],
                 "total": ZERO,
@@ -216,9 +259,9 @@ def _match_qris(book_date: date) -> RunStats:
 
     unmatched_banks = list(bank_rows)
 
-    # Pass 1: Nama / MerchantMap cocok DAN Nominal persis
+    # Pass 1: Nama / MerchantMap / Alias cocok DAN Nominal persis
     for b in list(unmatched_banks):
-        grp, score = _find_best_group(b, list(otomax_groups.values()), mmap)
+        grp, score = _find_best_group(b, list(otomax_groups.values()), mmap, alias_map)
         if grp and b.amount == grp["total"]:
             reason = _review_reason(grp["rows"])
             if reason and _proposal_rejected(b):
@@ -238,7 +281,9 @@ def _match_qris(book_date: date) -> RunStats:
             unmatched_banks.remove(b)
 
     # Pass 2: Cocokan nominal persis jika unik di antara sisa grup -- nama outlet TIDAK
-    # dicek, jadi selalu usulan (bisa saja outlet A kebetulan totalnya sama dgn tiket B).
+    # dicek penuh, jadi selalu usulan (bisa saja outlet A kebetulan totalnya sama dgn tiket B).
+    # Namun jika kedua sisi memiliki identitas (MerchantMap / nomor cabang) yang bertolak belakang,
+    # tolak agar tidak mengusulkan pasangan salah.
     for b in list(unmatched_banks):
         if _proposal_rejected(b):
             continue
@@ -246,10 +291,21 @@ def _match_qris(book_date: date) -> RunStats:
         if len(matching_grps) == 1:
             grp = matching_grps[0]
 
-            # MerchantMap check: jika bank sudah terpetakan ke reseller lain, jangan pasangkan
-            mapped_rid = mmap.get(b.external_ref)
+            # 1. MerchantMap / ResellerAlias check: jika bank sudah terpetakan ke reseller lain, jangan pasangkan
+            mapped_rid = mmap.get(b.external_ref) or _resolve_alias_reseller_id(
+                b.outlet_name or b.description_raw, alias_map
+            )
             if mapped_rid and grp.get("reseller_id") and grp["reseller_id"] != mapped_rid:
                 continue
+
+            # 2. Branch/Outlet conflict check: jika keduanya punya nomor cabang dan namanya bertolak belakang
+            b_raw = b.outlet_name or b.description_raw or ""
+            g_raw = grp.get("raw_name") or ""
+            c_b = _clean_outlet_name(b_raw)
+            c_g = _clean_outlet_name(g_raw)
+            if re.findall(r"\d+", c_b) and re.findall(r"\d+", c_g):
+                if _name_similarity(b_raw, g_raw) < 60.0:
+                    continue
 
             mtype = MatchType.AUTO_EXACT if len(grp["rows"]) == 1 else MatchType.AGGREGATE
             b_name = b.outlet_name or b.external_ref
@@ -270,7 +326,7 @@ def _match_qris(book_date: date) -> RunStats:
     # terpisah di antrean belum cocok supaya ditinjau & dipasangkan manual).
     amount_tolerance = Decimal(str(settings.MATCH_AMOUNT_TOLERANCE))
     for b in list(unmatched_banks):
-        grp, score = _find_best_group(b, list(otomax_groups.values()), mmap)
+        grp, score = _find_best_group(b, list(otomax_groups.values()), mmap, alias_map)
         if grp:
             diff = b.amount - grp["total"]
             if abs(diff) > amount_tolerance:

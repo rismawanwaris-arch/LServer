@@ -54,13 +54,24 @@ services:
   backup:
     image: postgres:16-alpine
     restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
       PGPASSWORD: ${DB_PASSWORD}
     volumes:
       - ./data/backups:/backups
     entrypoint: >
       sh -c "while true; do
-               pg_dump -h db -U laporan laporan | gzip > /backups/laporan_$$(date +%Y%m%d_%H%M).sql.gz;
-               find /backups -name '*.sql.gz' -mtime +14 -delete;
+               TS=$$(date +%Y%m%d_%H%M);
+               TMP=/backups/laporan_$${TS}.sql.tmp;
+               OUT=/backups/laporan_$${TS}.sql.gz;
+               if pg_dump -h db -U laporan laporan > \"$$TMP\" && [ -s \"$$TMP\" ] && gzip -c \"$$TMP\" > \"$$OUT\"; then
+                 rm -f \"$$TMP\";
+                 find /backups -name '*.sql.gz' -mtime +14 -delete;
+               else
+                 rm -f \"$$TMP\" \"$$OUT\";
+                 echo \"[WARN] Backup gagal pada $${TS}, file lama dipertahankan.\" >&2;
+               fi;
                sleep 86400;
              done"

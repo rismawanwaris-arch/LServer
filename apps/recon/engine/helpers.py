@@ -101,13 +101,22 @@ def _next_code(book_date) -> str:
 
 
 def _make_discrepancy(book_date, channel, kind, *, amount, bank=None, otomax=None, note=""):
-    return Discrepancy.objects.create(
-        code=_next_code(book_date),
-        origin_book_date=book_date,
-        channel=channel,
-        kind=kind,
-        amount=amount,
-        bank_mutation=bank,
-        otomax_entry=otomax,
-        note=note,
-    )
+    from django.db import IntegrityError, transaction
+
+    last_exc = None
+    for _ in range(5):
+        try:
+            with transaction.atomic():
+                return Discrepancy.objects.create(
+                    code=_next_code(book_date),
+                    origin_book_date=book_date,
+                    channel=channel,
+                    kind=kind,
+                    amount=amount,
+                    bank_mutation=bank,
+                    otomax_entry=otomax,
+                    note=note,
+                )
+        except IntegrityError as exc:
+            last_exc = exc
+    raise last_exc
