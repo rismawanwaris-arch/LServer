@@ -91,3 +91,66 @@ def approve_match_action(request, pk: int):
     except ValueError as e:
         messages.error(request, str(e))
     return redirect(next_url)
+
+
+@login_required
+@require_POST
+def approve_match_bulk_action(request):
+    from django.utils import timezone
+
+    raw_ids = request.POST.getlist("selected_ids")
+    book_date_raw = request.POST.get("book_date") or ""
+    fallback_url = f"/matches/?d={book_date_raw}" if book_date_raw else "/matches/"
+    next_url = request.POST.get("next_url") or request.META.get("HTTP_REFERER") or fallback_url
+
+    match_ids: list[int] = []
+    for rid in raw_ids:
+        for part in str(rid).split(","):
+            part = part.strip()
+            if part.isdigit():
+                match_ids.append(int(part))
+
+    if not match_ids:
+        messages.warning(request, "Pilih minimal satu pasangan untuk dikonfirmasi.")
+        return redirect(next_url)
+
+    matches_qs = Match.objects.filter(pk__in=match_ids, voided_at__isnull=True)
+    approved_count = 0
+    already_final_count = 0
+    errors: list[str] = []
+
+    for m in matches_qs:
+        try:
+            if m.needs_review:
+                approve_match(m, user=request.user)
+                approved_count += 1
+            else:
+                if not m.reviewed_at:
+                    m.reviewed_by = request.user
+                    m.reviewed_at = timezone.now()
+                    m.save(update_fields=["reviewed_by", "reviewed_at", "updated_at"])
+                already_final_count += 1
+        except ValueError as e:
+            errors.append(str(e))
+
+    if approved_count > 0 and already_final_count > 0:
+        messages.success(
+            request,
+            f"Berhasil mengonfirmasi {approved_count + already_final_count} pasangan sekaligus "
+            f"({approved_count} usulan disetujui menjadi final, {already_final_count} pasangan terkonfirmasi).",
+        )
+    elif approved_count > 0:
+        messages.success(
+            request,
+            f"Berhasil mengonfirmasi {approved_count} usulan pencocokan sekaligus menjadi final.",
+        )
+    elif already_final_count > 0:
+        messages.success(
+            request,
+            f"Berhasil mengonfirmasi {already_final_count} pasangan yang dipilih.",
+        )
+    if errors:
+        messages.error(request, f"Sebagian gagal dikonfirmasi: {errors[0]}")
+
+    return redirect(next_url)
+

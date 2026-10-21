@@ -493,3 +493,47 @@ def test_rbac_regular_operator_restricted_from_privileged_actions():
     disc.refresh_from_db()
     assert disc.status == DiscrepancyStatus.OPEN
 
+
+@pytest.mark.django_db
+def test_matches_checklist_bar_and_bulk_approve(auth_client, operator):
+    """Menu Hasil Cocok merender checklist bar dan mendukung konfirmasi cocok bersamaan."""
+    b1 = _fuzzy_case()
+    b2 = _qris_bank("800000", outlet="QRIS ALFA 9 CELL", merchant_id="004769999")
+    _otomax("TARTUN QR BULK ALFA 9 PART 1", "500000", channel=Channel.MERCHANT_BCA)
+    _otomax("TARTUN QR BULK ALFA 9 PART 2", "300000", channel=Channel.MERCHANT_BCA)
+
+    run_match(BD)
+
+    m1 = _active(b1)
+    m2 = _active(b2)
+    assert m1.needs_review is True
+    assert m2.needs_review is True
+
+    # Pastikan halaman Hasil Cocok menampilkan checklist bar & checkbox untuk tiap baris
+    res_page = auth_client.get("/matches/", {"d": BD.isoformat()})
+    assert res_page.status_code == 200
+    html = res_page.content.decode()
+    assert "Konfirmasi Cocok" in html
+    assert "Pilih Semua" in html
+    assert f'value="{m1.id}"' in html
+    assert f'value="{m2.id}"' in html
+
+    # Konfirmasi keduanya sekaligus lewat endpoint approve-match-bulk
+    res_bulk = auth_client.post(
+        "/matches/approve-bulk/",
+        {
+            "book_date": BD.isoformat(),
+            "selected_ids": [str(m1.id), str(m2.id)],
+            "next_url": f"/matches/?d={BD.isoformat()}",
+        },
+    )
+    assert res_bulk.status_code == 302
+
+    m1.refresh_from_db()
+    m2.refresh_from_db()
+    assert m1.needs_review is False
+    assert m2.needs_review is False
+    assert m1.reviewed_by == operator
+    assert m2.reviewed_by == operator
+
+

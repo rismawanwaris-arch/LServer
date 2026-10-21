@@ -69,12 +69,95 @@
   {% endif %}
 </form>
 
-<!-- Matches Table (PRD Section 9.3: read-only, bisa expand untuk lihat detail pasangan) -->
-<div class="card overflow-hidden p-0">
+<!-- Matches Table (PRD Section 9.3: bisa expand untuk lihat detail pasangan + ceklis konfirmasi massal) -->
+<div class="card overflow-hidden p-0"
+     x-data="{
+       open: null,
+       selected: [],
+       visibleIds() {
+         return [...this.$root.querySelectorAll('input[data-match-check]')].map(el => el.value);
+       },
+       reviewIds() {
+         return [...this.$root.querySelectorAll('input[data-needs-review=\'1\']')].map(el => el.value);
+       },
+       get isAllChecked() {
+         const vis = this.visibleIds();
+         return vis.length > 0 && vis.every(id => this.selected.includes(id));
+       },
+       toggleAll(e) {
+         const vis = this.visibleIds();
+         if (e.target.checked) {
+           const set = new Set([...this.selected, ...vis]);
+           this.selected = [...set];
+         } else {
+           this.selected = this.selected.filter(id => !vis.includes(id));
+         }
+       },
+       selectNeedsReview() {
+         const revs = this.reviewIds();
+         const set = new Set([...this.selected, ...revs]);
+         this.selected = [...set];
+       },
+       clearSelection() {
+         this.selected = [];
+       }
+     }">
+
+  <!-- Form tersembunyi untuk submit konfirmasi massal -->
+  <form id="bulk-approve-form" method="post" action="{% url 'approve-match-bulk' %}">
+    {% csrf_token %}
+    <input type="hidden" name="book_date" value="{{ d }}">
+    <input type="hidden" name="next_url" value="{% url 'matches' %}?d={{ d }}&tab={{ tab }}&selisih={{ selisih }}&channel={{ selected_channel }}&q={{ query|urlencode }}">
+    <template x-for="id in selected" :key="id">
+      <input type="hidden" name="selected_ids" :value="id">
+    </template>
+  </form>
+
+  <!-- Checklist Bar Atas -->
+  {% if page_obj.object_list %}
+  <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50/70 px-4 py-2.5 dark:border-slate-800 dark:bg-slate-900/50">
+    <div class="flex flex-wrap items-center gap-2.5 text-xs">
+      <label class="inline-flex items-center gap-2 cursor-pointer font-medium text-slate-700 dark:text-slate-300">
+        <input type="checkbox" :checked="isAllChecked" @change="toggleAll($event)"
+               class="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer dark:border-slate-600 dark:bg-slate-800">
+        <span>Pilih Semua</span>
+      </label>
+      <span class="text-slate-300 dark:text-slate-700">&bull;</span>
+      <span class="text-slate-500">
+        <b class="money text-slate-900 dark:text-white" x-text="selected.length">0</b> pasangan dipilih
+      </span>
+      {% if review_count > 0 %}
+      <button type="button" @click="selectNeedsReview()"
+              class="btn-ghost px-2.5 py-1 text-xs text-amber-700 hover:bg-amber-50 dark:text-amber-300 dark:hover:bg-amber-500/10">
+        Pilih Perlu Konfirmasi ({{ review_count }})
+      </button>
+      {% endif %}
+      <button type="button" x-show="selected.length > 0" x-cloak @click="clearSelection()"
+              class="btn-ghost px-2.5 py-1 text-xs text-slate-500">
+        Batal Pilih
+      </button>
+    </div>
+
+    <div class="flex items-center gap-2">
+      <button type="submit" form="bulk-approve-form"
+              :disabled="selected.length === 0"
+              class="btn-primary px-3.5 py-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:pointer-events-none">
+        <svg class="icon h-3.5 w-3.5"><use href="#i-check"/></svg>
+        Konfirmasi Cocok (<span x-text="selected.length">0</span>)
+      </button>
+    </div>
+  </div>
+  {% endif %}
+
   <div class="overflow-x-auto">
     <table class="w-full text-sm">
       <thead>
         <tr>
+          <th class="w-10 px-3 text-center">
+            <input type="checkbox" :checked="isAllChecked" @change="toggleAll($event)"
+                   class="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer dark:border-slate-600 dark:bg-slate-800"
+                   title="Pilih semua yang tampil">
+          </th>
           <th class="w-8"></th>
           <th>Channel</th>
           <th>Metode</th>
@@ -85,12 +168,12 @@
           <th class="text-right">Selisih</th>
         </tr>
       </thead>
-      <tbody x-data="{ open: null }">
+      <tbody>
         {% if page_obj.object_list %}
         {% include "dashboard/_matches_rows.html" %}
         {% else %}
         <tr>
-          <td colspan="8" class="py-12 text-center text-sm text-slate-500">
+          <td colspan="9" class="py-12 text-center text-sm text-slate-500">
             {% if tab == 'review' %}
             Tidak ada usulan pencocokan yang menunggu konfirmasi untuk tanggal ini.
             {% else %}
@@ -101,6 +184,24 @@
         {% endif %}
       </tbody>
     </table>
+  </div>
+
+  <!-- Sticky Checklist Bar Bawah: muncul saat ada item yang diceklis -->
+  <div x-show="selected.length > 0" x-cloak x-transition.opacity
+       class="sticky bottom-0 z-20 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95">
+    <div class="text-xs text-slate-700 dark:text-slate-300">
+      <b class="money text-slate-900 dark:text-white" x-text="selected.length"></b> pasangan dipilih untuk dikonfirmasi
+    </div>
+    <div class="flex items-center gap-2">
+      <button type="button" @click="clearSelection()" class="btn-ghost px-3 py-1.5 text-xs">
+        Batal Pilih
+      </button>
+      <button type="submit" form="bulk-approve-form"
+              class="btn-primary px-4 py-1.5 text-xs bg-emerald-600 hover:bg-emerald-700">
+        <svg class="icon h-3.5 w-3.5"><use href="#i-check"/></svg>
+        Konfirmasi Cocok Bersamaan (<span x-text="selected.length"></span>)
+      </button>
+    </div>
   </div>
 </div>
 {% endwith %}

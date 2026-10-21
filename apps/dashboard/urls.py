@@ -13,6 +13,7 @@ urlpatterns = [
     path("matches/", views.matches_view, name="matches"),
     path("matches/unpair/<int:pk>/", views.unpair_match_action, name="unpair-match"),
     path("matches/approve/<int:pk>/", views.approve_match_action, name="approve-match"),
+    path("matches/approve-bulk/", views.approve_match_bulk_action, name="approve-match-bulk"),
     path("manual-match/", views.manual_match_action, name="manual-match"),
     path("manual-match/bulk/", views.bulk_manual_match_action, name="manual-match-bulk"),
     # 4. Antrean Review Manual
