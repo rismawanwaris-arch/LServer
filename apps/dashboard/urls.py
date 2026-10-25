@@ -75,6 +75,6 @@ urlpatterns = [
     path("backup/restore/preview/", views.restore_preview_action, name="restore-preview"),
     path("backup/restore/confirm/", views.restore_confirm_action, name="restore-confirm"),
     # Auth
-    path("login/", auth_views.LoginView.as_view(template_name="dashboard/login.html"), name="login"),
+    path("login/", views.RateLimitedLoginView.as_view(), name="login"),
     path("logout/", auth_views.LogoutView.as_view(next_page="login"), name="logout"),
 ]

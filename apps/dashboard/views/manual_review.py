@@ -24,7 +24,14 @@ from apps.recon.resolve import (
     unpair_match,
 )
 
-from ._shared import _CANDIDATE_WINDOW, _EXTENDED_WINDOW_DAYS, _find_auto_pairs, _paginate_rows, _parse_date
+from ._shared import (
+    _CANDIDATE_WINDOW,
+    _EXTENDED_WINDOW_DAYS,
+    _find_auto_pairs,
+    _paginate_rows,
+    _parse_date,
+    _safe_next_url,
+)
 
 
 def _otomax_candidate(o: OtomaxEntry, book_date, *, extended: bool) -> dict:
@@ -145,7 +152,7 @@ def manual_tag_action(request, pk: int):
     note = request.POST.get("note", "").strip()
     book_date = request.POST.get("book_date") or bm.book_date.isoformat()
     fallback_url = f"/review-manual/?d={book_date}"
-    next_url = request.POST.get("next_url") or request.META.get("HTTP_REFERER") or fallback_url
+    next_url = _safe_next_url(request, fallback_url)
 
     if not tag or tag not in ManualTag.values:
         messages.error(request, "Pilih tag kategori yang valid.")
@@ -174,7 +181,7 @@ def manual_match_action(request):
     note = request.POST.get("note", "").strip()
     book_date = request.POST.get("book_date")
     fallback_url = f"/pending-settle/?d={book_date}" if book_date else "/"
-    next_url = request.POST.get("next_url") or request.META.get("HTTP_REFERER") or fallback_url
+    next_url = _safe_next_url(request, fallback_url)
 
     if not otomax_ids or not bank_ids:
         messages.error(request, "Pilih transaksi Otomax dan mutasi Bank yang akan dicocokkan.")
@@ -238,7 +245,7 @@ def manual_match_action(request):
 @require_POST
 def unpair_match_action(request, pk: int):
     match = get_object_or_404(Match, pk=pk)
-    next_url = request.POST.get("next_url") or request.META.get("HTTP_REFERER") or f"/matches/?d={match.book_date}"
+    next_url = _safe_next_url(request, f"/matches/?d={match.book_date}")
 
     try:
         unpair_match(match, user=request.user)
@@ -253,7 +260,7 @@ def unpair_match_action(request, pk: int):
 @require_POST
 def bulk_manual_match_action(request):
     book_date = _parse_date(request.POST.get("book_date"))
-    next_url = request.POST.get("next_url") or request.META.get("HTTP_REFERER") or f"/pending-settle/?d={book_date}"
+    next_url = _safe_next_url(request, f"/pending-settle/?d={book_date}")
 
     unmatched_banks = list(
         BankMutation.objects.filter(

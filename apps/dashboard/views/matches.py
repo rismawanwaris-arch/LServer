@@ -17,7 +17,7 @@ from apps.core.enums import Channel
 from apps.recon.models import Match
 from apps.recon.resolve import approve_match
 
-from ._shared import _parse_date
+from ._shared import _parse_date, _safe_next_url
 
 PAGE_SIZE = 50
 
@@ -84,7 +84,7 @@ def matches_view(request):
 @require_POST
 def approve_match_action(request, pk: int):
     match = get_object_or_404(Match, pk=pk)
-    next_url = request.POST.get("next_url") or request.META.get("HTTP_REFERER") or f"/matches/?d={match.book_date}"
+    next_url = _safe_next_url(request, f"/matches/?d={match.book_date}")
     try:
         approve_match(match, user=request.user)
         messages.success(request, f"Usulan pencocokan #{match.id} disetujui dan sekarang final.")
@@ -101,7 +101,7 @@ def approve_match_bulk_action(request):
     raw_ids = request.POST.getlist("selected_ids")
     book_date_raw = request.POST.get("book_date") or ""
     fallback_url = f"/matches/?d={book_date_raw}" if book_date_raw else "/matches/"
-    next_url = request.POST.get("next_url") or request.META.get("HTTP_REFERER") or fallback_url
+    next_url = _safe_next_url(request, fallback_url)
 
     match_ids: list[int] = []
     for rid in raw_ids:

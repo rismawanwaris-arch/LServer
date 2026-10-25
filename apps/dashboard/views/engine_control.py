@@ -13,7 +13,7 @@ from apps.recon.engine import run_match
 from apps.recon.models import Discrepancy
 from apps.recon.resolve import write_off
 
-from ._shared import _parse_date, staff_only
+from ._shared import _parse_date, _safe_next_url, staff_only
 
 
 @login_required
@@ -77,5 +77,5 @@ def resolve_view(request, pk: int):
     else:
         messages.info(request, "Gunakan tombol Jalankan Pencocokan untuk mencari pasangan otomatis.")
     fallback_url = f"/?d={request.POST.get('book_date')}"
-    next_url = request.POST.get("next_url") or request.META.get("HTTP_REFERER") or fallback_url
+    next_url = _safe_next_url(request, fallback_url)
     return redirect(next_url)

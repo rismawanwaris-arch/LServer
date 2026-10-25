@@ -5,6 +5,7 @@ apps/dashboard/urls.py tidak perlu berubah sama sekali."""
 
 from __future__ import annotations
 
+from ._shared import RateLimitedLoginView
 from .app_settings import app_settings_view, update_app_settings_action
 from .audit import (
     audit_data_view,
@@ -57,6 +58,7 @@ from .reversal import manual_net_reversal_action, reversal_view, unnet_otomax_ac
 from .upload import delete_batch_action, upload, upload_view
 
 __all__ = [
+    "RateLimitedLoginView",
     "excluded_transactions_view",
     "restore_excluded_bulk_action",
     "restore_excluded_transaction_action",

@@ -16,7 +16,7 @@ from apps.ingest.models import EXCLUDED_OUT_Q, ExcludedTransaction, summarize_ex
 from apps.ingest.services import restore_excluded_transaction
 from apps.recon.models import ReconDay
 
-from ._shared import _parse_date
+from ._shared import _parse_date, _safe_next_url
 
 PAGE_SIZE = 50
 ZERO = Decimal("0.00")
@@ -113,7 +113,7 @@ def excluded_transactions_view(request):
 def restore_excluded_transaction_action(request, pk: int):
     excluded_tx = get_object_or_404(ExcludedTransaction, pk=pk)
     fallback_url = f"/dikecualikan/?d={excluded_tx.book_date}"
-    next_url = request.POST.get("next_url") or request.META.get("HTTP_REFERER") or fallback_url
+    next_url = _safe_next_url(request, fallback_url)
     try:
         obj = restore_excluded_transaction(excluded_tx, user=request.user)
         channel_label = obj.channel if hasattr(obj, "channel") else "Otomax"
@@ -133,7 +133,7 @@ def restore_excluded_transaction_action(request, pk: int):
 @require_POST
 def restore_excluded_bulk_action(request):
     selected_ids = request.POST.getlist("selected_ids")
-    next_url = request.POST.get("next_url") or request.META.get("HTTP_REFERER") or "/dikecualikan/"
+    next_url = _safe_next_url(request, "/dikecualikan/")
     if not selected_ids:
         messages.warning(request, "Tidak ada transaksi yang dipilih untuk dipulihkan.")
         return redirect(next_url)

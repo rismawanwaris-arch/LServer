@@ -10,6 +10,7 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.http import HttpResponse, JsonResponse
+from django.middleware.csrf import CsrfViewMiddleware
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
@@ -20,6 +21,11 @@ from apps.ingest.services import ImportBlocked, import_file, preview_file
 from apps.recon.engine import run_match
 from apps.recon.reports import generate_excel_report, get_daily_summary
 from apps.recon.resolve import tag_manual_mutation
+
+MAX_API_RECON_DAYS = 62
+MAX_API_EXPORT_DAYS = 366
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB
+_csrf_middleware = CsrfViewMiddleware(lambda req: HttpResponse())
 
 BANK_MAP = {
     "bca": Channel.BCA,
@@ -43,17 +49,16 @@ def api_auth_required(view_func):
     """Decorator untuk memproteksi endpoint REST API.
 
     Akses diizinkan jika:
-    1. Pengguna terautentikasi via sesi Django (request.user.is_authenticated), ATAU
-    2. Request menyertakan header 'X-API-KEY' atau 'Authorization: Bearer <key>'
+    1. Request menyertakan header 'X-API-KEY' atau 'Authorization: Bearer <key>'
        yang cocok dengan settings.API_KEY, ATAU
+    2. Pengguna terautentikasi via sesi Django (request.user.is_authenticated) — untuk
+       request mutasi (POST/PUT/DELETE/PATCH) wajib lolos verifikasi token CSRF agar tidak
+       bisa dieksploitasi lewat Cross-Site Request Forgery dari tab browser lain, ATAU
     3. settings.API_KEY belum disetel DAN settings.DEBUG bernilai True (lingkungan dev lokal).
     """
 
     @functools.wraps(view_func)
     def _wrapped(request, *args, **kwargs):
-        if request.user and request.user.is_authenticated:
-            return view_func(request, *args, **kwargs)
-
         configured_key = getattr(settings, "API_KEY", "").strip()
         auth_header = request.headers.get("Authorization", "").strip()
         api_key_header = request.headers.get("X-API-KEY", "").strip()
@@ -63,9 +68,24 @@ def api_auth_required(view_func):
         elif api_key_header:
             provided_key = api_key_header
 
+        # 1. Jika API Key disertakan dan valid -> izinkan langsung (stateless token auth)
+        if configured_key and provided_key and hmac.compare_digest(provided_key, configured_key):
+            return view_func(request, *args, **kwargs)
+
+        # 2. Jika tidak pakai API Key tapi user login via sesi cookie browser:
+        #    Izinkan, namun wajib cek CSRF untuk method non-safe (POST, dll.)
+        if request.user and request.user.is_authenticated and not provided_key:
+            if request.method not in ("GET", "HEAD", "OPTIONS", "TRACE"):
+                if not getattr(request, "_dont_enforce_csrf_checks", False):
+                    csrf_res = _csrf_middleware.process_view(request, None, (), {})
+                    if csrf_res is not None:
+                        return JsonResponse(
+                            {"error": "Verifikasi CSRF gagal untuk sesi browser."},
+                            status=403,
+                        )
+            return view_func(request, *args, **kwargs)
+
         if configured_key:
-            if provided_key and hmac.compare_digest(provided_key, configured_key):
-                return view_func(request, *args, **kwargs)
             return JsonResponse(
                 {"error": "Autentikasi gagal: API Key tidak valid atau tidak disertakan."},
                 status=401,
@@ -90,6 +110,8 @@ def upload_otomax(request):
     f = request.FILES.get("file")
     if not f:
         return JsonResponse({"error": "File diperlukan (field 'file')"}, status=400)
+    if getattr(f, "size", 0) and f.size > MAX_UPLOAD_BYTES:
+        return JsonResponse({"error": "Ukuran file melebihi batas maksimal 25 MB."}, status=400)
     bd = _parse_date(request.POST.get("book_date"))
     try:
         batch = import_file(
@@ -128,6 +150,8 @@ def upload_mutasi(request, bank: str):
     f = request.FILES.get("file")
     if not f:
         return JsonResponse({"error": "File diperlukan (field 'file')"}, status=400)
+    if getattr(f, "size", 0) and f.size > MAX_UPLOAD_BYTES:
+        return JsonResponse({"error": "Ukuran file melebihi batas maksimal 25 MB."}, status=400)
 
     bd = _parse_date(request.POST.get("book_date"))
     try:
@@ -199,6 +223,13 @@ def reconcile_run(request):
     if start_str and end_str:
         s = _parse_date(start_str)
         e = _parse_date(end_str)
+        if s > e:
+            s, e = e, s
+        if (e - s).days + 1 > MAX_API_RECON_DAYS:
+            return JsonResponse(
+                {"error": f"Rentang tanggal maksimal {MAX_API_RECON_DAYS} hari sekali eksekusi."},
+                status=400,
+            )
         curr = s
         while curr <= e:
             dates.append(curr)
@@ -371,6 +402,13 @@ def reports_export(request):
     end_date = _parse_date(request.GET.get("end_date"))
     if "start_date" not in request.GET and "end_date" not in request.GET and "d" in request.GET:
         start_date = end_date = _parse_date(request.GET.get("d"))
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
+    if (end_date - start_date).days + 1 > MAX_API_EXPORT_DAYS:
+        return JsonResponse(
+            {"error": f"Rentang ekspor laporan maksimal {MAX_API_EXPORT_DAYS} hari."},
+            status=400,
+        )
 
     excel_bytes = generate_excel_report(start_date, end_date)
     response = HttpResponse(

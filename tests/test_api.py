@@ -172,3 +172,72 @@ def test_api_security_rejects_in_production_without_key_or_login(settings, sampl
     assert "Akses ditolak" in res.json()["error"]
 
 
+@pytest.mark.django_db
+def test_api_post_requires_csrf_when_using_session_cookie(settings, sample_data):
+    from django.contrib.auth import get_user_model
+
+    User = get_user_model()
+    user = User.objects.create_user(username="csrf_user", password="password123")
+    settings.API_KEY = "super-secret-token"
+
+    c = Client(enforce_csrf_checks=True)
+    c.force_login(user)
+
+    # POST tanpa X-API-KEY dan tanpa token CSRF harus ditolak (403)
+    res = c.post("/api/reconcile/run", {"book_date": "2026-09-05"})
+    assert res.status_code == 403
+
+    # POST dengan X-API-KEY valid diizinkan tanpa token CSRF
+    res_key = c.post("/api/reconcile/run", {"book_date": "2026-09-05"}, HTTP_X_API_KEY="super-secret-token")
+    assert res_key.status_code == 200
+
+
+@pytest.mark.django_db
+def test_api_reconcile_run_rejects_excessive_date_range(client, sample_data):
+    res = client.post("/api/reconcile/run", {"start_date": "2020-01-01", "end_date": "2026-09-05"})
+    assert res.status_code == 400
+    assert "maksimal" in res.json()["error"]
+
+
+@pytest.mark.django_db
+def test_login_rate_limiting_blocks_brute_force():
+    from django.contrib.auth import get_user_model
+    from django.core.cache import cache
+
+    cache.clear()
+    User = get_user_model()
+    User.objects.create_user(username="target_op", password="CorrectPassword123!")
+
+    c = Client()
+    for _ in range(5):
+        r = c.post("/login/", {"username": "target_op", "password": "wrong-password"})
+        assert r.status_code == 200
+
+    # Percobaan ke-6 langsung diblokir (HTTP 429) walau password benar
+    r_blocked = c.post("/login/", {"username": "target_op", "password": "CorrectPassword123!"})
+    assert r_blocked.status_code == 429
+    assert "Terlalu banyak percobaan login gagal" in r_blocked.content.decode()
+    cache.clear()
+
+
+@pytest.mark.django_db
+def test_open_redirect_blocked_on_next_url():
+    from django.contrib.auth import get_user_model
+
+    User = get_user_model()
+    user = User.objects.create_superuser(username="admin_redir", password="password123")
+    c = Client()
+    c.force_login(user)
+
+    res = c.post(
+        "/matches/approve-bulk/",
+        {
+            "book_date": "2026-09-05",
+            "next_url": "https://evil-phishing.example.com/login",
+        },
+    )
+    assert res.status_code == 302
+    assert res.url == "/matches/?d=2026-09-05"
+
+
+

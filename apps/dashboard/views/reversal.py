@@ -17,7 +17,7 @@ from apps.ingest.models import BankMutation, OtomaxEntry
 from apps.recon.models import Match
 from apps.recon.resolve import manual_net_reversal_many, unnet_otomax_pair
 
-from ._shared import _parse_date
+from ._shared import _parse_date, _safe_next_url
 
 _OPEN_STATUSES = [MatchStatus.UNMATCHED, MatchStatus.PENDING_SETTLE]
 _MAX_CANDIDATES = 5
@@ -175,7 +175,7 @@ def manual_net_reversal_action(request):
     note = request.POST.get("note", "").strip()
     book_date = request.POST.get("book_date", "")
     fallback_url = f"/reversal/?d={book_date}" if book_date else "/reversal/"
-    next_url = request.POST.get("next_url") or request.META.get("HTTP_REFERER") or fallback_url
+    next_url = _safe_next_url(request, fallback_url)
 
     selected_ids = set()
     if original_id and original_id.isdigit():
@@ -226,7 +226,7 @@ def manual_net_reversal_action(request):
 @require_POST
 def unnet_otomax_action(request, pk: int):
     entry = get_object_or_404(OtomaxEntry, pk=pk)
-    next_url = request.POST.get("next_url") or request.META.get("HTTP_REFERER") or "/reversal/?tab=netted"
+    next_url = _safe_next_url(request, "/reversal/?tab=netted")
     try:
         a, b = unnet_otomax_pair(entry, user=request.user)
         messages.success(

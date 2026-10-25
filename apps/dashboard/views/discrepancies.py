@@ -22,7 +22,7 @@ from apps.core.enums import Channel, DiscrepancyStatus
 from apps.recon.models import Discrepancy
 from apps.recon.reports import generate_excel_discrepancies
 
-from ._shared import _parse_date
+from ._shared import _parse_date, _safe_next_url
 
 ZERO = Decimal("0.00")
 # Baris dimuat bertahap (infinite scroll) dan panel detail diambil saat dibuka -- dulu
@@ -216,7 +216,7 @@ def discrepancy_update_note_action(request, pk: int):
         note = request.POST.get("note", "").strip()
         d.note = note
         d.save(update_fields=["note"])
-    next_url = request.POST.get("next_url") or request.GET.get("next_url") or "/selisih/"
+    next_url = _safe_next_url(request, "/selisih/")
     return redirect(next_url)
 
 

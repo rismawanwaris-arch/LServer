@@ -18,7 +18,14 @@ from apps.ingest.models import BankMutation, OtomaxEntry
 from apps.recon.models import Match
 from apps.recon.resolve import tag_manual_otomax
 
-from ._shared import _CANDIDATE_WINDOW, _EXTENDED_WINDOW_DAYS, _find_auto_pairs, _paginate_rows, _parse_date
+from ._shared import (
+    _CANDIDATE_WINDOW,
+    _EXTENDED_WINDOW_DAYS,
+    _find_auto_pairs,
+    _paginate_rows,
+    _parse_date,
+    _safe_next_url,
+)
 
 _MAX_NET_CANDIDATES = 10
 PENDING_PAGE_SIZE = 50
@@ -221,7 +228,7 @@ def manual_tag_otomax_action(request, pk: int):
     note = request.POST.get("note", "").strip()
     book_date = request.POST.get("book_date") or o.book_date.isoformat()
     fallback_url = f"/pending-settle/?d={book_date}"
-    next_url = request.POST.get("next_url") or request.META.get("HTTP_REFERER") or fallback_url
+    next_url = _safe_next_url(request, fallback_url)
 
     if not tag:
         messages.error(request, "Pilih tag kategori yang valid.")

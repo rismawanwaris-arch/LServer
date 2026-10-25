@@ -8,6 +8,7 @@ import re
 from collections import defaultdict
 from datetime import date
 
+from django.contrib.auth import views as auth_views
 from django.contrib.auth.decorators import user_passes_test
 from django.db import models
 from django.urls import reverse
@@ -21,6 +22,51 @@ from apps.recon.models import Discrepancy, Match, ReconDay
 from apps.recon.reports import get_daily_summary
 
 staff_only = user_passes_test(lambda u: u.is_superuser or u.is_staff)
+
+LOGIN_MAX_ATTEMPTS = 5
+LOGIN_LOCKOUT_SECONDS = 300  # 5 menit
+
+
+class RateLimitedLoginView(auth_views.LoginView):
+    """LoginView dengan proteksi brute-force berbasis cache (maksimal 5 gagal dalam 5 menit)."""
+
+    template_name = "dashboard/login.html"
+
+    @staticmethod
+    def _rate_key(request) -> str:
+        xff = request.META.get("HTTP_X_FORWARDED_FOR", "")
+        ip = xff.split(",")[0].strip() if xff else (request.META.get("REMOTE_ADDR") or "unknown")
+        username = (request.POST.get("username") or "").strip().lower()[:64]
+        return f"login_fail:{ip}:{username}"
+
+    def post(self, request, *args, **kwargs):
+        from django.core.cache import cache
+
+        key = self._rate_key(request)
+        attempts = cache.get(key, 0)
+        if attempts >= LOGIN_MAX_ATTEMPTS:
+            form = self.get_form()
+            form.add_error(
+                None,
+                "Terlalu banyak percobaan login gagal. Silakan tunggu 5 menit sebelum mencoba lagi.",
+            )
+            return self.render_to_response(self.get_context_data(form=form), status=429)
+        return super().post(request, *args, **kwargs)
+
+    def form_invalid(self, form):
+        from django.core.cache import cache
+
+        key = self._rate_key(self.request)
+        attempts = cache.get(key, 0) + 1
+        cache.set(key, attempts, timeout=LOGIN_LOCKOUT_SECONDS)
+        return super().form_invalid(form)
+
+    def form_valid(self, form):
+        from django.core.cache import cache
+
+        cache.delete(self._rate_key(self.request))
+        return super().form_valid(form)
+
 
 _REVERSAL_OPEN_STATUSES = [MatchStatus.UNMATCHED, MatchStatus.PENDING_SETTLE]
 
@@ -55,6 +101,27 @@ def _parse_date(raw: str | None, default=None) -> date:
         except ValueError:
             pass
     return default or timezone.localdate()
+
+
+def _safe_next_url(request, fallback: str = "/") -> str:
+    """Ambil next_url dari POST/GET/HTTP_REFERER dan pastikan hanya mengarah ke host internal
+    (mencegah celah Open Redirect ke domain eksternal)."""
+    from django.utils.http import url_has_allowed_host_and_scheme
+
+    raw = (
+        request.POST.get("next_url")
+        or request.GET.get("next_url")
+        or request.META.get("HTTP_REFERER")
+        or ""
+    ).strip()
+    if raw and url_has_allowed_host_and_scheme(
+        url=raw,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        return raw
+    return fallback
+
 
 
 def _is_channel_compatible(b, o) -> bool:
