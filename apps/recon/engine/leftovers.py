@@ -9,7 +9,14 @@ from apps.core.enums import BANK_CHANNELS, Channel, DiscrepancyKind, Discrepancy
 from apps.ingest.models import OtomaxEntry
 from apps.recon.models import ReconDay
 
-from .helpers import _MATCHABLE_CATEGORIES, _OPEN_STATUSES, RunStats, _make_discrepancy, _mark
+from .helpers import (
+    _MATCHABLE_CATEGORIES,
+    _OPEN_STATUSES,
+    RunStats,
+    _exclude_active_otomax_matches,
+    _make_discrepancy,
+    _mark,
+)
 from .ref_match import _open_bank
 
 
@@ -49,9 +56,10 @@ def _classify_leftovers(book_date: date) -> RunStats:
     # persis dengan isi halaman Pending Settle, supaya setiap outstanding di sana juga muncul
     # di Daftar Selisih. _OPEN_STATUSES (bukan UNMATCHED saja): entri yang baru di-unpair jadi
     # PENDING_SETTLE tanpa Discrepancy -- tanpa ini carry_forward tidak pernah melihatnya.
-    for o in (
-        OtomaxEntry.objects.filter(book_date=book_date, match_status__in=_OPEN_STATUSES)
-        .exclude(category=OtomaxCategory.ADMIN)
+    for o in _exclude_active_otomax_matches(
+        OtomaxEntry.objects.filter(book_date=book_date, match_status__in=_OPEN_STATUSES).exclude(
+            category=OtomaxCategory.ADMIN
+        )
     ):
         if o.discrepancies.filter(status=DiscrepancyStatus.OPEN).exists():
             continue

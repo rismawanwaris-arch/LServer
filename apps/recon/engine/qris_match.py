@@ -18,7 +18,15 @@ from apps.core.normalize import norm_ref
 from apps.ingest.models import BankMutation, OtomaxEntry
 
 from ..models import Discrepancy, Match
-from .helpers import _OPEN_STATUSES, ZERO, RunStats, _make_discrepancy, _mark, _proposal_rejected
+from .helpers import (
+    _OPEN_STATUSES,
+    ZERO,
+    RunStats,
+    _exclude_active_otomax_matches,
+    _make_discrepancy,
+    _mark,
+    _proposal_rejected,
+)
 from .ref_match import _open_bank, get_bank_date_tolerance
 
 _ALIASES = {
@@ -219,17 +227,19 @@ def _match_qris(book_date: date) -> RunStats:
     d_str_short = book_date.strftime("%d-%b").upper()
 
     oto_candidates = list(
-        OtomaxEntry.objects.filter(match_status__in=_OPEN_STATUSES)
-        .exclude(category=OtomaxCategory.ADMIN)
-        .filter(
-            models.Q(channel_hint=Channel.MERCHANT_BCA)
-            | models.Q(description_raw__icontains="BULK")
-            | models.Q(description_raw__icontains="TARTUN QR")
-        )
-        .filter(
-            models.Q(book_date__range=(start_d, end_d))
-            | models.Q(description_raw__icontains=d_str)
-            | models.Q(description_raw__icontains=d_str_short)
+        _exclude_active_otomax_matches(
+            OtomaxEntry.objects.filter(match_status__in=_OPEN_STATUSES)
+            .exclude(category=OtomaxCategory.ADMIN)
+            .filter(
+                models.Q(channel_hint=Channel.MERCHANT_BCA)
+                | models.Q(description_raw__icontains="BULK")
+                | models.Q(description_raw__icontains="TARTUN QR")
+            )
+            .filter(
+                models.Q(book_date__range=(start_d, end_d))
+                | models.Q(description_raw__icontains=d_str)
+                | models.Q(description_raw__icontains=d_str_short)
+            )
         )
     )
 

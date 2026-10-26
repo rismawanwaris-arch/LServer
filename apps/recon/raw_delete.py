@@ -167,21 +167,32 @@ def count_paired(plan: DeletePlan) -> int:
     return n
 
 
-def restore_net_partner(partner_id: int, deleted_pk: int, note: str) -> bool:
+def restore_net_partner(partner_id: int, deleted_pk: int, note: str) -> int:
     """Lawan netral dari entri Otomax yang akan dihapus: lepas net_pair-nya dan kembalikan ke
     Pending Settle (+ selisih OTOMAX_ONLY), supaya tidak tersembunyi selamanya sebagai IGNORED."""
     from .engine.leftovers import make_otomax_only
 
-    partner = OtomaxEntry.objects.select_for_update().filter(pk=partner_id).first()
-    if partner is None or partner.net_pair_id != deleted_pk or partner.match_status != MatchStatus.IGNORED:
-        return False
-    partner.net_pair = None
-    partner.match_status = MatchStatus.PENDING_SETTLE
-    partner.note = note
-    partner.save(update_fields=["net_pair", "match_status", "note", "updated_at"])
-    if not partner.discrepancies.filter(status=DiscrepancyStatus.OPEN).exists():
-        make_otomax_only(partner)
-    return True
+    cond = Q(net_pair_id=deleted_pk)
+    if partner_id:
+        cond |= Q(pk=partner_id)
+    partners = list(
+        OtomaxEntry.objects.select_for_update().filter(
+            cond,
+            match_status=MatchStatus.IGNORED,
+        )
+    )
+    restored = 0
+    for partner in partners:
+        if partner.pk == deleted_pk:
+            continue
+        partner.net_pair = None
+        partner.match_status = MatchStatus.PENDING_SETTLE
+        partner.note = note
+        partner.save(update_fields=["net_pair", "match_status", "note", "updated_at"])
+        if not partner.discrepancies.filter(status=DiscrepancyStatus.OPEN).exists():
+            make_otomax_only(partner)
+        restored += 1
+    return restored
 
 
 @transaction.atomic

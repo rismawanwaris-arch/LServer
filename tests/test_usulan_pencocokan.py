@@ -537,3 +537,126 @@ def test_matches_checklist_bar_and_bulk_approve(auth_client, operator):
     assert m2.reviewed_by == operator
 
 
+@pytest.mark.django_db
+def test_tag_manual_after_multiple_voided_matches_no_500(operator):
+    """Tag manual pada mutasi bank / entri Otomax yang pernah dibatalkan (voided) berkali-kali
+    tidak boleh gagal 500 karena MultipleObjectsReturned atau IntegrityError."""
+    from apps.core.enums import ManualTag
+    from apps.recon.resolve import manual_pair_transactions, tag_manual_mutation, tag_manual_otomax
+
+    b = _bank("TRANSFER DARI TEST 001", "250000")
+    o = _otomax("TARTUN TF BRI TEST 001", "250000")
+
+    # Pasangkan lalu batalkan 2 kali sehingga ada 2 Match voided di DB
+    m1 = manual_pair_transactions(b, o, user=operator)
+    unpair_match(m1, user=operator)
+    m2 = manual_pair_transactions(b, o, user=operator)
+    unpair_match(m2, user=operator)
+
+    assert Match.objects.filter(bank_mutation=b, voided_at__isnull=False).count() == 2
+    assert Match.objects.filter(otomax_entry=o, voided_at__isnull=False).count() == 2
+
+    # Tag manual keduanya — harus berhasil membuat Match aktif baru tanpa error
+    tag_manual_mutation(b, tag=ManualTag.ADMIN, note="test tag bank", user=operator)
+    tag_manual_otomax(o, tag="revisi", note="test tag otomax", user=operator)
+
+    b.refresh_from_db()
+    o.refresh_from_db()
+    assert b.match_status == MatchStatus.MANUAL
+    assert o.match_status == MatchStatus.MANUAL
+    assert Match.objects.filter(bank_mutation=b, voided_at__isnull=True).count() == 1
+    assert Match.objects.filter(otomax_entry=o, voided_at__isnull=True).count() == 1
+
+
+@pytest.mark.django_db
+def test_run_match_heals_stale_match_status_without_integrity_error():
+    """Jika match_status transaksi tidak sinkron (UNMATCHED padahal punya Match aktif),
+    run_match harus menyembuhkan statusnya dan tidak meledak IntegrityError 500."""
+    b = _bank("ATMLTRPRM 01884 000001039 21540100059656", "500000")
+    o = _otomax("TARTUN EDC BRI ATMLTRPRM 01884 000001039 21540100059656", "500000")
+    run_match(BD)
+    assert _active(b) is not None
+
+    # Simulasikan ketidakwajaran status di DB (UNMATCHED tapi Match aktif masih ada)
+    b.match_status = MatchStatus.UNMATCHED
+    b.save(update_fields=["match_status"])
+    o.match_status = MatchStatus.UNMATCHED
+    o.save(update_fields=["match_status"])
+
+    # Klik Jalankan Matching Engine ulang tidak boleh 500 IntegrityError
+    run_match(BD)
+    b.refresh_from_db()
+    o.refresh_from_db()
+    assert b.match_status == MatchStatus.MATCHED
+    assert o.match_status == MatchStatus.MATCHED
+
+
+@pytest.mark.django_db
+def test_apply_exclusion_rules_with_voided_match_no_protected_error(operator):
+    """Menerapkan aturan pemisahan (ExclusionRule) pada transaksi yang pernah punya Match voided
+    tidak boleh gagal 500 ProtectedError."""
+    from apps.catalog.models import ExclusionCategory, ExclusionRule, ExclusionTarget
+    from apps.ingest.models import ExcludedTransaction
+    from apps.ingest.services import apply_exclusion_rules_retroactive
+    from apps.recon.resolve import manual_pair_transactions
+
+    b = _bank("BIAYA ADMIN BANK BULANAN", "15000")
+    o = _otomax("POTONGAN BIAYA ADMIN", "15000")
+    m = manual_pair_transactions(b, o, user=operator)
+    unpair_match(m, user=operator)
+
+    ExclusionRule.objects.create(
+        name="Biaya Admin",
+        keywords="BIAYA ADMIN",
+        target=ExclusionTarget.ALL,
+        category=ExclusionCategory.BIAYA_ADMIN,
+        active=True,
+    )
+
+    res = apply_exclusion_rules_retroactive(BD)
+    assert res["bank_moved"] == 1
+    assert res["otomax_moved"] == 1
+    assert ExcludedTransaction.objects.filter(book_date=BD).count() == 2
+
+
+@pytest.mark.django_db
+def test_purge_day_with_cross_date_match_no_protected_error(operator):
+    """Purge data satu tanggal tidak boleh gagal 500 ProtectedError jika ada Match lintas hari."""
+    from datetime import timedelta
+    from apps.recon.purge import purge_day
+    from apps.recon.resolve import manual_pair_transactions
+
+    prev_date = BD - timedelta(days=1)
+    b = _bank("TRANSFER LINTAS HARI", "400000", book_date=BD)
+    o = _otomax("TARTUN LINTAS HARI", "400000", book_date=prev_date)
+    manual_pair_transactions(b, o, user=operator)
+
+    # Purge prev_date (tempat Otomax berada, sedangkan Match berada di BD)
+    purge_day(prev_date)
+
+    b.refresh_from_db()
+    assert b.match_status == MatchStatus.UNMATCHED
+    assert Match.objects.filter(bank_mutation=b).count() == 0
+
+
+@pytest.mark.django_db
+def test_unnet_multi_reversal_view_no_unpack_error(auth_client, operator):
+    """Membatalkan netting 1:banyak (1 REV lawan 2 entri Otomax) lewat endpoint unnet
+    tidak boleh gagal karena unpacking tuple (a, b = ...)."""
+    from apps.recon.resolve import manual_net_reversal_many
+
+    rev = _otomax("REV SALAH INPUT", "-300000")
+    o1 = _otomax("TARTUN PART 1", "100000")
+    o2 = _otomax("TARTUN PART 2", "200000")
+
+    manual_net_reversal_many(rev, [o1, o2], user=operator)
+    res = auth_client.post(f"/reversal/unnet/{rev.pk}/")
+    assert res.status_code == 302
+
+    for entry in (rev, o1, o2):
+        entry.refresh_from_db()
+        assert entry.match_status == MatchStatus.PENDING_SETTLE
+        assert entry.net_pair is None
+
+
+

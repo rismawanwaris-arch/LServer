@@ -2,26 +2,35 @@
 
 from __future__ import annotations
 
+import logging
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.shortcuts import redirect
+from django.shortcuts import get_object_or_404, redirect
 from django.views.decorators.http import require_POST
 
 from apps.recon.carry import carry_forward
 from apps.recon.close import DayHasDownstream, DayLocked, DayNotReady, close_day, reopen_day
 from apps.recon.engine import run_match
 from apps.recon.models import Discrepancy
-from apps.recon.resolve import write_off
+from apps.recon.resolve import DiscrepancyClosed, write_off
 
 from ._shared import _parse_date, _safe_next_url, staff_only
+
+logger = logging.getLogger(__name__)
 
 
 @login_required
 @require_POST
 def run_engine(request):
     book_date = _parse_date(request.POST.get("book_date"))
-    stats = run_match(book_date)
-    resolved = carry_forward(book_date, user=request.user)
+    try:
+        stats = run_match(book_date)
+        resolved = carry_forward(book_date, user=request.user)
+    except Exception as exc:
+        logger.exception("Gagal menjalankan matching engine untuk %s", book_date)
+        messages.error(request, f"Gagal menjalankan mesin pencocokan: {exc}")
+        return redirect(f"/?d={book_date}")
     netted_msg = f" · revisi di-net: {stats.netted}" if stats.netted else ""
     messages.success(
         request,
@@ -69,11 +78,14 @@ def reopen_view(request):
 @staff_only
 @require_POST
 def resolve_view(request, pk: int):
-    disc = Discrepancy.objects.get(pk=pk)
+    disc = get_object_or_404(Discrepancy, pk=pk)
     reason = request.POST.get("reason", "")
     if request.POST.get("action") == "write_off":
-        write_off(disc, reason=reason or "hapus buku manual", user=request.user)
-        messages.success(request, f"{disc.code} dihapusbukukan.")
+        try:
+            write_off(disc, reason=reason or "hapus buku manual", user=request.user)
+            messages.success(request, f"{disc.code} dihapusbukukan.")
+        except DiscrepancyClosed as exc:
+            messages.warning(request, str(exc))
     else:
         messages.info(request, "Gunakan tombol Jalankan Pencocokan untuk mencari pasangan otomatis.")
     fallback_url = f"/?d={request.POST.get('book_date')}"

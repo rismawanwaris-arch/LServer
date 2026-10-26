@@ -40,6 +40,30 @@ def _mark(obj, status=MatchStatus.MATCHED):
     obj.save(update_fields=["match_status"])
 
 
+def _exclude_active_bank_matches(qs):
+    """Kecualikan BankMutation yang sudah memiliki Match aktif (voided_at__isnull=True),
+    baik sebagai bank_mutation utama maupun di dalam bank_mutations gabungan."""
+    from django.db import models
+
+    active_subq = Match.objects.filter(
+        models.Q(bank_mutation=models.OuterRef("pk")) | models.Q(bank_mutations=models.OuterRef("pk")),
+        voided_at__isnull=True,
+    )
+    return qs.exclude(models.Exists(active_subq))
+
+
+def _exclude_active_otomax_matches(qs):
+    """Kecualikan OtomaxEntry yang sudah memiliki Match aktif (voided_at__isnull=True),
+    baik sebagai otomax_entry utama maupun di dalam otomax_entries gabungan."""
+    from django.db import models
+
+    active_subq = Match.objects.filter(
+        models.Q(otomax_entry=models.OuterRef("pk")) | models.Q(otomax_entries=models.OuterRef("pk")),
+        voided_at__isnull=True,
+    )
+    return qs.exclude(models.Exists(active_subq))
+
+
 def _proposal_rejected(bank) -> bool:
     """Operator pernah membatalkan usulan mesin untuk mutasi ini -- jangan usulkan lagi
     (kalau tidak, tiap "Jalankan Matching Engine" memunculkan usulan yang sama berulang).

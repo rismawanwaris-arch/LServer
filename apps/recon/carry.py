@@ -10,7 +10,13 @@ from apps.catalog.models import MerchantMap, ResellerAlias
 from apps.core.enums import Channel, DiscrepancyKind, DiscrepancyStatus, MatchStatus, MatchType, OtomaxCategory
 from apps.ingest.models import BankMutation, OtomaxEntry
 
-from .engine.helpers import _MATCHABLE_CATEGORIES, ZERO, _proposal_rejected
+from .engine.helpers import (
+    _MATCHABLE_CATEGORIES,
+    ZERO,
+    _exclude_active_bank_matches,
+    _exclude_active_otomax_matches,
+    _proposal_rejected,
+)
 from .engine.qris_match import _clean_outlet_name, _find_best_group, _resolve_alias_reseller_id
 from .models import Discrepancy, Match
 from .resolve import resolve_discrepancy, retire_leftover_discrepancies
@@ -74,9 +80,11 @@ def _find_otomax_for(bank: BankMutation, book_date: date) -> Match | None:
     # sama - baris ini bisa saja SUDAH dipasangkan oleh iterasi lain dalam loop carry_forward
     # yang sama). Tanpa cek ini, Match.objects.create() di bawah bisa bentrok dengan constraint
     # uniq_active_bank_match dan bikin seluruh "Jalankan Matching Engine" gagal 500.
-    if not BankMutation.objects.filter(pk=bank.pk, match_status=MatchStatus.UNMATCHED).exists():
+    if not _exclude_active_bank_matches(
+        BankMutation.objects.filter(pk=bank.pk, match_status=MatchStatus.UNMATCHED)
+    ).exists():
         return None
-    o = (
+    same_amount = _exclude_active_otomax_matches(
         OtomaxEntry.objects.filter(
             book_date=book_date,
             category__in=_MATCHABLE_CATEGORIES,
@@ -84,18 +92,8 @@ def _find_otomax_for(bank: BankMutation, book_date: date) -> Match | None:
             amount=bank.amount,
             match_status__in=_OTOMAX_OPEN_STATUSES,
         )
-        .filter(ref_core=bank.ref_core)
-        .first()
-        if bank.ref_core
-        else None
     )
-    same_amount = OtomaxEntry.objects.filter(
-        book_date=book_date,
-        category__in=_MATCHABLE_CATEGORIES,
-        channel_hint=bank.channel,
-        amount=bank.amount,
-        match_status__in=_OTOMAX_OPEN_STATUSES,
-    )
+    o = same_amount.filter(ref_core=bank.ref_core).first() if bank.ref_core else None
     o = o or same_amount.filter(ref_normalized=bank.ref_normalized).first()
     if o:
         reason = "" if bank.channel == Channel.MERCHANT_BCA else _CROSS_DATE_REASON
@@ -122,15 +120,17 @@ def _find_qris_group_for(bank: BankMutation, book_date: date) -> Match | None:
     pada `book_date` yang cocok nama outlet / MerchantMap / ResellerAlias dan total nominalnya
     persis sama dengan settlement `bank`."""
     oto_candidates = list(
-        OtomaxEntry.objects.filter(
-            book_date=book_date,
-            match_status__in=_OTOMAX_OPEN_STATUSES,
-        )
-        .exclude(category=OtomaxCategory.ADMIN)
-        .filter(
-            models.Q(channel_hint=Channel.MERCHANT_BCA)
-            | models.Q(description_raw__icontains="BULK")
-            | models.Q(description_raw__icontains="TARTUN QR")
+        _exclude_active_otomax_matches(
+            OtomaxEntry.objects.filter(
+                book_date=book_date,
+                match_status__in=_OTOMAX_OPEN_STATUSES,
+            )
+            .exclude(category=OtomaxCategory.ADMIN)
+            .filter(
+                models.Q(channel_hint=Channel.MERCHANT_BCA)
+                | models.Q(description_raw__icontains="BULK")
+                | models.Q(description_raw__icontains="TARTUN QR")
+            )
         )
     )
     if not oto_candidates:
@@ -198,14 +198,18 @@ def _find_bank_for(otomax: OtomaxEntry, book_date: date) -> Match | None:
     if otomax.category not in _MATCHABLE_CATEGORIES:
         return None
     # Lihat catatan di _find_otomax_for soal kenapa ini harus dicek fresh dari DB.
-    if not OtomaxEntry.objects.filter(pk=otomax.pk, match_status__in=_OTOMAX_OPEN_STATUSES).exists():
+    if not _exclude_active_otomax_matches(
+        OtomaxEntry.objects.filter(pk=otomax.pk, match_status__in=_OTOMAX_OPEN_STATUSES)
+    ).exists():
         return None
     channel = otomax.channel_hint or Channel.BRI
-    same_amount = BankMutation.objects.filter(
-        book_date=book_date,
-        channel=channel,
-        amount=otomax.amount,
-        match_status=MatchStatus.UNMATCHED,
+    same_amount = _exclude_active_bank_matches(
+        BankMutation.objects.filter(
+            book_date=book_date,
+            channel=channel,
+            amount=otomax.amount,
+            match_status=MatchStatus.UNMATCHED,
+        )
     )
     b = same_amount.filter(ref_normalized=otomax.ref_normalized).first()
     if not b and otomax.ref_core:

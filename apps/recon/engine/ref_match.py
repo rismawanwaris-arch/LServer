@@ -17,7 +17,15 @@ from apps.core.enums import Channel, MatchStatus, MatchType
 from apps.core.normalize import norm_ref
 from apps.ingest.models import BankMutation, OtomaxEntry
 
-from .helpers import _MATCHABLE_CATEGORIES, _OPEN_STATUSES, RunStats, _persist_match, _proposal_rejected
+from .helpers import (
+    _MATCHABLE_CATEGORIES,
+    _OPEN_STATUSES,
+    RunStats,
+    _exclude_active_bank_matches,
+    _exclude_active_otomax_matches,
+    _persist_match,
+    _proposal_rejected,
+)
 
 # Toleransi hari (H-min, H+max) per bank (default fallback)
 BANK_DATE_TOLERANCE = {
@@ -42,17 +50,21 @@ def get_bank_date_tolerance() -> dict[str, tuple[int, int]]:
 
 
 def _open_bank(book_date, channel):
-    return BankMutation.objects.filter(book_date=book_date, channel=channel, match_status=MatchStatus.UNMATCHED)
+    return _exclude_active_bank_matches(
+        BankMutation.objects.filter(book_date=book_date, channel=channel, match_status=MatchStatus.UNMATCHED)
+    )
 
 
 def _open_otomax(book_date: date, channel: str, tolerance: tuple[int, int] = (-1, 1)):
     start_d = book_date + timedelta(days=tolerance[0])
     end_d = book_date + timedelta(days=tolerance[1])
-    return OtomaxEntry.objects.filter(
-        book_date__range=(start_d, end_d),
-        category__in=_MATCHABLE_CATEGORIES,
-        match_status__in=_OPEN_STATUSES,
-    ).filter(models.Q(channel_hint=channel) | models.Q(channel_hint=""))
+    return _exclude_active_otomax_matches(
+        OtomaxEntry.objects.filter(
+            book_date__range=(start_d, end_d),
+            category__in=_MATCHABLE_CATEGORIES,
+            match_status__in=_OPEN_STATUSES,
+        ).filter(models.Q(channel_hint=channel) | models.Q(channel_hint=""))
+    )
 
 
 def _match_ref(book_date: date, channel: str) -> RunStats:
@@ -130,12 +142,14 @@ def _match_ref(book_date: date, channel: str) -> RunStats:
             if o is None:
                 strong_tokens = [tk for tk in ([b.ref_core] + (b.extracted_tokens or [])) if tk and len(tk) >= 8]
                 if strong_tokens:
-                    cross_cands = OtomaxEntry.objects.filter(
-                        book_date__range=(start_d, end_d) if allow_cross else (book_date, book_date),
-                        category__in=_MATCHABLE_CATEGORIES,
-                        match_status__in=_OPEN_STATUSES,
-                        amount=b.amount,
-                    ).exclude(id__in=used)
+                    cross_cands = _exclude_active_otomax_matches(
+                        OtomaxEntry.objects.filter(
+                            book_date__range=(start_d, end_d) if allow_cross else (book_date, book_date),
+                            category__in=_MATCHABLE_CATEGORIES,
+                            match_status__in=_OPEN_STATUSES,
+                            amount=b.amount,
+                        ).exclude(id__in=used)
+                    )
                     for cand in cross_cands:
                         cand_tokens = set(cand.extracted_tokens or [])
                         if cand.ref_core:

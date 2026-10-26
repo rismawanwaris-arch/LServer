@@ -228,10 +228,11 @@ def unnet_otomax_action(request, pk: int):
     entry = get_object_or_404(OtomaxEntry, pk=pk)
     next_url = _safe_next_url(request, "/reversal/?tab=netted")
     try:
-        a, b = unnet_otomax_pair(entry, user=request.user)
+        entries = unnet_otomax_pair(entry, user=request.user)
+        ids_str = " ↔ ".join(f"#{e.id}" for e in entries)
         messages.success(
             request,
-            f"Netralkan #{a.id} ↔ #{b.id} dibatalkan. Keduanya kembali ke Pending Settle & Daftar Selisih.",
+            f"Netralkan {ids_str} dibatalkan. Semua entri kembali ke Pending Settle & Daftar Selisih.",
         )
     except ValueError as e:
         messages.error(request, str(e))

@@ -53,14 +53,80 @@ def preview_all() -> dict[str, int]:
 
 @transaction.atomic
 def purge_day(book_date: date, *, include_closed: bool = False) -> dict[str, int]:
+    from .raw_delete import restore_net_partner
+
     day = ReconDay.objects.select_for_update().filter(book_date=book_date).first()
     if day and day.locked and not include_closed:
         raise DayIsClosed(f"{book_date} sudah ditutup. Centang 'termasuk hari yang sudah ditutup'.")
 
     counts = preview_day(book_date)
-    Adjustment.objects.filter(book_date=book_date).delete()
-    Discrepancy.objects.filter(origin_book_date=book_date).delete()
-    Match.objects.filter(book_date=book_date).delete()
+
+    bank_ids = list(BankMutation.objects.filter(book_date=book_date).values_list("id", flat=True))
+    otomax_objs = list(OtomaxEntry.objects.filter(book_date=book_date).select_related("net_pair"))
+    otomax_ids = [o.id for o in otomax_objs]
+
+    # Cari semua Match yang berada di tanggal ini ATAU merujuk ke transaksi di tanggal ini (lintas hari)
+    matches = Match.objects.filter(
+        models.Q(book_date=book_date)
+        | models.Q(bank_mutation_id__in=bank_ids)
+        | models.Q(bank_mutations__in=bank_ids)
+        | models.Q(otomax_entry_id__in=otomax_ids)
+        | models.Q(otomax_entries__in=otomax_ids)
+    ).distinct()
+
+    surviving_bank_ids = set()
+    surviving_otomax_ids = set()
+    affected_other_dates = set()
+    for m in matches.select_related("bank_mutation", "otomax_entry").prefetch_related(
+        "otomax_entries", "bank_mutations"
+    ):
+        if m.book_date != book_date:
+            affected_other_dates.add(m.book_date)
+        for b in [m.bank_mutation, *m.bank_mutations.all()]:
+            if b is not None and b.id not in bank_ids:
+                surviving_bank_ids.add(b.id)
+                affected_other_dates.add(b.book_date)
+        for o in [m.otomax_entry, *m.otomax_entries.all()]:
+            if o is not None and o.id not in otomax_ids:
+                surviving_otomax_ids.add(o.id)
+                affected_other_dates.add(o.book_date)
+
+    # Cari semua Discrepancy & Adjustment di tanggal ini maupun lintas hari yang merujuk ke transaksi tanggal ini
+    discrepancies = Discrepancy.objects.filter(
+        models.Q(origin_book_date=book_date)
+        | models.Q(bank_mutation_id__in=bank_ids)
+        | models.Q(otomax_entry_id__in=otomax_ids)
+    )
+    discrepancy_ids = list(discrepancies.values_list("id", flat=True))
+
+    Adjustment.objects.filter(
+        models.Q(book_date=book_date) | models.Q(discrepancy_id__in=discrepancy_ids)
+    ).delete()
+    discrepancies.delete()
+    matches.delete()
+
+    # Reset match_status untuk pasangan lintas hari yang selamat jika tidak lagi punya Match aktif
+    for b_id in surviving_bank_ids:
+        if not Match.objects.filter(
+            models.Q(bank_mutation_id=b_id) | models.Q(bank_mutations__id=b_id),
+            voided_at__isnull=True,
+        ).exists():
+            BankMutation.objects.filter(id=b_id).update(match_status=MatchStatus.UNMATCHED)
+    for o_id in surviving_otomax_ids:
+        if not Match.objects.filter(
+            models.Q(otomax_entry_id=o_id) | models.Q(otomax_entries__id=o_id),
+            voided_at__isnull=True,
+        ).exists():
+            OtomaxEntry.objects.filter(id=o_id).update(match_status=MatchStatus.UNMATCHED)
+
+    # Pulihkan lawan netral lintas hari
+    in_day = set(otomax_ids)
+    for o in otomax_objs:
+        partner_id = o.net_pair_id if (o.net_pair_id and o.net_pair_id not in in_day) else 0
+        restore_net_partner(partner_id, o.pk, "Lawan netralnya ikut terhapus bersama purge tanggal")
+        if o.net_pair and o.net_pair_id not in in_day:
+            affected_other_dates.add(o.net_pair.book_date)
+
     OtomaxEntry.objects.filter(book_date=book_date).delete()
     BankMutation.objects.filter(book_date=book_date).delete()
     DebitIgnored.objects.filter(book_date=book_date).delete()
@@ -77,6 +143,10 @@ def purge_day(book_date: date, *, include_closed: bool = False) -> dict[str, int
             and b.excluded_transactions.count() == 0
         ):
             b.delete()
+
+    for d in affected_other_dates:
+        if d != book_date:
+            refresh_recon_day(d)
 
     return counts
 

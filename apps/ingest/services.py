@@ -382,8 +382,18 @@ def _persist_otomax(batch, rows) -> int:
 @transaction.atomic
 def apply_exclusion_rules_retroactive(book_date: date | None = None) -> dict[str, int]:
     """Terapkan aturan pemisahan secara retrospektif pada transaksi yang belum cocok (UNMATCHED / PENDING_SETTLE)."""
-    bank_qs = BankMutation.objects.filter(match_status=MatchStatus.UNMATCHED)
-    otomax_qs = OtomaxEntry.objects.filter(match_status__in=[MatchStatus.UNMATCHED, MatchStatus.PENDING_SETTLE])
+    from apps.recon.engine.helpers import _exclude_active_bank_matches, _exclude_active_otomax_matches
+    from apps.recon.models import Adjustment, Match
+
+    locked_dates = set(ReconDay.objects.filter(locked=True).values_list("book_date", flat=True))
+    bank_qs = _exclude_active_bank_matches(
+        BankMutation.objects.filter(match_status=MatchStatus.UNMATCHED).exclude(book_date__in=locked_dates)
+    )
+    otomax_qs = _exclude_active_otomax_matches(
+        OtomaxEntry.objects.filter(match_status__in=[MatchStatus.UNMATCHED, MatchStatus.PENDING_SETTLE]).exclude(
+            book_date__in=locked_dates
+        )
+    )
 
     if book_date:
         bank_qs = bank_qs.filter(book_date=book_date)
@@ -413,7 +423,10 @@ def apply_exclusion_rules_retroactive(book_date: date | None = None) -> dict[str
                 ),
             )
             batches_to_update.add(bm.import_batch)
-            bm.discrepancies.filter(status=DiscrepancyStatus.OPEN).delete()
+            Match.objects.filter(bank_mutation=bm, voided_at__isnull=False).delete()
+            bm_discs = bm.discrepancies.all()
+            Adjustment.objects.filter(discrepancy__in=bm_discs).delete()
+            bm_discs.delete()
             bm.delete()
             bank_moved += 1
 
@@ -439,7 +452,10 @@ def apply_exclusion_rules_retroactive(book_date: date | None = None) -> dict[str
                 ),
             )
             batches_to_update.add(oe.import_batch)
-            oe.discrepancies.filter(status=DiscrepancyStatus.OPEN).delete()
+            Match.objects.filter(otomax_entry=oe, voided_at__isnull=False).delete()
+            oe_discs = oe.discrepancies.all()
+            Adjustment.objects.filter(discrepancy__in=oe_discs).delete()
+            oe_discs.delete()
             oe.delete()
             otomax_moved += 1
 

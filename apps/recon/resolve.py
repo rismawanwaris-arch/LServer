@@ -166,25 +166,40 @@ def tag_manual_mutation(
     bm.match_status = MatchStatus.MANUAL
     bm.save(update_fields=["tag_manual", "manual_note", "match_status", "updated_at"])
 
-    # Buat record Match tipe MANUAL jika belum ada
-    Match.objects.get_or_create(
-        book_date=bm.book_date,
-        channel=bm.channel,
-        bank_mutation=bm,
-        defaults=dict(
+    tag_note = f"Tag manual: {tag}. {note}".strip()
+    # Hanya cari Match AKTIF (voided_at__isnull=True) agar tidak bentrok dengan
+    # Match yang sudah dibatalkan (voided) yang bisa memicu MultipleObjectsReturned
+    # atau IntegrityError pada constraint uniq_active_bank_match.
+    active_match = Match.objects.select_for_update().filter(bank_mutation=bm, voided_at__isnull=True).first()
+    if active_match:
+        active_match.book_date = bm.book_date
+        active_match.channel = bm.channel
+        active_match.match_type = MatchType.MANUAL
+        active_match.amount_bank = bm.amount
+        active_match.amount_otomax = Decimal("0.00")
+        active_match.note = tag_note
+        active_match.matched_by = user
+        active_match.needs_review = False
+        active_match.review_reason = ""
+        active_match.save()
+    else:
+        active_match = Match.objects.create(
+            book_date=bm.book_date,
+            channel=bm.channel,
+            bank_mutation=bm,
             match_type=MatchType.MANUAL,
             amount_bank=bm.amount,
             amount_otomax=Decimal("0.00"),
-            note=f"Tag manual: {tag}. {note}".strip(),
+            note=tag_note,
             matched_by=user,
-        ),
-    )
+        )
 
     for disc in Discrepancy.objects.filter(bank_mutation=bm, status="OPEN"):
         resolve_discrepancy(
             disc,
+            match=active_match,
             resolution_type="DATA_FIX",
-            reason=f"Tag manual: {tag}. {note}".strip(),
+            reason=tag_note,
             user=user,
         )
 
@@ -208,18 +223,29 @@ def tag_manual_otomax(
     o.save(update_fields=["match_status", "updated_at"])
 
     tag_note = f"Tag manual Otomax: {tag}. {note}".strip()
-    match, _ = Match.objects.get_or_create(
-        book_date=o.book_date,
-        channel=o.channel_hint or Channel.OTOMAX,
-        otomax_entry=o,
-        defaults=dict(
+    match = Match.objects.select_for_update().filter(otomax_entry=o, voided_at__isnull=True).first()
+    if match:
+        match.book_date = o.book_date
+        match.channel = o.channel_hint or Channel.OTOMAX
+        match.match_type = MatchType.MANUAL
+        match.amount_bank = Decimal("0.00")
+        match.amount_otomax = o.amount
+        match.note = tag_note
+        match.matched_by = user
+        match.needs_review = False
+        match.review_reason = ""
+        match.save()
+    else:
+        match = Match.objects.create(
+            book_date=o.book_date,
+            channel=o.channel_hint or Channel.OTOMAX,
+            otomax_entry=o,
             match_type=MatchType.MANUAL,
             amount_bank=Decimal("0.00"),
             amount_otomax=o.amount,
             note=tag_note,
             matched_by=user,
-        ),
-    )
+        )
 
     for disc in Discrepancy.objects.filter(otomax_entry=o, status="OPEN"):
         resolve_discrepancy(
