@@ -659,4 +659,25 @@ def test_unnet_multi_reversal_view_no_unpack_error(auth_client, operator):
         assert entry.net_pair is None
 
 
+@pytest.mark.django_db
+def test_bulk_manual_match_action_no_500_on_non_qris_channels(auth_client):
+    """Endpoint /manual-match/bulk/ tidak boleh error 500 (Channel.UNKNOWN) saat membandingkan
+    mutasi bank non-QRIS (BRI/BCA/Mandiri) dengan entri Otomax TOPUP_TARTUN maupun PAYMENT/STOR_IN."""
+    b_bri = _bank("TRSF DARI TOKO MAKMUR JAYA", "750000", channel=Channel.BRI)
+    o_bri = _otomax("TARTUN TF BRI TOKO MAKMUR JAYA", "750000", channel=Channel.BRI)
+    # Tambahkan juga kategori PAYMENT / OTHER dengan nominal sama di channel berbeda untuk memastikan
+    # _is_channel_compatible melewati pengecekan non-QRIS tanpa AttributeError Channel.UNKNOWN
+    _otomax("BAYAR KE BCA TOKO LAIN", "750000", channel=Channel.BCA)
+
+    res = auth_client.post("/manual-match/bulk/", {"book_date": BD.isoformat()})
+    assert res.status_code == 302
+
+    b_bri.refresh_from_db()
+    o_bri.refresh_from_db()
+    assert b_bri.match_status == MatchStatus.MANUAL
+    assert o_bri.match_status == MatchStatus.MANUAL
+    assert _active(b_bri).otomax_entry_id == o_bri.id
+
+
+
 

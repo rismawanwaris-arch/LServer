@@ -207,6 +207,8 @@ def manual_match_action(request):
                 messages.success(request, msg)
         except ValueError as e:
             messages.error(request, str(e))
+        except Exception as e:
+            messages.error(request, f"Gagal menggabungkan mutasi bank: {e}")
         return redirect(next_url)
 
     bm = get_object_or_404(BankMutation, pk=bank_ids[0])
@@ -259,25 +261,36 @@ def unpair_match_action(request, pk: int):
 @login_required
 @require_POST
 def bulk_manual_match_action(request):
+    from apps.recon.engine.helpers import _exclude_active_bank_matches, _exclude_active_otomax_matches
+
     book_date = _parse_date(request.POST.get("book_date"))
     next_url = _safe_next_url(request, f"/pending-settle/?d={book_date}")
 
-    unmatched_banks = list(
-        BankMutation.objects.filter(
-            book_date__gte=book_date - timedelta(days=2),
-            book_date__lte=book_date + timedelta(days=1),
-            match_status=MatchStatus.UNMATCHED,
+    try:
+        unmatched_banks = list(
+            _exclude_active_bank_matches(
+                BankMutation.objects.filter(
+                    book_date__gte=book_date - timedelta(days=2),
+                    book_date__lte=book_date + timedelta(days=1),
+                    match_status=MatchStatus.UNMATCHED,
+                )
+            )
         )
-    )
-    pending_otomax = list(
-        OtomaxEntry.objects.filter(
-            book_date__gte=book_date - timedelta(days=2),
-            book_date__lte=book_date + timedelta(days=1),
-            match_status__in=[MatchStatus.PENDING_SETTLE, MatchStatus.UNMATCHED],
+        pending_otomax = list(
+            _exclude_active_otomax_matches(
+                OtomaxEntry.objects.filter(
+                    book_date__gte=book_date - timedelta(days=2),
+                    book_date__lte=book_date + timedelta(days=1),
+                    match_status__in=[MatchStatus.PENDING_SETTLE, MatchStatus.UNMATCHED],
+                ).exclude(category=OtomaxCategory.ADMIN)
+            )
         )
-    )
 
-    pairs = _find_auto_pairs(unmatched_banks, pending_otomax)
+        pairs = _find_auto_pairs(unmatched_banks, pending_otomax)
+    except Exception as exc:
+        messages.error(request, f"Gagal mencari pasangan otomatis: {exc}")
+        return redirect(next_url)
+
     matched_count = 0
     for bm, oe, note in pairs:
         try:

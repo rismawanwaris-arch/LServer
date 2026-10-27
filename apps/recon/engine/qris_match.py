@@ -158,10 +158,10 @@ def learn_merchant_map(bank: BankMutation, primary_otomax: OtomaxEntry | None) -
                 return
 
     MerchantMap.objects.get_or_create(
-        merchant_id=bank.external_ref,
+        merchant_id=bank.external_ref[:20],
         defaults={
             "reseller": primary_otomax.reseller,
-            "merchant_name": bank.outlet_name or bank.description_raw,
+            "merchant_name": (bank.outlet_name or bank.description_raw or "")[:120],
         },
     )
 

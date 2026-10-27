@@ -88,7 +88,7 @@ def approve_match_action(request, pk: int):
     try:
         approve_match(match, user=request.user)
         messages.success(request, f"Usulan pencocokan #{match.id} disetujui dan sekarang final.")
-    except ValueError as e:
+    except Exception as e:
         messages.error(request, str(e))
     return redirect(next_url)
 
@@ -130,7 +130,7 @@ def approve_match_bulk_action(request):
                     m.reviewed_at = timezone.now()
                     m.save(update_fields=["reviewed_by", "reviewed_at", "updated_at"])
                 already_final_count += 1
-        except ValueError as e:
+        except Exception as e:
             errors.append(str(e))
 
     if approved_count > 0 and already_final_count > 0:

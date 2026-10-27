@@ -125,15 +125,13 @@ def _safe_next_url(request, fallback: str = "/") -> str:
 
 
 def _is_channel_compatible(b, o) -> bool:
-    b_ch = getattr(b, "channel", None)
-    o_ch = getattr(o, "channel_hint", None)
-    o_cat = getattr(o, "category", None)
+    b_ch = getattr(b, "channel", None) or ""
+    o_ch = getattr(o, "channel_hint", None) or ""
     o_desc = (getattr(o, "description_raw", "") or "").upper()
 
     is_b_qris = b_ch == Channel.MERCHANT_BCA
     is_o_qris = (
         o_ch == Channel.MERCHANT_BCA
-        or o_cat == OtomaxCategory.TOPUP_TARTUN
         or "BULK" in o_desc
         or "TARTUN QR" in o_desc
     )
@@ -142,9 +140,9 @@ def _is_channel_compatible(b, o) -> bool:
     if is_b_qris != is_o_qris:
         return False
 
-    # Untuk transfer bank non-QRIS (BCA, BRI, Mandiri, BNI, dll.)
+    # Untuk transfer bank non-QRIS (BCA, BRI, Mandiri)
     if not is_b_qris:
-        if b_ch and o_ch and b_ch != Channel.UNKNOWN and o_ch not in (Channel.UNKNOWN, Channel.OTOMAX):
+        if b_ch and o_ch and o_ch != Channel.OTOMAX:
             if b_ch != o_ch:
                 return False
 
@@ -172,11 +170,16 @@ def _get_bank_parties(b) -> list[str]:
     return res
 
 
-def _get_otomax_parties(o) -> list[str]:
+def _get_otomax_parties(o, reseller_names: dict[int, str] | None = None) -> list[str]:
     names = []
     if getattr(o, "reseller_name_raw", None):
         names.append(o.reseller_name_raw)
-    if getattr(o, "reseller", None) and o.reseller and getattr(o.reseller, "name", None):
+    rid = getattr(o, "reseller_id", None)
+    if rid and reseller_names is not None:
+        r_name = reseller_names.get(rid)
+        if r_name:
+            names.append(r_name)
+    elif getattr(o, "reseller", None) and o.reseller and getattr(o.reseller, "name", None):
         names.append(o.reseller.name)
     desc = getattr(o, "description_raw", "") or ""
     m_bfst = re.search(r"BFST\d+([A-Z\s]+?)(?::|$)", desc.upper())
@@ -212,17 +215,20 @@ def _calc_party_similarity(b_parties: list[str], o_parties: list[str]) -> tuple[
 
 
 def _find_auto_pairs(unmatched_banks, pending_otomax):
+    from apps.catalog.models import Reseller
+
     used_b = set()
     used_o = set()
     pairs = []
 
     mmap = {m.merchant_id: m.reseller_id for m in MerchantMap.objects.filter(active=True)}
+    reseller_names = dict(Reseller.objects.values_list("id", "name"))
 
     # Tahap 1: Nama pengirim / outlet cocok DAN nominal persis
     for o in pending_otomax:
         if o.id in used_o:
             continue
-        o_parties = _get_otomax_parties(o)
+        o_parties = _get_otomax_parties(o, reseller_names)
         for b in unmatched_banks:
             if b.id in used_b:
                 continue
@@ -274,7 +280,7 @@ def _find_auto_pairs(unmatched_banks, pending_otomax):
                 continue
 
             b_parties = _get_bank_parties(bm)
-            o_parties = _get_otomax_parties(oe)
+            o_parties = _get_otomax_parties(oe, reseller_names)
 
             # 2. Khusus QRIS (MERCHANT_BCA):
             # DILARANG pasang buta hanya karena nominal unik jika nama outlet & reseller tidak cocok / bertolak belakang!
