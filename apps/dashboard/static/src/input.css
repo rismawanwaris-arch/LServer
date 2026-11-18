@@ -91,6 +91,15 @@
 /* Kelas non-Tailwind & Animasi UI */
 .icon { width: 1rem; height: 1rem; flex: none; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
 
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 @keyframes fadeSlideUp {
   from {
     opacity: 0;
@@ -98,7 +107,7 @@
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: none;
   }
 }
 
@@ -137,27 +146,30 @@
   }
 }
 
-/* Staggered entrance pada elemen utama di dalam main */
+/* Staggered entrance pada elemen utama di dalam main.
+   Penting: pembungkus utama hanya menganimasikan opacity (BUKAN transform) agar tidak
+   membentuk containing-block baru yang merusak modal `position: fixed` di dalamnya. */
 main > div > *,
 main > * {
-  animation: fadeSlideUp 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: fadeIn 0.28s ease-out backwards;
 }
 main > div > *:nth-child(1), main > *:nth-child(1) { animation-delay: 0.02s; }
-main > div > *:nth-child(2), main > *:nth-child(2) { animation-delay: 0.06s; }
-main > div > *:nth-child(3), main > *:nth-child(3) { animation-delay: 0.10s; }
-main > div > *:nth-child(4), main > *:nth-child(4) { animation-delay: 0.14s; }
-main > div > *:nth-child(5), main > *:nth-child(5) { animation-delay: 0.18s; }
-main > div > *:nth-child(6), main > *:nth-child(6) { animation-delay: 0.22s; }
-main > div > *:nth-child(7), main > *:nth-child(7) { animation-delay: 0.26s; }
+main > div > *:nth-child(2), main > *:nth-child(2) { animation-delay: 0.05s; }
+main > div > *:nth-child(3), main > *:nth-child(3) { animation-delay: 0.08s; }
+main > div > *:nth-child(4), main > *:nth-child(4) { animation-delay: 0.11s; }
+main > div > *:nth-child(5), main > *:nth-child(5) { animation-delay: 0.14s; }
+main > div > *:nth-child(6), main > *:nth-child(6) { animation-delay: 0.17s; }
+main > div > *:nth-child(7), main > *:nth-child(7) { animation-delay: 0.20s; }
 
-/* Kartu di dalam grid juga muncul bertahap */
-.grid > .card {
-  animation: fadeSlideUp 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+/* Kartu di dalam grid dan callout muncul bertahap dengan slide-up halus */
+.grid > .card,
+.callout {
+  animation: fadeSlideUp 0.35s cubic-bezier(0.22, 1, 0.36, 1) backwards;
 }
-.grid > .card:nth-child(1) { animation-delay: 0.06s; }
-.grid > .card:nth-child(2) { animation-delay: 0.12s; }
-.grid > .card:nth-child(3) { animation-delay: 0.18s; }
-.grid > .card:nth-child(4) { animation-delay: 0.24s; }
+.grid > .card:nth-child(1) { animation-delay: 0.05s; }
+.grid > .card:nth-child(2) { animation-delay: 0.10s; }
+.grid > .card:nth-child(3) { animation-delay: 0.15s; }
+.grid > .card:nth-child(4) { animation-delay: 0.20s; }
 
 /* Efek interaktif pada todo-card & card-link */
 .todo-card:hover .todo-icon {
