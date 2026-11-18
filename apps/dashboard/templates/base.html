@@ -47,6 +47,7 @@
 </head>
 <body class="min-h-full bg-slate-50 font-sans text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100"
       x-data="{ mobileMenuOpen: false }" @keydown.escape.window="mobileMenuOpen = false">
+  <div id="top-loader" aria-hidden="true"></div>
   {% include "dashboard/_icons.html" %}
   {% load nav %}
 
@@ -79,8 +80,11 @@
       {% if messages %}
       <div class="mx-auto w-full max-w-[1600px] space-y-2 px-4 pt-4 sm:px-6 lg:px-8" role="status">
         {% for m in messages %}
-        <div x-data="{ show: true }" x-show="show" x-transition.opacity
-             class="flex items-start gap-2.5 rounded-xl border px-3.5 py-3 text-sm shadow-[0_1px_2px_rgba(16,24,40,0.05)]
+        <div x-data="{ show: true }" x-show="show"
+             x-transition:leave="transition ease-in duration-200"
+             x-transition:leave-start="opacity-100 translate-y-0 scale-100"
+             x-transition:leave-end="opacity-0 -translate-y-2 scale-95"
+             class="toast-msg flex items-start gap-2.5 rounded-xl border px-3.5 py-3 text-sm shadow-[0_1px_2px_rgba(16,24,40,0.05)]
           {% if m.tags == 'error' %}border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200
           {% elif m.tags == 'success' %}border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200
           {% else %}border-indigo-200 bg-indigo-50 text-indigo-800 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-200{% endif %}">
@@ -100,5 +104,84 @@
     </div>
   </div>
 
+  <script>
+    (function () {
+      var reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      var loader = document.getElementById('top-loader');
+
+      function startLoader() {
+        if (!loader) return;
+        loader.classList.remove('done');
+        loader.classList.add('active');
+      }
+      function stopLoader() {
+        if (!loader) return;
+        loader.classList.remove('active');
+        loader.classList.add('done');
+        setTimeout(function () { loader.classList.remove('done'); }, 400);
+      }
+
+      // 1. Indikator progress bar atas saat navigasi halaman, submit form, atau request HTMX
+      document.addEventListener('htmx:beforeRequest', startLoader);
+      document.addEventListener('htmx:afterRequest', stopLoader);
+      document.addEventListener('submit', function (e) {
+        var form = e.target;
+        if (!form || form.defaultPrevented) return;
+        startLoader();
+        var btn = form.querySelector('button[type="submit"], button:not([type])');
+        if (btn && !btn.dataset.noSpin) {
+          var svg = btn.querySelector('svg');
+          if (svg) svg.classList.add('is-loading-spin');
+        }
+      });
+      document.addEventListener('click', function (e) {
+        var a = e.target.closest && e.target.closest('a[href]');
+        if (!a) return;
+        var href = a.getAttribute('href') || '';
+        if (
+          !a.target &&
+          !a.hasAttribute('download') &&
+          !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey &&
+          href && !href.startsWith('#') && !href.startsWith('javascript:') &&
+          !href.includes('/export') && !href.includes('/download')
+        ) {
+          startLoader();
+        }
+      });
+
+      // 2. Animasi count-up halus pada angka KPI utama (.kpi-value)
+      if (!reducedMotion) {
+        document.addEventListener('DOMContentLoaded', function () {
+          var kpis = document.querySelectorAll('.kpi-value.money');
+          kpis.forEach(function (el) {
+            var nodes = Array.from(el.childNodes).filter(function (n) { return n.nodeType === 3 && n.nodeValue.trim().length > 0; });
+            if (!nodes.length) return;
+            var textNode = nodes[nodes.length - 1];
+            var finalStr = textNode.nodeValue;
+            var rawDigits = finalStr.replace(/[^\d]/g, '');
+            if (!rawDigits) return;
+            var targetVal = parseInt(rawDigits, 10);
+            if (!targetVal || targetVal <= 0 || isNaN(targetVal)) return;
+            var isNeg = finalStr.trim().startsWith('-');
+            var duration = 550;
+            var startTime = null;
+            function step(ts) {
+              if (!startTime) startTime = ts;
+              var progress = Math.min((ts - startTime) / duration, 1);
+              var eased = 1 - Math.pow(1 - progress, 3);
+              if (progress < 1) {
+                var cur = Math.round(targetVal * eased);
+                textNode.nodeValue = (isNeg ? '-' : '') + cur.toLocaleString('id-ID');
+                requestAnimationFrame(step);
+              } else {
+                textNode.nodeValue = finalStr;
+              }
+            }
+            requestAnimationFrame(step);
+          });
+        });
+      }
+    })();
+  </script>
 </body>
 </html>
