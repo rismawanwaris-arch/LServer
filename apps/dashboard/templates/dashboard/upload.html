@@ -63,7 +63,7 @@
           <option value="OTOMAX">OTOMAX (Excel / CSV)</option>
           <option value="BCA">BCA (CSV)</option>
           <option value="MANDIRI">Mandiri (CSV titik-koma)</option>
-          <option value="BRI">BRI (CSV Qlola / Cash Statement)</option>
+          <option value="BRI">BRI (Excel / CSV Qlola)</option>
           <option value="MERCHANT_BCA">Merchant BCA (Excel SUMMARY)</option>
         </select>
       </div>
@@ -81,7 +81,7 @@
           <div><b>Format Mandiri:</b> File CSV dengan pemisah titik-koma (<b>;</b>). Anomali angka desimal otomatis dibersihkan.</div>
         </template>
         <template x-if="selectedChannel === 'BRI'">
-          <div><b>Format BRI:</b> File CSV Qlola Cash Statement (<i>Transaction Reference, Value Date, Remark, Debit, Credit</i>) atau format CSV lama (<i>TGL_TRAN, REMARK_CUSTOM, MUTASI_KREDIT</i>).</div>
+          <div><b>Format BRI:</b> File Excel (.xlsx) atau CSV Qlola Cash Statement (<i>Transaction Reference, Value Date, Remark, Debit, Credit</i>) serta format CSV lama (<i>TGL_TRAN, REMARK_CUSTOM</i>).</div>
         </template>
         <template x-if="selectedChannel === 'MERCHANT_BCA'">
           <div><b>Format Merchant BCA:</b> File Excel (.xlsx) rekap QRIS. Parser otomatis membaca sheet <b>SUMMARY</b> per outlet.</div>

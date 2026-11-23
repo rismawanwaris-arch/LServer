@@ -254,3 +254,99 @@ APFT000626065890261118,non-reff,18/11/2026 06:32:49,-,DANA20261118036997972115AR
     assert DebitIgnored.objects.filter(import_batch=batch).count() == 1
 
 
+def test_import_bri_qlola_xlsx_end_to_end(db):
+    import io
+    from datetime import date
+
+    import openpyxl
+
+    from apps.ingest.models import BankMutation, DebitIgnored
+    from apps.ingest.review import analyze_upload
+    from apps.ingest.services import import_file
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Cash Statement"
+    ws.append(["CASH STATEMENT", None, None, None])
+    ws.append(["CUSTOMER DETAILS", None, None, "BALANCE DETAILS"])
+    ws.append(["Account Number", "Client Name", None, "Total Credit Amount"])
+    ws.append(["215401000596563", "Asya bisnis indonesia", None, "276,085,000.00"])
+    ws.append([None, None, None, None])
+    ws.append(
+        [
+            "Transaction Reference",
+            "Customer Reference",
+            "Value Date",
+            "Entry Date",
+            "Remark",
+            "Teller ID",
+            "Debit",
+            "Credit",
+            "Product Type",
+        ]
+    )
+    ws.append(
+        [
+            "-",
+            "non-reff",
+            "18/11/2026 06:25:08",
+            "-",
+            "5221840303509351#149579070006#EDC#TRFLA",
+            "0888932",
+            "-",
+            "1,000,000.00",
+            "-",
+        ]
+    )
+    ws.append(
+        [
+            "APFT000626065890261118",
+            "non-reff",
+            "18/11/2026 06:32:49",
+            "-",
+            "DANA20261118036997972115ARIKURNIAWAN",
+            "0371892",
+            "-",
+            1505000.00,
+            "-",
+        ]
+    )
+    ws.append(
+        [
+            "-",
+            "non-reff",
+            "18/11/2026 11:38:49",
+            "-",
+            "IBIZ SYAIFUL TO PT SIMATECH",
+            "8890403",
+            "200,000,388.00",
+            "-",
+            "-",
+        ]
+    )
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    xlsx_bytes = buf.getvalue()
+
+    review = analyze_upload(
+        Channel.BRI,
+        xlsx_bytes,
+        date(2026, 11, 23),
+        filename="23-11-2026_QLAOD24875_SUMMARY_BALANCE.xlsx",
+    )
+    assert review.book_date == date(2026, 11, 18)
+    assert review.counts["baru"] == 3
+
+    batch = import_file(
+        channel=Channel.BRI,
+        content=xlsx_bytes,
+        book_date=date(2026, 11, 23),
+        filename="23-11-2026_QLAOD24875_SUMMARY_BALANCE.xlsx",
+    )
+    assert batch.book_date == date(2026, 11, 18)
+    assert BankMutation.objects.filter(import_batch=batch).count() == 2
+    assert DebitIgnored.objects.filter(import_batch=batch).count() == 1
+
+
+
