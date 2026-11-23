@@ -679,5 +679,26 @@ def test_bulk_manual_match_action_no_500_on_non_qris_channels(auth_client):
     assert _active(b_bri).otomax_entry_id == o_bri.id
 
 
+@pytest.mark.django_db
+def test_bri_qlola_new_remark_with_esb_ws_ob_matches_otomax():
+    """Keterangan baru Qlola Cash Statement yang membawa akhiran WS_OB / ESB:...
+    tetap harus cocok deterministik dengan entri Otomax yang hanya punya teks inti."""
+    b_nbmb = _bank("NBMB ROBIN          TO SYAIFUL  ESB:NBMB:0001500F:254131257770", "3000000")
+    o_nbmb = _otomax("TARTUN TF BRI NBMB ROBIN TO SYAIFUL", "3000000")
+
+    b_wbnk = _bank("WBNKTRF792101012796539TO215401000596563  ESB:WBNK:000VU00F:536607462879", "495000")
+    o_wbnk = _otomax("TARTUN TF BRI WBNKTRF792101012796539", "495000")
+
+    b_mpin = _bank("TRF604802068480AGUS RUCHIYAT 110MP 622011020050704960 ESB:MPIN:000P504F:604802068480", "1000000")
+    o_mpin = _otomax("TARTUN TF BRI TRF604802068480AGUS RUCHIYAT", "1000000")
+
+    run_match(BD)
+
+    assert _active(b_nbmb).otomax_entry_id == o_nbmb.id
+    assert _active(b_wbnk).otomax_entry_id == o_wbnk.id
+    assert _active(b_mpin).otomax_entry_id == o_mpin.id
+
+
+
 
 

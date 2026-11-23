@@ -57,6 +57,11 @@ _DANA = re.compile(r"DANA(\d{12,})")
 _ATM = re.compile(r"ATM[LS]TRPRM\s+([0-9A-Z]+)\s+(\d+)")
 _BIFAST = re.compile(r"BFST(\d{10,})")
 _WBNK = re.compile(r"WBNK(\d{10,})")
+_WBNK_TRF = re.compile(r"WBNKTRF(\d{10,})")
+_TRF_DIGITS = re.compile(r"\bTRF(\d{10,})")
+_ESB_REF = re.compile(r"\bESB:[A-Z0-9]+:[A-Z0-9]+:([A-Z0-9]{8,})")
+_WS_OB_REF = re.compile(r"\bWS_OB;([A-Z0-9]{10,});")
+_QLOLA_TECH_SUFFIX = re.compile(r"\s+(?:WS_OB;.*|ESB:[A-Z0-9]+:[A-Z0-9]+:.*)$")
 _GOPAY = re.compile(r"GOPAY BANK TRANSFER ID([0-9A-Z]+)")
 _BRILINK = re.compile(r"TRANSFER DARI (\d{10,}) VIA BRILINK")
 _OVERBOOK = re.compile(r"(\d{6,}_OB_\d{6,})")
@@ -114,6 +119,14 @@ def norm_ref(s: str | None) -> str:
     return _WS.sub(" ", (s or "").upper()).strip()
 
 
+def strip_qlola_suffix(s: str | None) -> str:
+    """Buang akhiran teknis Qlola Cash Statement ('WS_OB;...' dan 'ESB:...:...')
+    agar keterangan bank bisa dicocokkan persis/fuzzy dengan keterangan Otomax."""
+    t = norm_ref(s)
+    stripped = _QLOLA_TECH_SUFFIX.sub("", t).strip()
+    return stripped or t
+
+
 def strip_otomax_prefix(s: str | None) -> str:
     """Buang prefix & akhiran "TGL dd/bln/yyyy" keterangan OTOMAX supaya menyisakan ref
     bank mentah."""
@@ -148,7 +161,7 @@ def parse_tgl_date(s: str | None) -> date | None:
 def ref_core(s: str | None) -> str:
     """Token angka paling stabil dari sebuah keterangan. '' kalau tak ketemu."""
     t = norm_ref(s)
-    for pattern in (_EDC_CORE, _DANA, _BIFAST, _WBNK, _GOPAY, _BRILINK, _OVERBOOK):
+    for pattern in (_EDC_CORE, _DANA, _BIFAST, _WBNK, _WBNK_TRF, _TRF_DIGITS, _GOPAY, _BRILINK, _OVERBOOK):
         m = pattern.search(t)
         if m:
             return m.group(1)
@@ -195,6 +208,14 @@ def extract_tokens(s: str | None) -> list[str]:
     for m in _OVERBOOK.finditer(text):
         add(m.group(0))
     for m in _GOPAY.finditer(text):
+        add(m.group(1))
+    for m in _WBNK_TRF.finditer(text):
+        add(m.group(1))
+    for m in _TRF_DIGITS.finditer(text):
+        add(m.group(1))
+    for m in _WS_OB_REF.finditer(text):
+        add(m.group(1))
+    for m in _ESB_REF.finditer(text):
         add(m.group(1))
 
     # 2. Sequence angka panjang (>= 10 digit) yang belum tertangkap

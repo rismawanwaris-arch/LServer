@@ -14,7 +14,7 @@ from rapidfuzz import fuzz
 
 from apps.catalog.models import Reseller
 from apps.core.enums import Channel, MatchStatus, MatchType
-from apps.core.normalize import norm_ref
+from apps.core.normalize import extract_tokens, norm_ref, strip_qlola_suffix
 from apps.ingest.models import BankMutation, OtomaxEntry
 
 from .helpers import (
@@ -108,8 +108,12 @@ def _match_ref(book_date: date, channel: str) -> RunStats:
         match_note = ""
         allow_cross = not _proposal_rejected(b)
 
-        # 1. Exact norm match
+        # 1. Exact norm match (termasuk tanpa akhiran teknis WS_OB / ESB dari Qlola baru)
         o = take(by_norm, (b.ref_normalized, b.amount), allow_cross_date=allow_cross)
+        if o is None:
+            b_stripped = strip_qlola_suffix(b.ref_normalized)
+            if b_stripped and b_stripped != b.ref_normalized:
+                o = take(by_norm, (b_stripped, b.amount), allow_cross_date=allow_cross)
         mtype = MatchType.AUTO_EXACT
 
         # 1b. Subparts match jika keterangan menggabungkan beberapa sumber (misal REMARK_CUSTOM [TRREMK])
@@ -125,22 +129,23 @@ def _match_ref(book_date: date, channel: str) -> RunStats:
                 mtype = MatchType.AUTO_EXACT
 
         # 2. Token match (Priority 1)
+        fresh_tokens = list(dict.fromkeys([*(b.extracted_tokens or []), *extract_tokens(b.description_raw)]))
         if o is None:
             # Check ref_core first
             if b.ref_core:
                 o = take(by_core, (b.ref_core, b.amount), allow_cross_date=allow_cross)
                 if o is None:
                     o = take(by_token, (b.ref_core, b.amount), allow_cross_date=allow_cross)
-            # Check all extracted tokens
-            if o is None and b.extracted_tokens:
-                for tk in b.extracted_tokens:
+            # Check all extracted tokens (termasuk token ekstraksi terbaru untuk data yang sudah terimpor)
+            if o is None and fresh_tokens:
+                for tk in fresh_tokens:
                     o = take(by_token, (tk, b.amount), allow_cross_date=allow_cross)
                     if o:
                         break
 
             # 2a. Cross-channel token match untuk token deterministik kuat (mis. BI-Fast transfer antar bank)
             if o is None:
-                strong_tokens = [tk for tk in ([b.ref_core] + (b.extracted_tokens or [])) if tk and len(tk) >= 8]
+                strong_tokens = [tk for tk in ([b.ref_core] + fresh_tokens) if tk and len(tk) >= 8]
                 if strong_tokens:
                     cross_cands = _exclude_active_otomax_matches(
                         OtomaxEntry.objects.filter(
@@ -333,6 +338,9 @@ def _fuzzy_candidate(bank, otomax, used):
     threshold = settings.MATCH_FUZZY_THRESHOLD
     best, best_score = None, threshold
     bank_norms = [bank.ref_normalized]
+    b_stripped = strip_qlola_suffix(bank.ref_normalized)
+    if b_stripped and b_stripped not in bank_norms:
+        bank_norms.append(b_stripped)
     if "[" in bank.ref_normalized and "]" in bank.ref_normalized:
         parts = bank.ref_normalized.split("[", 1)
         p1 = parts[0].strip()
@@ -345,10 +353,15 @@ def _fuzzy_candidate(bank, otomax, used):
     for o in otomax:
         if o.id in used or o.amount != bank.amount:
             continue
+        o_norms = [o.ref_normalized]
+        o_stripped = strip_qlola_suffix(o.ref_normalized)
+        if o_stripped and o_stripped not in o_norms:
+            o_norms.append(o_stripped)
         for bn in bank_norms:
-            score = fuzz.token_sort_ratio(bn, o.ref_normalized)
-            if score >= best_score:
-                best, best_score = o, score
+            for on in o_norms:
+                score = fuzz.token_sort_ratio(bn, on)
+                if score >= best_score:
+                    best, best_score = o, score
     if best:
         used.add(best.id)
         best._fuzzy_score = int(best_score)

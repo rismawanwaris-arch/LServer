@@ -8,6 +8,7 @@ from django.db import models, transaction
 
 from apps.catalog.models import MerchantMap, ResellerAlias
 from apps.core.enums import Channel, DiscrepancyKind, DiscrepancyStatus, MatchStatus, MatchType, OtomaxCategory
+from apps.core.normalize import strip_qlola_suffix
 from apps.ingest.models import BankMutation, OtomaxEntry
 
 from .engine.helpers import (
@@ -95,6 +96,9 @@ def _find_otomax_for(bank: BankMutation, book_date: date) -> Match | None:
     )
     o = same_amount.filter(ref_core=bank.ref_core).first() if bank.ref_core else None
     o = o or same_amount.filter(ref_normalized=bank.ref_normalized).first()
+    b_stripped = strip_qlola_suffix(bank.ref_normalized)
+    if not o and b_stripped != bank.ref_normalized:
+        o = same_amount.filter(ref_normalized=b_stripped).first()
     if o:
         reason = "" if bank.channel == Channel.MERCHANT_BCA else _CROSS_DATE_REASON
         return _persist(book_date, bank.channel, bank, o, review_reason=reason)
@@ -109,7 +113,11 @@ def _find_otomax_for(bank: BankMutation, book_date: date) -> Match | None:
         if qris_match:
             return qris_match
 
-    similar = [c for c in same_amount if _similar(c.ref_normalized, bank.ref_normalized)]
+    similar = [
+        c
+        for c in same_amount
+        if _similar(c.ref_normalized, bank.ref_normalized) or _similar(c.ref_normalized, b_stripped)
+    ]
     if len(similar) != 1:
         return None
     return _persist(book_date, bank.channel, bank, similar[0], review_reason=_SIMILAR_REASON)
