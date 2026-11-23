@@ -220,3 +220,37 @@ BFST20261118FASTIDJA01091969937261118,non-reff,18/11/2026 06:33:13,18/11/2026 06
     assert res.bank_rows[3].amount == Decimal("-200000388.00")
     assert "IBIZ SYAIFUL" in res.bank_rows[3].description_raw
 
+
+def test_import_bri_qlola_cash_statement_csv_end_to_end(db):
+    from datetime import date
+    from apps.ingest.models import BankMutation, DebitIgnored
+    from apps.ingest.review import analyze_upload
+    from apps.ingest.services import import_file
+
+    qlola_csv = """CASH STATEMENT,,,
+,,,
+CUSTOMER DETAILS,,,BALANCE DETAILS
+Account Number,Client Name,,Total Credit Amount
+215401000596563,Asya bisnis indonesia,,"276,085,000.00"
+,,,
+Transaction Reference,Customer Reference,Value Date,Entry Date,Remark,Teller ID,Debit,Credit,Product Type
+-,non-reff,18/11/2026 06:25:08,-,5221840303509351#149579070006#EDC#TRFLA  LA   215401000596563EDC5221840303509351,0888932,-,"1,000,000.00",-
+APFT000626065890261118,non-reff,18/11/2026 06:32:49,-,DANA20261118036997972115ARIKURNIAWAN WS_OB;20261118036997972115;72133 ESB:APFT:000TP00F:000626065890,0371892,-,"1,505,000.00",-
+-,non-reff,18/11/2026 11:38:49,-,IBIZ SYAIFUL        TO PT SIMATECH SUMBE  ESB:IBIZ:0001500F:109769089771,8890403,"200,000,388.00",-,-
+""".encode("utf-8")
+
+    review = analyze_upload(Channel.BRI, qlola_csv, date(2026, 11, 23), filename="cash_statement.csv")
+    assert review.book_date == date(2026, 11, 18)
+    assert review.counts["baru"] == 3
+
+    batch = import_file(
+        channel=Channel.BRI,
+        content=qlola_csv,
+        book_date=date(2026, 11, 23),
+        filename="cash_statement.csv",
+    )
+    assert batch.book_date == date(2026, 11, 18)
+    assert BankMutation.objects.filter(import_batch=batch).count() == 2
+    assert DebitIgnored.objects.filter(import_batch=batch).count() == 1
+
+
