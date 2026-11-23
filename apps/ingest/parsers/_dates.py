@@ -31,11 +31,11 @@ _ID_MONTHS = {
 }
 
 _LONG = re.compile(r"(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})(?:\s+(\d{2}):(\d{2}):(\d{2}))?")
-_SLASH = re.compile(r"(\d{2})/(\d{2})/(\d{4})")
+_SLASH = re.compile(r"(\d{2})/(\d{2})/(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?")
 
 
 def parse_id_datetime(text: str) -> datetime | None:
-    """'5 September 2026 21:40:31' atau '05/09/2026' -> datetime (naive)."""
+    """'5 September 2026 21:40:31' atau '05/09/2026' atau '18/11/2026 06:25:08' -> datetime (naive)."""
     text = text.strip()
     m = _LONG.search(text)
     if m:
@@ -46,7 +46,8 @@ def parse_id_datetime(text: str) -> datetime | None:
             return datetime(year, month, day, hh, mm, ss)
     m = _SLASH.search(text)
     if m:
-        return datetime(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+        hh, mm, ss = (int(x) if x else 0 for x in (m.group(4), m.group(5), m.group(6)))
+        return datetime(int(m.group(3)), int(m.group(2)), int(m.group(1)), hh, mm, ss)
     try:
         return datetime.fromisoformat(text.replace("Z", ""))
     except ValueError:

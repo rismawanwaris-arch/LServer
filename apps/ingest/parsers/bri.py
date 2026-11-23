@@ -1,4 +1,6 @@
-"""Parser mutasi BRI — Mendukung CSV (koma, quoted) sesuai PRD & format 3 baris."""
+"""Parser mutasi BRI — Mendukung CSV Qlola lama (TGL_TRAN/REMARK_CUSTOM),
+CSV Qlola Cash Statement baru (Transaction Reference/Value Date/Remark/Debit/Credit),
+serta format teks 3 baris."""
 
 from __future__ import annotations
 
@@ -28,7 +30,65 @@ def _parse_num(val: str | None) -> Decimal:
         return Decimal("0")
 
 
+def _parse_qlola_cash_statement_csv(text: str, result: ParseResult) -> bool:
+    """Format export Qlola terbaru (CASH STATEMENT): beberapa baris metadata di atas,
+    diikuti header tabel `Transaction Reference,Customer Reference,Value Date,Entry Date,Remark,...`."""
+    lines = text.splitlines()
+    header_idx = -1
+    for idx, line in enumerate(lines[:60]):
+        up = line.upper()
+        if "REMARK" in up and ("VALUE DATE" in up or "ENTRY DATE" in up) and ("DEBIT" in up or "CREDIT" in up):
+            header_idx = idx
+            break
+
+    if header_idx == -1:
+        return False
+
+    header_line = lines[header_idx]
+    delimiter = "\t" if "\t" in header_line else (";" if ";" in header_line else ",")
+    table_text = "\n".join(lines[header_idx:])
+
+    reader = csv.DictReader(io.StringIO(table_text), delimiter=delimiter, skipinitialspace=True)
+    if not reader.fieldnames:
+        return False
+
+    for row in reader:
+        row_upper = {k.strip().upper(): (v.strip() if v is not None else "") for k, v in row.items() if k}
+        desc = row_upper.get("REMARK", "").strip()
+        val_date = row_upper.get("VALUE DATE", "").strip()
+        entry_date = row_upper.get("ENTRY DATE", "").strip()
+        tgl_raw = val_date if val_date and val_date != "-" else entry_date
+        if tgl_raw == "-":
+            tgl_raw = ""
+
+        tx_ref = row_upper.get("TRANSACTION REFERENCE", "").strip()
+        ext_ref = tx_ref[:40] if tx_ref and tx_ref != "-" else ""
+
+        debit = _parse_num(row_upper.get("DEBIT"))
+        credit = _parse_num(row_upper.get("CREDIT"))
+
+        if not desc and not tgl_raw and credit == 0 and debit == 0:
+            continue
+        if credit == 0 and debit == 0:
+            continue
+
+        amount = credit if credit > 0 else -debit
+        dt = parse_id_datetime(tgl_raw) if tgl_raw else None
+        result.bank_rows.append(
+            ParsedBankRow(
+                description_raw=desc,
+                amount=amount,
+                txn_datetime=dt,
+                external_ref=ext_ref,
+            )
+        )
+    return len(result.bank_rows) > 0
+
+
 def _parse_csv(text: str, result: ParseResult) -> bool:
+    if _parse_qlola_cash_statement_csv(text, result):
+        return True
+
     first_few = text[:2000].upper()
     if (
         "TGL_TRAN" not in first_few

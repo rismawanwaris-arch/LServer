@@ -179,3 +179,44 @@ def test_parse_otomax_xlsx():
     assert len(res.otomax_rows) == 1
     assert res.otomax_rows[0].amount == Decimal("750000")
     assert res.otomax_rows[0].reseller_name_raw == "PLC999"
+
+
+def test_parse_bri_qlola_cash_statement_csv():
+    qlola_csv = """CASH STATEMENT,,,
+,,,
+CUSTOMER DETAILS,,,BALANCE DETAILS
+Account Number,Client Name,,Total Credit Amount
+215401000596563,Asya bisnis indonesia,,"276,085,000.00"
+,,,
+Branch Name,Debit Count,,Current Closing Available Balance
+KCP ANTAPANI,1,,"487,843,198.00"
+,,,
+Statement Date,,,Hold Amount
+18/11/2026 - 18/11/2026,,,"35,497,500.00"
+,,,
+Transaction Reference,Customer Reference,Value Date,Entry Date,Remark,Teller ID,Debit,Credit,Product Type
+-,non-reff,18/11/2026 06:25:08,-,5221840303509351#149579070006#EDC#TRFLA  LA   215401000596563EDC5221840303509351,0888932,-,"1,000,000.00",-
+APFT000626065890261118,non-reff,18/11/2026 06:32:49,-,DANA20261118036997972115ARIKURNIAWAN WS_OB;20261118036997972115;72133 ESB:APFT:000TP00F:000626065890,0371892,-,"1,505,000.00",-
+BFST20261118FASTIDJA01091969937261118,non-reff,18/11/2026 06:33:13,18/11/2026 06:33:00,BFST215401000596563ASRI LESTARI:SSPIIDJA 20261118SSPIIDJA010O0289395778 ESB:BFST:0008N:20261118FASTIDJA01091969937,8888678,-,"1,005,000.00",Bifast Incoming
+-,non-reff,18/11/2026 11:38:49,-,IBIZ SYAIFUL        TO PT SIMATECH SUMBE  ESB:IBIZ:0001500F:109769089771,8890403,"200,000,388.00",-,-
+"""
+    res = parse_file(Channel.BRI, qlola_csv)
+    assert res.book_date.isoformat() == "2026-11-18"
+    assert len(res.bank_rows) == 4
+
+    assert res.bank_rows[0].amount == Decimal("1000000.00")
+    assert res.bank_rows[0].external_ref == ""
+    assert res.bank_rows[0].txn_datetime.strftime("%Y-%m-%d %H:%M:%S") == "2026-11-18 06:25:08"
+    assert "149579070006#EDC" in res.bank_rows[0].description_raw
+
+    assert res.bank_rows[1].amount == Decimal("1505000.00")
+    assert res.bank_rows[1].external_ref == "APFT000626065890261118"
+    assert "DANA20261118036997972115" in res.bank_rows[1].description_raw
+
+    assert res.bank_rows[2].amount == Decimal("1005000.00")
+    assert res.bank_rows[2].external_ref == "BFST20261118FASTIDJA01091969937261118"
+
+    # Baris debit harus bernilai negatif
+    assert res.bank_rows[3].amount == Decimal("-200000388.00")
+    assert "IBIZ SYAIFUL" in res.bank_rows[3].description_raw
+
