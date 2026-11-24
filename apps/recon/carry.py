@@ -62,6 +62,31 @@ def carry_forward(book_date: date, user=None) -> int:
             retire_leftover_discrepancies(counterpart, match, user, book_date)
             resolve_discrepancy(disc, match=match, resolution_type="LATE_MATCH", user=user, on_date=book_date)
             resolved += 1
+        elif not match:
+            # Self-heal: jika baris ini sudah punya Match aktif FINAL (needs_review=False)
+            # atau sudah di-tag manual/netting, tutup selisih OPEN-nya agar tidak jadi hantu.
+            existing_final = None
+            if disc.kind == DiscrepancyKind.BANK_ONLY and disc.bank_mutation:
+                existing_final = Match.objects.filter(
+                    models.Q(bank_mutation=disc.bank_mutation) | models.Q(bank_mutations=disc.bank_mutation),
+                    voided_at__isnull=True,
+                    needs_review=False,
+                ).first()
+            elif disc.kind == DiscrepancyKind.OTOMAX_ONLY and disc.otomax_entry:
+                existing_final = Match.objects.filter(
+                    models.Q(otomax_entry=disc.otomax_entry) | models.Q(otomax_entries=disc.otomax_entry),
+                    voided_at__isnull=True,
+                    needs_review=False,
+                ).first()
+            if existing_final:
+                resolve_discrepancy(
+                    disc,
+                    match=existing_final,
+                    resolution_type="LATE_MATCH",
+                    user=user,
+                    on_date=existing_final.book_date,
+                )
+                resolved += 1
     return resolved
 
 

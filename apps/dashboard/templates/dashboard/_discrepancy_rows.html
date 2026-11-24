@@ -44,7 +44,16 @@
           </td>
           <td class="money whitespace-nowrap text-right font-semibold {% if d.amount < 0 %}text-rose-600 dark:text-rose-400{% else %}text-slate-900 dark:text-white{% endif %}">Rp&nbsp;{{ d.amount|rupiah }}</td>
           <td class="whitespace-nowrap">
-            {% if d.status == 'OPEN' %}<span class="badge-warn"><span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>Terbuka</span>
+            {% if d.status == 'OPEN' %}
+              {% if d.pending_proposal %}
+              <a href="{% url 'matches' %}?d={{ d.pending_proposal.book_date|date:'Y-m-d' }}&tab=review"
+                 class="badge-info hover:underline"
+                 title="Sudah ada usulan pasangan di tgl {{ d.pending_proposal.book_date|date:'d M Y' }} — klik untuk konfirmasi di Hasil Cocok">
+                Usulan · {{ d.pending_proposal.book_date|date:"d M" }}
+              </a>
+              {% else %}
+              <span class="badge-warn"><span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>Terbuka</span>
+              {% endif %}
             {% elif d.status == 'RESOLVED' %}<span class="badge-good">Selesai</span>
             {% else %}<span class="badge-mute">Write-off</span>{% endif %}
             {% if d.resolved_book_date %}<span class="money text-xs text-slate-400">· {{ d.resolved_book_date|date:"d M" }}</span>{% endif %}

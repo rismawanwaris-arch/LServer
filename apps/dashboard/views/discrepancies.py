@@ -108,6 +108,7 @@ def discrepancy_list_view(request):
     is_more = bool(request.headers.get("HX-Request") and request.GET.get("page"))
     page_obj = paginator.get_page(request.GET.get("page") if is_more else 1)
     items = list(page_obj.object_list)
+    _attach_pending_proposal_matches(items)
     # URL daftar tanpa nomor halaman: tujuan kembali setelah "hapus buku", dan dasar
     # URL halaman berikutnya.
     params = request.GET.copy()
@@ -152,6 +153,44 @@ def discrepancy_list_view(request):
             "written_off_count": written_off_count,
         },
     )
+
+
+def _attach_pending_proposal_matches(items: list) -> None:
+    """Tandai selisih OPEN yang sebenarnya sudah berpasangan sebagai USULAN (needs_review=True)
+    di Hasil Cocok, supaya operator tahu kenapa statusnya masih Terbuka."""
+    from apps.recon.models import Match
+
+    bank_ids = [d.bank_mutation_id for d in items if d.status == DiscrepancyStatus.OPEN and d.bank_mutation_id]
+    oto_ids = [d.otomax_entry_id for d in items if d.status == DiscrepancyStatus.OPEN and d.otomax_entry_id]
+    if not bank_ids and not oto_ids:
+        return
+
+    proposals_by_bank: dict[int, Match] = {}
+    proposals_by_oto: dict[int, Match] = {}
+    qs = (
+        Match.objects.filter(voided_at__isnull=True, needs_review=True)
+        .filter(
+            Q(bank_mutation_id__in=bank_ids)
+            | Q(bank_mutations__id__in=bank_ids)
+            | Q(otomax_entry_id__in=oto_ids)
+            | Q(otomax_entries__id__in=oto_ids)
+        )
+        .distinct()
+    )
+    for m in qs:
+        if m.bank_mutation_id:
+            proposals_by_bank[m.bank_mutation_id] = m
+        if m.otomax_entry_id:
+            proposals_by_oto[m.otomax_entry_id] = m
+
+    for d in items:
+        d.pending_proposal = None
+        if d.status != DiscrepancyStatus.OPEN:
+            continue
+        if d.bank_mutation_id and d.bank_mutation_id in proposals_by_bank:
+            d.pending_proposal = proposals_by_bank[d.bank_mutation_id]
+        elif d.otomax_entry_id and d.otomax_entry_id in proposals_by_oto:
+            d.pending_proposal = proposals_by_oto[d.otomax_entry_id]
 
 
 @login_required

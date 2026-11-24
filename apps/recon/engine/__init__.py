@@ -52,9 +52,64 @@ def _heal_stale_match_statuses() -> None:
     ).filter(models.Exists(active_otomax_subq)).update(match_status=MatchStatus.MATCHED)
 
 
+def _retire_stale_open_discrepancies(book_date: date) -> None:
+    """Bersihkan selisih BANK_ONLY/OTOMAX_ONLY yang masih OPEN di book_date padahal
+    transaksinya sudah punya Match aktif FINAL (needs_review=False) atau status MANUAL/IGNORED."""
+    from apps.core.enums import DiscrepancyKind, DiscrepancyStatus
+    from ..models import Discrepancy, Match, ReconDay
+    from ..resolve import resolve_discrepancy
+
+    is_locked = ReconDay.objects.filter(book_date=book_date, locked=True).exists()
+    open_discs = Discrepancy.objects.filter(
+        origin_book_date=book_date,
+        status=DiscrepancyStatus.OPEN,
+        kind__in=[DiscrepancyKind.BANK_ONLY, DiscrepancyKind.OTOMAX_ONLY],
+    ).select_related("bank_mutation", "otomax_entry")
+
+    for disc in open_discs:
+        final_match = None
+        is_closed_status = False
+        if disc.kind == DiscrepancyKind.BANK_ONLY and disc.bank_mutation:
+            final_match = (
+                Match.objects.filter(
+                    models.Q(bank_mutation=disc.bank_mutation) | models.Q(bank_mutations=disc.bank_mutation),
+                    voided_at__isnull=True,
+                    needs_review=False,
+                )
+                .order_by("-book_date")
+                .first()
+            )
+            is_closed_status = disc.bank_mutation.match_status in (MatchStatus.MANUAL, MatchStatus.IGNORED)
+        elif disc.kind == DiscrepancyKind.OTOMAX_ONLY and disc.otomax_entry:
+            final_match = (
+                Match.objects.filter(
+                    models.Q(otomax_entry=disc.otomax_entry) | models.Q(otomax_entries=disc.otomax_entry),
+                    voided_at__isnull=True,
+                    needs_review=False,
+                )
+                .order_by("-book_date")
+                .first()
+            )
+            is_closed_status = disc.otomax_entry.match_status in (MatchStatus.MANUAL, MatchStatus.IGNORED)
+
+        if not final_match and not is_closed_status:
+            continue
+
+        if is_locked:
+            resolve_discrepancy(
+                disc,
+                match=final_match,
+                resolution_type="LATE_MATCH" if final_match else "DATA_FIX",
+                on_date=final_match.book_date if final_match else book_date,
+            )
+        else:
+            disc.delete()
+
+
 @transaction.atomic
 def run_match(book_date: date) -> RunStats:
     _heal_stale_match_statuses()
+    _retire_stale_open_discrepancies(book_date)
     stats = RunStats()
     stats.netted = _net_reversals(book_date)
     for channel in BANK_CHANNELS:

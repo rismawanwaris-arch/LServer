@@ -119,25 +119,29 @@ def approve_match(match: Match, user=None) -> Match:
     m = Match.objects.select_for_update().get(pk=match.pk)
     if m.voided_at:
         raise ValueError(f"Pencocokan #{m.id} sudah dibatalkan, tidak bisa disetujui.")
-    if not m.needs_review:
-        return m
 
-    m.needs_review = False
-    m.reviewed_by = user
-    m.reviewed_at = timezone.now()
-    m.save(update_fields=["needs_review", "reviewed_by", "reviewed_at", "updated_at"])
+    was_needs_review = m.needs_review
+    if was_needs_review:
+        m.needs_review = False
+        m.reviewed_by = user
+        m.reviewed_at = timezone.now()
+        m.save(update_fields=["needs_review", "reviewed_by", "reviewed_at", "updated_at"])
 
+    bank_ids = set(m.bank_mutations.values_list("id", flat=True))
+    if m.bank_mutation_id:
+        bank_ids.add(m.bank_mutation_id)
     otomax_ids = set(m.otomax_entries.values_list("id", flat=True))
     if m.otomax_entry_id:
         otomax_ids.add(m.otomax_entry_id)
+
     leftovers = Discrepancy.objects.filter(
         status=DiscrepancyStatus.OPEN, kind__in=[DiscrepancyKind.BANK_ONLY, DiscrepancyKind.OTOMAX_ONLY]
-    ).filter(Q(bank_mutation_id=m.bank_mutation_id) | Q(otomax_entry_id__in=otomax_ids))
+    ).filter(Q(bank_mutation_id__in=bank_ids) | Q(otomax_entry_id__in=otomax_ids))
     for disc in leftovers.filter(origin_book_date__lt=m.book_date):
         resolve_discrepancy(disc, match=m, resolution_type="LATE_MATCH", user=user, on_date=m.book_date)
     retire_leftover_discrepancies(leftovers.filter(origin_book_date__gte=m.book_date), m, user, m.book_date)
 
-    if m.channel == Channel.MERCHANT_BCA and m.bank_mutation:
+    if was_needs_review and m.channel == Channel.MERCHANT_BCA and m.bank_mutation:
         learn_merchant_map(m.bank_mutation, m.otomax_entry)
     return m
 

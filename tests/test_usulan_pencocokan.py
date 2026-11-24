@@ -699,6 +699,58 @@ def test_bri_qlola_new_remark_with_esb_ws_ob_matches_otomax():
     assert _active(b_mpin).otomax_entry_id == o_mpin.id
 
 
+@pytest.mark.django_db
+def test_run_match_retires_stale_open_discrepancy_when_already_matched_final(operator):
+    """Selisih BANK_ONLY/OTOMAX_ONLY yang tertinggal OPEN padahal transaksinya sudah punya Match
+    final (needs_review=False) harus otomatis dibersihkan saat run_match dijalankan."""
+    from apps.recon.resolve import manual_pair_transactions
+
+    b = _bank("TRANSFER TEST HANTU 1", "300000")
+    o = _otomax("TARTUN TF BRI TEST HANTU 1", "300000")
+    m = manual_pair_transactions(b, o, user=operator)
+
+    # Simulasikan selisih OPEN hantu tertinggal di DB
+    Discrepancy.objects.create(
+        code="SLS-GHOST-001",
+        origin_book_date=BD,
+        channel=Channel.BRI,
+        kind=DiscrepancyKind.BANK_ONLY,
+        amount=b.amount,
+        bank_mutation=b,
+        status=DiscrepancyStatus.OPEN,
+    )
+    assert Discrepancy.objects.filter(bank_mutation=b, status=DiscrepancyStatus.OPEN).exists()
+
+    run_match(BD)
+    assert not Discrepancy.objects.filter(bank_mutation=b, status=DiscrepancyStatus.OPEN).exists()
+    assert m.voided_at is None
+
+
+@pytest.mark.django_db
+def test_discrepancy_list_shows_pending_proposal_badge(auth_client):
+    """Jika selisih OPEN menunggu persetujuan usulan lintas hari di Hasil Cocok,
+    Daftar Selisih harus menampilkan lencana 'Usulan · <tgl>' yang tertaut ke Hasil Cocok."""
+    from datetime import timedelta
+
+    late = BD + timedelta(days=1)
+    b = _bank("TRANSFER LINTAS HARI USULAN", "505000", book_date=BD)
+    run_match(BD)
+    assert Discrepancy.objects.filter(bank_mutation=b, status=DiscrepancyStatus.OPEN).exists()
+
+    _otomax("TARTUN TF BRI TRANSFER LINTAS HARI USULAN", "505000", book_date=late)
+    carry_forward(late)
+
+    m = _active(b)
+    assert m.needs_review is True
+
+    res = auth_client.get("/selisih/", {"d": BD.isoformat()})
+    assert res.status_code == 200
+    html = res.content.decode()
+    assert "Usulan" in html
+    assert f"/matches/?d={late.isoformat()}&tab=review" in html
+
+
+
 
 
 
