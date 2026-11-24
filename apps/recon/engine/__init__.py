@@ -51,6 +51,15 @@ def _heal_stale_match_statuses() -> None:
         match_status__in=_OPEN_STATUSES,
     ).filter(models.Exists(active_otomax_subq)).update(match_status=MatchStatus.MATCHED)
 
+    # Sebaliknya: jika status masih MATCHED padahal tidak punya Match aktif lagi, kembalikan ke terbuka
+    BankMutation.objects.filter(match_status=MatchStatus.MATCHED).exclude(
+        models.Exists(active_bank_subq)
+    ).update(match_status=MatchStatus.UNMATCHED)
+
+    OtomaxEntry.objects.filter(match_status=MatchStatus.MATCHED).exclude(
+        models.Exists(active_otomax_subq)
+    ).update(match_status=MatchStatus.PENDING_SETTLE)
+
 
 def _retire_stale_open_discrepancies(book_date: date) -> None:
     """Bersihkan selisih BANK_ONLY/OTOMAX_ONLY yang masih OPEN di book_date padahal
